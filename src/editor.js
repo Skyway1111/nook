@@ -10,6 +10,7 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { languages } from '@codemirror/language-data'
 import { classHighlighter, highlightCode } from '@lezer/highlight'
 import { el } from './ui.js'
+import { DOC } from './files.js'
 
 /** An editor holding `text`, in the language its file `name` implies. Calls `changed` after each edit. */
 export function createEditor(name, text, changed) {
@@ -23,7 +24,7 @@ export function createEditor(name, text, changed) {
       history(), drawSelection(), dropCursor(), rectangularSelection(), EditorState.allowMultipleSelections.of(true),
       indentOnInput(), indentUnit.of(indent?.[1] ?? indent?.[2] ?? '    '), bracketMatching(), highlightSelectionMatches(),
       syntaxHighlighting(classHighlighter), EditorView.darkTheme.of(true),
-      /\.(md|markdown|txt)$/i.test(name) ? EditorView.lineWrapping : [],
+      DOC.test(name) ? EditorView.lineWrapping : [],
       keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, indentWithTab]),
       language.of([]),
       EditorView.updateListener.of(u => u.docChanged && changed()),

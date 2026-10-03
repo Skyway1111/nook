@@ -59,6 +59,7 @@ body.blurred .brand, body.blurred #tabs, body.blurred .caption { opacity: .5; }
 .tab.diff > i.icon { color: var(--icon-diff); }
 :is(.tab, .row).image i.icon { color: var(--icon-image); }
 :is(.tab, .row).code i.icon { color: var(--icon-code); }
+:is(.tab, .row).doc i.icon { color: var(--icon-doc); }
 .tab .close { flex: none; width: 20px; height: 20px; border-radius: 4px; font-size: 8px; color: var(--ink-3); visibility: hidden; }
 .tab:hover .close, .tab.active .close { visibility: visible; }
 .tab .close:hover { background: var(--hover); color: var(--ink-1); }

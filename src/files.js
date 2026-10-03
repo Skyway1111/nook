@@ -4,14 +4,16 @@ import { $, el, openMenu, showPreview, hidePreview, dragPath } from './ui.js'
 
 const SEP = '\\'
 export const ICON = {
-  dir: '', file: '', image: '', code: '', drive: '', diff: '±',
+  dir: '', file: '', image: '', code: '', doc: '', drive: '', diff: '±',
   claude: '', pin: '', unpin: '', add: '', copy: '', open: '', explorer: '',
   cut: '', paste: '', rename: '', delete: '', folder: '', openWith: '', properties: '',
   theme: '',
 }
 export const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i
-const CODE = /\.(js|mjs|cjs|ts|tsx|jsx|py|ipynb|rs|go|c|h|cpp|hpp|cs|java|kt|rb|lua|gd|sh|ps1|bat|css|scss|html|json|jsonc|toml|ya?ml|xml|md|sql)$/i
-export const kind = e => (e.dir ? 'dir' : IMAGE.test(e.name) ? 'image' : CODE.test(e.name) ? 'code' : 'file')
+const CODE = /\.(js|mjs|cjs|ts|tsx|jsx|py|ipynb|rs|go|c|h|cpp|hpp|cs|java|kt|rb|lua|gd|sh|ps1|bat|css|scss|html|json|jsonc|toml|ya?ml|xml|sql)$/i
+/** Prose: wraps in the editor. */
+export const DOC = /\.(md|markdown|txt)$/i
+export const kind = e => (e.dir ? 'dir' : IMAGE.test(e.name) ? 'image' : DOC.test(e.name) ? 'doc' : CODE.test(e.name) ? 'code' : 'file')
 const compare = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
 /** A folder's entries, folders first, in Explorer's order. */
 const listing = path => invoke('list_dir', { path }).then(es => es.sort((a, b) => b.dir - a.dir || compare(a.name, b.name)))

@@ -31,6 +31,7 @@
   --icon-folder: var(--accent);
   --icon-image: var(--ansi-magenta);
   --icon-code: var(--ansi-cyan);
+  --icon-doc: var(--ink-2);
   --icon-claude: var(--accent);
   --icon-diff: var(--ansi-green);
 
