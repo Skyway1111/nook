@@ -130,18 +130,20 @@ export function startComposer(term, host, cwd, id) {
     }
   }
 
-  /** Looks up the image files the draft names, once for each set of numbers. */
+  /** Looks up the image files the draft names, once for each set of numbers. Claude can draw [Image #N] a
+   * moment before it writes the file, so a miss looks again, for up to 3 s. */
   function findImages(nums) {
     const key = nums.join()
     if (key === imageKey) return
     imageKey = key
-    for (const n of nums) {
-      invoke('session_image', { cwd, n }).then(path => {
-        if (imageKey !== key || !path) return
+    const find = (n, tries) => invoke('session_image', { cwd, n }).then(path => {
+      if (imageKey !== key) return
+      if (path) {
         images.set(n, path)
         render()
-      })
-    }
+      } else if (tries) setTimeout(find, 100, n, tries - 1)
+    })
+    for (const n of nums) find(n, 30)
   }
 
   function render() {
