@@ -1,0 +1,97 @@
+/* nook's default theme: every color, font, and size. The user's theme.css applies over it.
+   --h re-hues everything: 285 violet, 250 blue, 200 teal, 150 green, 60 amber, 20 ember. */
+@font-face { font-family: Libron; src: url(./fonts/Libron-Regular.woff2); }
+@font-face { font-family: Libron; src: url(./fonts/Libron-Italic.woff2); font-style: italic; }
+@font-face { font-family: Libron; src: url(./fonts/Libron-Bold.woff2); font-weight: 700; }
+@font-face { font-family: Libron; src: url(./fonts/Libron-BoldItalic.woff2); font-weight: 700; font-style: italic; }
+
+:root {
+  --h: 285;
+  --scheme: dark; /* light, for a light theme: scrollbars and form controls follow it */
+
+  --font-ui: Libron, "Segoe UI Variable Text", "Segoe UI", system-ui, serif;
+  --ui-font-size: 14px; /* text in the chrome scales with it */
+  --font-term: "CaskaydiaCove Nerd Font Mono", "Cascadia Mono", Consolas, monospace;
+  --term-font-size: 14px;
+  --term-line-height: 1; /* above 1, block art (Claude's mascot) shows gaps between rows */
+  --sidebar-width: 252px;
+
+  /* Chrome: titlebar and file browser */
+  --bg: oklch(.165 .02 var(--h));
+  --raised: oklch(.235 .025 var(--h));
+  --hover: oklch(1 0 0 / .055);
+  --line: oklch(1 0 0 / .08);
+  --ink-1: oklch(.96 .008 var(--h));
+  --ink-2: oklch(.78 .02 var(--h));
+  --ink-3: oklch(.58 .025 var(--h));
+  --accent: oklch(.8 .12 var(--h));
+  --shadow: 0 12px 32px oklch(0 0 0 / .45); /* menus, previews, the settings drawer */
+  --close: #c42b1c; /* the window's close button, under the pointer */
+  /* File kinds' icons, in the file browser and the tab strip */
+  --icon-folder: var(--accent);
+  --icon-image: var(--ansi-magenta);
+  --icon-code: var(--ansi-cyan);
+  --icon-claude: var(--accent);
+  --icon-diff: var(--ansi-green);
+
+  /* Terminal backdrop: any CSS background (a color, or layered gradients like these). */
+  --term-bg:
+    radial-gradient(90% 70% at 100% 0%, oklch(.26 .07 var(--h) / .9), transparent 70%),
+    radial-gradient(70% 60% at 0% 100%, oklch(.2 .05 calc(var(--h) - 40) / .6), transparent 70%),
+    oklch(.135 .018 var(--h));
+  --term-fg: oklch(.93 .012 var(--h));
+  --cursor: var(--accent);
+  --selection: oklch(.62 .16 var(--h) / .4);
+
+  /* The 16 terminal colors. Claude Code follows these fully under /theme → "Dark mode (ANSI colors only)". */
+  --ansi-black: oklch(.3 .02 var(--h));
+  --ansi-red: oklch(.7 .15 22);
+  --ansi-green: oklch(.76 .14 150);
+  --ansi-yellow: oklch(.83 .13 85);
+  --ansi-blue: oklch(.72 .13 255);
+  --ansi-magenta: oklch(.74 .15 320);
+  --ansi-cyan: oklch(.78 .11 205);
+  --ansi-white: oklch(.86 .012 var(--h));
+  --ansi-bright-black: oklch(.56 .025 var(--h));
+  --ansi-bright-red: oklch(.78 .14 22);
+  --ansi-bright-green: oklch(.84 .13 150);
+  --ansi-bright-yellow: oklch(.9 .12 85);
+  --ansi-bright-blue: oklch(.8 .12 255);
+  --ansi-bright-magenta: oklch(.82 .13 320);
+  --ansi-bright-cyan: oklch(.86 .1 205);
+  --ansi-bright-white: oklch(.98 .005 var(--h));
+
+  /* Claude Code's own colors, once you pick "nook" in Claude's /theme. Each is --claude-<token>, after
+     Claude's color tokens (code.claude.com/docs/en/terminal-config). Claude's other tokens take the colors above. */
+  --claude-text: var(--term-fg);
+  --claude-inactive: var(--ink-3);
+  --claude-inactiveShimmer: var(--ink-2);
+  --claude-subtle: var(--ansi-bright-black);
+  --claude-claude: var(--accent); /* the spinner, the mascot, and Claude's label */
+  --claude-claudeShimmer: color-mix(in oklch, var(--claude-claude), white 40%);
+  --claude-clawd_body: var(--claude-claude);
+  --claude-clawd_background: var(--ansi-black);
+  --claude-briefLabelClaude: var(--claude-claude);
+  --claude-briefLabelYou: var(--ansi-bright-blue);
+  --claude-promptBorder: var(--ink-3);
+  --claude-promptBorderShimmer: var(--ink-2);
+  --claude-bashBorder: var(--ansi-bright-magenta);
+  --claude-planMode: var(--ansi-cyan);
+  --claude-autoAccept: var(--ansi-magenta);
+  --claude-autoAcceptShimmer: var(--ansi-bright-magenta);
+  --claude-permission: var(--ansi-bright-blue); /* dialog and picker borders */
+  --claude-permissionShimmer: color-mix(in oklch, var(--claude-permission), white 40%);
+  --claude-suggestion: var(--ansi-bright-blue);
+  /* Backgrounds can be translucent, over --term-bg. */
+  --claude-diffAdded: color-mix(in oklch, var(--ansi-green) 22%, transparent);
+  --claude-diffRemoved: color-mix(in oklch, var(--ansi-red) 22%, transparent);
+  --claude-diffAddedDimmed: color-mix(in oklch, var(--ansi-green) 10%, transparent);
+  --claude-diffRemovedDimmed: color-mix(in oklch, var(--ansi-red) 10%, transparent);
+  --claude-diffAddedWord: color-mix(in oklch, var(--ansi-green) 45%, transparent);
+  --claude-diffRemovedWord: color-mix(in oklch, var(--ansi-red) 45%, transparent);
+  --claude-userMessageBackground: oklch(1 0 0 / .07);
+  --claude-userMessageBackgroundHover: oklch(1 0 0 / .11);
+  --claude-bashMessageBackgroundColor: color-mix(in oklch, var(--ansi-magenta) 12%, transparent);
+  --claude-memoryBackgroundColor: color-mix(in oklch, var(--ansi-blue) 12%, transparent);
+  --claude-selectionBg: var(--selection);
+}

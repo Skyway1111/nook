@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>nook</title>
+  </head>
+  <body>
+    <svg class="defs" aria-hidden="true">
+      <symbol id="branch" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+        <circle cx="4.5" cy="3.5" r="1.6" /><circle cx="4.5" cy="12.5" r="1.6" /><circle cx="11.5" cy="5" r="1.6" />
+        <path d="M4.5 5.1v5.8M11.5 6.6c0 2.8-7 1.8-7 4.3" />
+      </symbol>
+    </svg>
+    <header id="titlebar" data-tauri-drag-region>
+      <div class="lead" data-tauri-drag-region>
+        <button id="toggle-files" class="icon" title="Toggle file browser">&#xE700;</button>
+        <span class="brand" data-tauri-drag-region>nook</span>
+      </div>
+      <div id="tabs"></div>
+      <button id="new-tab" class="icon" title="New Claude session">&#xE710;</button>
+      <div class="grow" data-tauri-drag-region></div>
+      <button id="toggle-git" title="Toggle git panel"><svg class="glyph"><use href="#branch" /></svg></button>
+      <button id="open-config" class="icon" title="Settings">&#xE713;</button>
+      <nav class="caption">
+        <button id="min" class="icon" title="Minimize">&#xE921;</button>
+        <button id="max" class="icon" title="Maximize">&#xE922;</button>
+        <button id="close" class="icon" title="Close">&#xE8BB;</button>
+      </nav>
+    </header>
+    <main>
+      <aside id="files">
+        <p id="banner" hidden></p>
+        <nav class="nav">
+          <button id="back" class="icon" title="Back">&#xE72B;</button>
+          <button id="forward" class="icon" title="Forward">&#xE72A;</button>
+          <button id="up" class="icon" title="Up">&#xE74A;</button>
+        </nav>
+        <div id="crumbs"></div>
+        <h2>Pinned</h2>
+        <ul id="pinned"></ul>
+        <hr />
+        <ul id="list"></ul>
+        <p id="status" hidden></p>
+      </aside>
+      <section id="pane"></section>
+      <aside id="git" class="none">
+        <h2 id="git-repo"></h2>
+        <div class="git-row">
+          <button id="git-diff" title="View every change"><b>±</b> View diff <span></span></button>
+          <button id="git-stage-all" class="pill"></button>
+        </div>
+        <ul id="git-list"></ul>
+        <p id="git-error" hidden></p>
+        <div class="git-row">
+          <button id="git-branch" title="Switch branch"><svg class="glyph"><use href="#branch" /></svg><span id="git-branch-name"></span></button>
+          <span id="git-sync-group" class="split"><button id="git-sync" class="pill"><i class="icon"></i><span></span></button><button id="git-sync-more" class="pill icon" title="Fetch, pull, or push">&#xE70D;</button></span>
+        </div>
+        <div id="git-compose">
+          <textarea id="git-message" spellcheck="false"></textarea>
+          <button id="git-commit" class="pill" title="Ctrl+Enter"></button>
+        </div>
+        <div id="git-last" class="git-row"><span id="git-subject"></span><button id="git-undo" class="icon" title="Undo last commit">&#xE7A7;</button></div>
+        <p id="git-none"></p>
+      </aside>
+      <div id="files-sash" class="sash"></div>
+      <div id="git-sash" class="sash"></div>
+      <aside id="settings" hidden>
+        <header><h1>Settings</h1><button id="settings-close" class="icon" title="Close (Esc)">&#xE711;</button></header>
+        <h2>Theme</h2>
+        <div id="settings-themes" class="themes"></div>
+        <label class="toggle"><input id="settings-follow" type="checkbox" />Claude's colors follow the theme</label>
+        <p id="settings-theme-note" hidden></p>
+        <div id="settings-knobs"></div>
+        <header>
+          <h2>theme.css</h2>
+          <button id="settings-folder" title="Show the settings folder in the file browser"><i class="icon">&#xE838;</i>Folder</button>
+        </header>
+        <p>Your CSS, applied over the theme as you type. Any selector restyles any part of nook.</p>
+        <div class="css-box"><div id="settings-css"></div></div>
+        <details id="settings-defaults"><summary>nook's defaults</summary><pre></pre></details>
+        <h2>Claude tabs</h2>
+        <label>Command, one argument per line<textarea id="settings-command" rows="5" spellcheck="false"></textarea></label>
+        <label class="toggle"><input id="settings-gpu" type="checkbox" />Render with the GPU<small>after a restart</small></label>
+        <h2>GitHub</h2>
+        <div id="settings-github"></div>
+      </aside>
+    </main>
+    <menu id="menu" hidden></menu>
+    <div id="preview" hidden><img alt="" /></div>
+    <div id="ghost" hidden></div>
+    <script type="module" src="/src/main.js"></script>
+    <!-- The installed theme in use, then the user's theme.css. Last, so they win ties with every bundled sheet. -->
+    <style id="pack"></style>
+    <style id="theme"></style>
+  </body>
+</html>

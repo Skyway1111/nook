@@ -1,0 +1,119 @@
+// The settings drawer's themes: a card for each installed theme, installing one from a .zip or a
+// folder, and Claude's own theme, which follows nook's when the user wants. An installed theme is a
+// folder in `themes` beside settings.json, and `theme.rs` reads and installs it.
+import { invoke, convertFileSrc } from '@tauri-apps/api/core'
+import preview from './nook.jpg'
+import { $, el } from './ui.js'
+
+/** nook's Claude theme, from its mod (src-tauri/mod/themes/nook.json), as Claude's settings name it. */
+const NOOK = 'custom:nook:nook'
+const label = name => name.replace(/[-_]+/g, ' ').replace(/(^|\s)\p{L}/gu, c => c.toUpperCase())
+
+/** `save` patches settings.json, and `reread` applies the theme it names. */
+export function startThemes({ configDir, home, settings, save, reread }) {
+  const dir = `${configDir}\\themes`
+  const gallery = $('settings-themes')
+  const follow = $('settings-follow')
+  const note = $('settings-theme-note')
+  const say = (text = '') => Object.assign(note, { hidden: !text, textContent: text })
+  const picker = el('input', { type: 'file', accept: '.zip' })
+  let active = null
+  // A reinstalled theme's screenshot keeps its path, so its URL changes with each install, and with each
+  // launch, which may follow an install in another window. Reopening the drawer reuses the loaded ones.
+  const launched = Date.now()
+  const installs = new Map() // name -> installs since launch
+
+  function card(name, src) {
+    const div = el('div', { className: 'theme', title: name ?? "nook's own", onclick: () => use(name).catch(say) })
+    div.dataset.name = name ?? ''
+    const img = el('img', { src, alt: '' })
+    img.onerror = () => img.replaceWith(el('div', { className: 'blank' }))
+    div.append(img, el('span', { textContent: name ? label(name) : 'nook' }))
+    if (name) {
+      const remove = el('button', { className: 'icon remove', title: 'Remove', innerHTML: '&#xE74D;' })
+      remove.onclick = e => { e.stopPropagation(); drop(name).catch(say) }
+      div.append(remove)
+    }
+    return div
+  }
+
+  /** Lists the installed themes, each with its screenshot.png when it has one. */
+  async function show() {
+    const listed = await invoke('list_dir', { path: dir }).catch(() => [])
+    const names = listed.filter(e => e.dir && !e.name.startsWith('.')).map(e => e.name).sort((a, b) => a.localeCompare(b))
+    const add = el('button', { className: 'theme add', title: 'Install a theme from a .zip', onclick: () => picker.click() })
+    add.innerHTML = '<i class="icon">&#xE710;</i><span>Install…</span>'
+    const shot = name => `${convertFileSrc(`${dir}\\${name}\\screenshot.png`)}?v=${launched}.${installs.get(name) ?? 0}`
+    gallery.replaceChildren(card(null, preview), ...names.map(n => card(n, shot(n))), add)
+    mark(active)
+    follow.checked = (await claudeTheme()) === NOOK
+  }
+
+  /** Highlights the card of the theme in use, null for nook's own. */
+  function mark(name) {
+    active = name
+    for (const c of gallery.children) c.classList.toggle('active', c.dataset.name === (name ?? ''))
+  }
+
+  async function use(name) {
+    say()
+    await save({ theme: name })
+    await reread()
+    if (settings.claudeFollows) await setFollow(true)
+  }
+
+  async function drop(name) {
+    if (!(await invoke('recycle', { path: `${dir}\\${name}` }))) return
+    if (name === active) await use(null)
+    await show()
+  }
+
+  async function installed(name) {
+    installs.set(name, (installs.get(name) ?? 0) + 1)
+    await show()
+    await use(name)
+  }
+  const install = path => invoke('install_theme', { path }).then(installed).catch(e => say(`nook can't install that theme: ${e}.`))
+  picker.onchange = async () => {
+    const file = picker.files[0]
+    picker.value = ''
+    if (!file) return
+    // `install_theme_zip` reads the name, a NUL, then the bytes.
+    const head = new TextEncoder().encode(`${file.name.replace(/\.zip$/i, '')}\0`)
+    const body = new Uint8Array(head.length + file.size)
+    body.set(head)
+    body.set(new Uint8Array(await file.arrayBuffer()), head.length)
+    await invoke('install_theme_zip', body).then(installed).catch(e => say(`nook can't install ${file.name}: ${e}.`))
+  }
+
+  // Claude reads its theme from the `theme` key of ~/.claude/settings.json, which its /theme writes.
+  // nook writes only that key, and only over the text it read, so a change Claude made meanwhile stands.
+  const claudePath = `${home}\\.claude\\settings.json`
+  async function claudeSettings() {
+    const text = await invoke('read_text', { path: claudePath }).catch(() => '') // none yet: Claude's defaults
+    return [text, text.trim() ? JSON.parse(text) : {}]
+  }
+  const claudeTheme = () => claudeSettings().then(([, json]) => json.theme, () => undefined)
+
+  /** Points Claude's theme at nook's, keeping the one it had, or back at that one. */
+  async function setFollow(on) {
+    try {
+      const [text, json] = await claudeSettings()
+      if (on === (json.theme === NOOK)) return
+      if (on) await save({ claudeTheme: json.theme ?? null })
+      const theme = on ? NOOK : (settings.claudeTheme ?? undefined) // undefined drops the key
+      const next = `${JSON.stringify({ ...json, theme }, null, 2)}\n`
+      if (!(await invoke('write_text', { path: claudePath, text: next, base: text }))) throw new Error('Claude changed it meanwhile')
+      say(on
+        ? "Claude tabs opened from now on take the theme's colors. Restart open ones to recolor them."
+        : 'Claude tabs opened from now on use your own Claude theme again.')
+    } catch (e) {
+      say(`nook can't set Claude's theme in ${claudePath}: ${e.message ?? e}.`)
+    } finally {
+      follow.checked = (await claudeTheme()) === NOOK
+    }
+  }
+  follow.onchange = () => save({ claudeFollows: follow.checked }).then(() => setFollow(follow.checked))
+
+  return { show, mark, install }
+}

@@ -1,0 +1,67 @@
+/* Twilight: Frederic Edwin Church's "Twilight in the Wilderness" (1860). Crimson clouds, a gold horizon,
+   and the forest going dark. The painting is in the public domain; the Cleveland Museum of Art releases its
+   photograph under CC0 (clevelandart.org/art/1965.233). */
+
+:root {
+  --bg: #0d0a09;
+  --raised: oklch(.27 .04 40 / .66);
+  --hover: oklch(.85 .08 60 / .08);
+  --line: oklch(.85 .08 60 / .13);
+  --ink-1: #f6ece0;
+  --ink-2: #cfbca8;
+  --ink-3: #8f7b6c;
+  --accent: #f2a65a;
+  --shadow: 0 16px 44px oklch(0 0 0 / .6);
+  --icon-image: #e8766b;
+  --icon-code: #79c3bd;
+
+  /* A blurred copy of the painting, pinned to the window so it lines up with the sharp one around it. */
+  --term-bg:
+    linear-gradient(oklch(.1 .015 35 / .8), oklch(.1 .015 35 / .64) 45%, oklch(.08 .015 120 / .76)),
+    url(twilight-soft.jpg) 50% 36px / cover fixed #0d0a09;
+  --term-fg: #eadfd2;
+  --cursor: #f2a65a;
+  --selection: oklch(.7 .12 50 / .3);
+
+  --ansi-black: #2a201d;
+  --ansi-red: #e8665a;
+  --ansi-green: #a3c48a;
+  --ansi-yellow: #f2c063;
+  --ansi-blue: #74a9c4;
+  --ansi-magenta: #c58bb5;
+  --ansi-cyan: #79c3bd;
+  --ansi-white: #e3d6c8;
+  --ansi-bright-black: #8a776a;
+  --ansi-bright-red: #ff8f7f;
+  --ansi-bright-green: #c3dca9;
+  --ansi-bright-yellow: #ffd98e;
+  --ansi-bright-blue: #9ec7dc;
+  --ansi-bright-magenta: #ddb0d2;
+  --ansi-bright-cyan: #a6dcd6;
+  --ansi-bright-white: #fbf4ea;
+
+  /* Claude: ember for Claude itself, and the teal of the sky's last gaps for its dialogs. */
+  --claude-claude: #f2a65a;
+  --claude-claudeShimmer: #ffe0b0;
+  --claude-clawd_body: #f08a4b;
+  --claude-clawd_background: #0d0a09;
+  --claude-promptBorder: #6d5547;
+  --claude-permission: #79c3bd;
+  --claude-userMessageBackground: oklch(.7 .08 50 / .1);
+  --claude-userMessageBackgroundHover: oklch(.7 .08 50 / .15);
+}
+
+/* Below the titlebar, so the clouds don't run behind the tabs. */
+body { background: url(twilight.jpg) 50% 36px / cover no-repeat #0d0a09; }
+#files, #git { background: linear-gradient(oklch(.1 .015 35 / .6), oklch(.1 .015 35 / .38) 50%, oklch(.08 .015 120 / .2)); }
+#git-compose, #git-last { background: oklch(.09 .015 35 / .8); }
+#git-last { margin: 0 -8px -8px; padding: 6px 8px 8px 16px; }
+#pane { border-color: oklch(.85 .1 60 / .18); box-shadow: 0 0 32px oklch(.7 .15 45 / .14); }
+
+.brand { font: 700 1.05rem var(--font-ui); letter-spacing: .3em; text-transform: lowercase; color: #ffd28c; text-shadow: 0 0 12px oklch(.75 .16 50 / .7); }
+:is(#files h2, #git-repo, #git-list .group, #settings h2) { letter-spacing: .18em; text-transform: uppercase; font-size: .72rem; color: var(--ink-3); }
+.tab.active { background: oklch(.27 .04 40 / .7); box-shadow: inset 0 -1.5px 0 #f2a65a, 0 6px 14px -8px #f2a65a; }
+.composer .frame { background: oklch(.13 .015 35 / .85); border-color: oklch(.85 .1 60 / .26); box-shadow: 0 0 22px oklch(.7 .15 45 / .12); }
+.composer .ring circle + circle { stroke: #f2a65a; }
+.row.selected, .row.current { box-shadow: inset 2px 0 0 #f2a65a; }
+#settings .css-box { background: var(--bg); }
