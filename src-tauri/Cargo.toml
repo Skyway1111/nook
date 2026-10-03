@@ -1,6 +1,6 @@
 [package]
 name = "nook"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "A Windows app for Claude Code"
 license = "MIT"
@@ -25,6 +25,5 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [profile.release]
-lto = true
-codegen-units = 1
+lto = "thin"
 strip = true
