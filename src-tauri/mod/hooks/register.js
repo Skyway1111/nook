@@ -1,7 +1,8 @@
 // Tells nook's composer what to show beside Claude's prompt, runs the two commands its menus send, and
 // draws pictures in the transcript. Every hook passes its event on unchanged, and the two render hooks add
-// pictures under Claude's own drawing. The mod writes the session's model, effort, effort levels, and
-// context fill as JSON to NOOK_STATE, and reads requests from the .cmd file beside it: { command, args, at }.
+// pictures under Claude's own drawing. The mod writes the session's model, effort, effort levels, context
+// fill, and pasted images' folder as JSON to NOOK_STATE, and reads requests from the .cmd file beside it:
+// { command, args, at }.
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const ROWS = 20 // the tallest picture, in rows
 const ROW_PIXELS = 20 // a picture's pixels per row, so a small one draws near its own size
@@ -84,10 +85,15 @@ async function pngSize($, path) {
   return [u32(16), u32(20)]
 }
 
-/** The images pasted into a prompt, as [path, size]. Claude saves the nth to the folder `session_image` reads. */
-async function pasted($, text) {
+/** The folder Claude saves the session's nth pasted image to, as <n>.png. nook's `session_image` reads it from the report. */
+async function imagesDir($) {
   const slug = (await $.session.root()).replace(/[^a-zA-Z0-9]/g, '-')
-  const dir = `${await $.env.get('TEMP')}\\claude\\${slug}\\${await $.session.id()}\\images`
+  return `${await $.env.get('TEMP')}\\claude\\${slug}\\${await $.session.id()}\\images`
+}
+
+/** The images pasted into a prompt, as [path, size]. */
+async function pasted($, text) {
+  const dir = await imagesDir($)
   const pictures = []
   for (const n of new Set(Array.from(text.matchAll(/\[Image #(\d+)\]/g), m => m[1]))) {
     const path = `${dir}\\${n}.png`
@@ -107,8 +113,9 @@ export function register(on) {
       file = path
       const requests = path.replace(/\.json$/, '.cmd')
       handled = await $.fs.read(requests).catch(() => '') // a request from an earlier session is spent
-      await report($, file, { context: (await $.session.usage()).context, efforts: LEVELS, ...(await model($)) })
-      const tick = async () => report($, file, { ...(await take($, requests)), ...(await model($)) })
+      await report($, file, { context: (await $.session.usage()).context, efforts: LEVELS, images: await imagesDir($), ...(await model($)) })
+      // /clear starts a new session, whose images go to a new folder.
+      const tick = async () => report($, file, { ...(await take($, requests)), images: await imagesDir($), ...(await model($)) })
       $.clock.every(250, () => tick().catch(() => {})) // a failed tick leaves the last report standing
     }
     return next(e)

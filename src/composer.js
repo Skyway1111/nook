@@ -38,7 +38,7 @@ function chipsHtml({ model, effort, context }) {
     + `<circle cx="10" cy="10" r="7.5" pathLength="100" stroke-dasharray="${context.percent} 100"/></svg>`
 }
 
-export function startComposer(term, host, cwd, id) {
+export function startComposer(term, host, id) {
   const card = host.appendChild(el('div', { className: 'composer', hidden: true }))
   card.innerHTML = '<div class="frame"><div class="thumbs"></div><div class="draft"></div><div class="foot"><div class="hints"></div><div class="chips"></div></div></div>'
   const frame = card.firstChild
@@ -136,7 +136,7 @@ export function startComposer(term, host, cwd, id) {
     const key = nums.join()
     if (key === imageKey) return
     imageKey = key
-    const find = (n, tries) => invoke('session_image', { cwd, n }).then(path => {
+    const find = (n, tries) => invoke('session_image', { id, n }).then(path => {
       if (imageKey !== key) return
       if (path) {
         images.set(n, path)

@@ -158,3 +158,11 @@ pub fn pty_command(id: u64, command: String, args: String) -> Result<(), String>
 pub fn pty_state(id: u64) -> Option<String> {
     std::fs::read_to_string(state_file(id)).ok()
 }
+
+/// The `n`th image pasted into session `id`, in the folder nook's mod reports; `None` until Claude saves it.
+#[tauri::command(async)]
+pub fn session_image(id: u64, n: u32) -> Option<PathBuf> {
+    let state: serde_json::Value = serde_json::from_str(&pty_state(id)?).ok()?;
+    let path = PathBuf::from(state["images"].as_str()?).join(format!("{n}.png"));
+    path.is_file().then_some(path)
+}

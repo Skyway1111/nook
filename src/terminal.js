@@ -122,7 +122,7 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
     else term.write('\x1b[?2026h')
   }
   id = await invoke('pty_spawn', { command, cwd, cols: term.cols, rows: term.rows, onData: output })
-  const composer = startComposer(term, host, cwd, id)
+  const composer = startComposer(term, host, id)
   term.onData(send)
   term.onResize(({ cols, rows }) => invoke('pty_resize', { id, cols, rows }))
   term.onTitleChange(onTitle)
@@ -183,7 +183,7 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
     provideLinks(y, callback) {
       const text = term.buffer.active.getLine(y - 1)?.translateToString(true) ?? ''
       callback([...text.matchAll(/\[Image #(\d+)\]/g)].map(m => {
-        const image = () => invoke('session_image', { cwd, n: Number(m[1]) })
+        const image = () => invoke('session_image', { id, n: Number(m[1]) })
         let hovering = false
         return {
           text: m[0],

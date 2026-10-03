@@ -226,20 +226,6 @@ fn create_path(path: String, dir: bool) -> Result<(), String> {
     if dir { fs::create_dir(&path) } else { fs::File::create_new(&path).map(|_| ()) }.map_err(err)
 }
 
-/// Claude Code saves pasted images as `%TEMP%\claude\<cwd slug>\<session>\images\<n>.png`.
-// ceiling: picks the newest session holding <n>.png, so two live sessions in one folder can cross wires.
-#[tauri::command(async)]
-fn session_image(cwd: String, n: u32) -> Option<PathBuf> {
-    let slug: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    fs::read_dir(std::env::temp_dir().join("claude").join(slug))
-        .ok()?
-        .flatten()
-        .map(|session| session.path().join("images").join(format!("{n}.png")))
-        .filter_map(|p| Some((fs::metadata(&p).ok()?.modified().ok()?, p)))
-        .max()
-        .map(|(_, p)| p)
-}
-
 /// A folder passed on the command line, as Explorer's "Open with nook" does.
 fn dir_arg(arg: &str) -> Option<String> {
     // Explorer quotes a drive root as "C:\", whose backslash escapes the closing quote: C:"
@@ -315,7 +301,6 @@ fn main() {
             theme::install_theme_zip,
             theme::zip_holds_theme,
             list_dir,
-            session_image,
             file_stamp,
             read_text,
             write_text,
@@ -336,6 +321,7 @@ fn main() {
             pty::pty_close,
             pty::pty_state,
             pty::pty_command,
+            pty::session_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running nook");
