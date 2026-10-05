@@ -11,6 +11,8 @@ import { ANSI, CLAUDE_SLOTS, slotVar, bytes } from './palette.js'
 const open = path => invoke('open_path', { path })
 export const SETTLE_MS = 100 // how long a dragged size holds still before Claude redraws for it and gradients go live
 const HOLD_MS = 500 // the longest xterm keeps holding the last frame for Claude's redraw
+/** Mouse tracking modes by rank, as DECSET numbers and as xterm's names. */
+const MOUSE = { none: 0, 9: 1, x10: 1, 1000: 2, vt200: 2, 1002: 3, drag: 3, 1003: 4, any: 4 }
 
 // xterm parses only hex/rgb(a).
 function rgba(color) {
@@ -102,6 +104,10 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
   term.loadAddon(new Unicode11Addon())
   term.unicode.activeVersion = '11'
   applyTheme(term)
+  // Claude sets mouse tracking again after each press, as ?1000h ?1002h ?1003h. xterm passes through 1000,
+  // which reports no drags, and drops the drag in progress, so no selection could start. A mode below the
+  // one in force is ignored.
+  term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, p => p.length === 1 && MOUSE[p[0]] < MOUSE[term.modes.mouseTrackingMode])
   term.open(host)
   fit.fit()
   const pictures = startPictures(term, host.querySelector('.xterm-screen'))

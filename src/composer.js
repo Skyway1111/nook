@@ -17,14 +17,17 @@ function ruleLabel(s, cols) {
 /** A `/model` alias as the menu shows it: opus[1m] is Opus 1M. */
 const aliasLabel = a => a[0].toUpperCase() + a.slice(1).replace('[1m]', ' 1M')
 
-/** A cell's foreground as CSS: Claude's RGB, a theme palette color, or '' for the default. */
-function fg(cell) {
-  if (cell.isFgDefault()) return ''
-  const c = cell.getFgColor()
-  if (cell.isFgRGB()) return '#' + c.toString(16).padStart(6, '0')
+/** A cell color as CSS: Claude's RGB, a theme palette color, or '' for the default. */
+function color(none, rgb, c) {
+  if (none) return ''
+  if (rgb) return '#' + c.toString(16).padStart(6, '0')
   const name = slotVar(c)
   return name ? `var(${name})` : ''
 }
+const fg = cell => color(cell.isFgDefault(), cell.isFgRGB(), cell.getFgColor())
+const bg = cell => color(cell.isBgDefault(), cell.isBgRGB(), cell.getBgColor()) // such as Claude's selection
+
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi)
 
 /** The model and effort menus and the context ring, from what nook's mod reports (`src-tauri/mod`). */
 function chipsHtml({ model, effort, context }) {
@@ -71,7 +74,7 @@ export function startComposer(term, host, id) {
     let text = ''
     let start = from
     const flush = () => {
-      if (text) html += `<span data-x="${start}" class="${style[0]}" style="color:${style[1]}">${esc(text)}</span>`
+      if (text) html += `<span data-x="${start}" class="${style[0]}" style="${style[1]}">${esc(text)}</span>`
       text = ''
     }
     for (let x = from; x < last; x++) {
@@ -80,8 +83,8 @@ export function startComposer(term, host, id) {
       if (!cell.getWidth()) continue // the right half of a wide character
       const cls = (cell.isBold() ? 'b ' : '') + (cell.isItalic() ? 'i ' : '') + (cell.isDim() ? 'd ' : '')
         + (cell.isUnderline() ? 'u ' : '') + (cell.isInverse() ? 'v' : '')
-      const color = fg(cell)
-      if (!style || cls !== style[0] || color !== style[1]) { flush(); style = [cls, color]; start = x }
+      const look = `color:${fg(cell)};background:${bg(cell)}`
+      if (!style || cls !== style[0] || look !== style[1]) { flush(); style = [cls, look]; start = x }
       text += cell.getChars() || ' '
     }
     flush()
@@ -185,21 +188,44 @@ export function startComposer(term, host, id) {
   measure.observe(host)
   measure.observe(screen)
 
-  // A click on the card lands on the cell under the same character, where Claude puts its caret.
+  /** Sends xterm a left-button event at the middle of cell `at`, which reaches Claude's mouse tracking. */
+  function send(type, at) {
+    const s = screen.getBoundingClientRect()
+    screen.dispatchEvent(new MouseEvent(type, {
+      bubbles: true,
+      buttons: type === 'mouseup' ? 0 : 1,
+      clientX: s.left + ((at.x + 0.5) * s.width) / term.cols,
+      clientY: s.top + ((at.y + 0.5) * s.height) / term.rows,
+    }))
+  }
+
+  // A press on the draft lands on the cell under the same character, where Claude puts its caret. A drag
+  // from there selects through Claude, which copies the selection on release.
   card.addEventListener('mousedown', e => {
     if (e.button !== 0 || e.target.closest('.thumbs, .chips')) return
     e.preventDefault() // the focus stays in xterm
     term.focus()
-    const target = hit(e.clientX, e.clientY)
-    if (!target) return
-    const s = screen.getBoundingClientRect()
-    const at = {
-      bubbles: true,
-      clientX: s.left + ((target.x + 0.5) * s.width) / term.cols,
-      clientY: s.top + ((target.y + 0.5) * s.height) / term.rows,
+    const from = hit(e.clientX, e.clientY)
+    if (!from) return
+    send('mousedown', from)
+    // xterm reads the drag from the document. Over the card, each real event stops at the window and goes on
+    // as the cell under its character. Off the card, xterm's own reading is right.
+    const drag = m => {
+      if (m.isTrusted && card.contains(m.target)) {
+        m.stopPropagation()
+        const d = parts.draft.getBoundingClientRect()
+        const to = hit(clamp(m.clientX, d.left, d.right - 1), clamp(m.clientY, d.top, d.bottom - 1)) ?? from
+        // Claude selects both end cells, so a forward drag ends on the character before the pointer.
+        const ahead = to.y > from.y || (to.y === from.y && to.x > from.x)
+        send(m.type, ahead ? { x: to.x - 1, y: to.y } : to)
+      }
+      if (m.type === 'mouseup') {
+        window.removeEventListener('mousemove', drag, true)
+        window.removeEventListener('mouseup', drag, true)
+      }
     }
-    screen.dispatchEvent(new MouseEvent('mousedown', { ...at, buttons: 1 }))
-    screen.dispatchEvent(new MouseEvent('mouseup', at))
+    window.addEventListener('mousemove', drag, true)
+    window.addEventListener('mouseup', drag, true)
   })
 
   // The wheel scrolls Claude's transcript, as it does over Claude's own prompt.
