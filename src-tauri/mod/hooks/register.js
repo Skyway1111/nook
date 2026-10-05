@@ -9,7 +9,7 @@ const ROW_PIXELS = 20 // a picture's pixels per row, so a small one draws near i
 const INDENT = 5 // to the text after `  ⎿  `
 const UNKNOWN = [1600, 900] // the size of a picture whose own can't be read
 const sizes = new Map() // a pasted image's path -> its size, as a promise
-let state = {}
+let state = { efforts: LEVELS }
 let wrote = ''
 let handled = '' // the last request run, so each runs once
 
@@ -113,15 +113,13 @@ export function register(on) {
       file = path
       const requests = path.replace(/\.json$/, '.cmd')
       handled = await $.fs.read(requests).catch(() => '') // a request from an earlier session is spent
-      await report($, file, { context: (await $.session.usage()).context, efforts: LEVELS, images: await imagesDir($), ...(await model($)) })
-      // /clear starts a new session, whose images go to a new folder.
-      const tick = async () => report($, file, { ...(await take($, requests)), images: await imagesDir($), ...(await model($)) })
+      // /clear starts a new session, with an empty context and a new images folder.
+      const tick = async () => report($, file, {
+        ...(await take($, requests)), context: (await $.session.usage()).context, images: await imagesDir($), ...(await model($)),
+      })
+      await tick()
       $.clock.every(250, () => tick().catch(() => {})) // a failed tick leaves the last report standing
     }
-    return next(e)
-  })
-  on('session.measure', async ($, e, next) => {
-    if (file) await report($, file, { context: e.context })
     return next(e)
   })
   // The effort each request goes out with, the main agent's only.

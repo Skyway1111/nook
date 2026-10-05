@@ -35,10 +35,12 @@ function chipsHtml({ model, effort, context }) {
   const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(model) // claude-opus-5-5[1m] is Opus 5.5
   const name = m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ''}` : model
   const words = `<button data-menu="model">${esc(name)}</button><button data-menu="effort">${esc(effort ?? 'effort')}</button>`
-  if (context?.percent == null) return words
-  const title = `${(context.tokens ?? 0).toLocaleString()} of ${context.window.toLocaleString()} tokens`
-  return words + `<svg class="ring" viewBox="0 0 20 20"><title>${title}</title><circle cx="10" cy="10" r="7.5"/>`
-    + `<circle cx="10" cy="10" r="7.5" pathLength="100" stroke-dasharray="${context.percent} 100"/></svg>`
+  if (!context?.window) return words
+  const { tokens = 0, percent = 0 } = context // a new or cleared session has no tokens yet
+  const arc = percent ? `<circle cx="10" cy="10" r="7.5" pathLength="100" stroke-dasharray="${percent} 100"/>` : ''
+  const title = `${tokens.toLocaleString()} of ${context.window.toLocaleString()} tokens`
+  return words + `<svg class="ring" viewBox="0 0 20 20"><title>${title}</title>`
+    + `<circle cx="10" cy="10" r="7.5"/>${arc}</svg>`
 }
 
 export function startComposer(term, host, id) {
