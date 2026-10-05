@@ -58,6 +58,8 @@ export function startComposer(term, host, id) {
   let report = '' // the mod's last report, as JSON
   let state = {} // ...and parsed
   let chips = ''
+  let scale = 1 // the draft's font size, in em of the card's
+  const range = document.createRange()
 
   /** The cell after the last one that draws anything. */
   function end(l, from) {
@@ -158,12 +160,26 @@ export function startComposer(term, host, id) {
     for (const k in parts) if (next[k] !== shown[k]) parts[k].innerHTML = next[k]
     if (next.rule !== shown.rule) frame.style.setProperty('--rule', next.rule)
     const moved = card.hidden || next.block !== shown.block
+    const typed = next.draft !== shown.draft
     shown = next
     card.hidden = false
     if (moved) place()
+    else if (typed) fit()
   }
 
-  /** Lines the card up with the screen's bottom rows, and hides Claude's own prompt under it. */
+  /** Shrinks the draft's font until its widest row fits. Claude wraps the draft by cells, and a row of them
+   * runs wider in the card's font. */
+  function fit() {
+    let widest = 0
+    for (const row of parts.draft.children) {
+      range.selectNodeContents(row)
+      widest = Math.max(widest, range.getBoundingClientRect().width)
+    }
+    const next = widest ? Math.min(1, Math.floor((100 * scale * parts.draft.clientWidth) / widest) / 100) : 1
+    if (next !== scale) parts.draft.style.fontSize = `${(scale = next)}em`
+  }
+
+  /** Lines the card up with the screen's bottom rows, hides Claude's own prompt under it, and fits the draft. */
   function place() {
     if (card.hidden || !geo) { rows.style.clipPath = ''; return }
     const { block } = shown
@@ -176,6 +192,7 @@ export function startComposer(term, host, id) {
     })
     card.style.setProperty('--row', `${geo.height / term.rows}px`) // a line per row, so the card fits
     rows.style.clipPath = `inset(0 0 ${below}px 0)`
+    fit()
   }
 
   term.onRender(render)

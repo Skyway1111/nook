@@ -123,6 +123,7 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .composer .mark { margin-right: 8px; color: var(--rule); }
 .composer .foot { display: flex; align-items: flex-end; gap: 12px; font-size: .86em; color: var(--ink-3); }
 .composer .hints { flex: 1; min-width: 0; }
+.composer .hints > div { overflow: hidden; text-overflow: ellipsis; } /* a narrow card keeps the menus clear */
 .composer .chips { display: flex; align-items: center; gap: 12px; color: var(--ink-2); }
 .composer .chips span { color: var(--ink-3); }
 .composer .chips button { height: var(--row); margin: 0 -6px; padding: 0 6px; border-radius: 5px; }
