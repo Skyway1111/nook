@@ -2,6 +2,8 @@
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::{
     collections::HashMap,
+    env::{self, JoinPathsError},
+    ffi::{OsStr, OsString},
     io::{Read, Write},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -61,6 +63,16 @@ fn forget(id: u64) {
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
+/// The user's plugin folders, then nook's mod, which loads beside them, never in place of them. A nook
+/// started from inside a nook session inherits that nook's mod, the `mod` beside its `nook.exe`, and
+/// the first `nook` would load in place of this one.
+fn plugin_dirs(inherited: &OsStr, nook_mod: PathBuf) -> Result<OsString, JoinPathsError> {
+    let theirs = env::split_paths(inherited).filter(|d| {
+        !d.as_os_str().is_empty() && !(d.ends_with("mod") && d.with_file_name("nook.exe").is_file())
+    });
+    env::join_paths(theirs.chain([nook_mod]))
+}
+
 fn size(cols: u16, rows: u16) -> PtySize {
     PtySize { cols, rows, pixel_width: 0, pixel_height: 0 }
 }
@@ -86,14 +98,9 @@ pub fn pty_spawn(
     cmd.env("FORCE_HYPERLINK", "1"); // Claude sends OSC 8 links only to terminals it recognizes
     // Claude draws a mod's Image as kitty graphics only in kitty and Ghostty unless this is set.
     cmd.env("CLAUDE_CODE_FORCE_TERMINAL_IMAGES", "1");
-    // nook's mod loads beside the user's plugins, never in place of them.
     let nook_mod = app.path().resource_dir().map_err(err)?.join("mod");
-    let mut dirs = std::env::var_os("CLAUDE_CODE_PLUGIN_DIRS").filter(|d| !d.is_empty()).unwrap_or_default();
-    if !dirs.is_empty() {
-        dirs.push(";");
-    }
-    dirs.push(&nook_mod);
-    cmd.env("CLAUDE_CODE_PLUGIN_DIRS", dirs);
+    let inherited = std::env::var_os("CLAUDE_CODE_PLUGIN_DIRS").unwrap_or_default();
+    cmd.env("CLAUDE_CODE_PLUGIN_DIRS", plugin_dirs(&inherited, nook_mod).map_err(err)?);
     cmd.env("NOOK_STATE", state_file(id));
     let mut child = pair.slave.spawn_command(cmd).map_err(err)?;
     let mut reader = pair.master.try_clone_reader().map_err(err)?;
@@ -165,4 +172,22 @@ pub fn session_image(id: u64, n: u32) -> Option<PathBuf> {
     let state: serde_json::Value = serde_json::from_str(&pty_state(id)?).ok()?;
     let path = PathBuf::from(state["images"].as_str()?).join(format!("{n}.png"));
     path.is_file().then_some(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plugin_dirs;
+    use std::{ffi::OsStr, fs};
+
+    #[test]
+    fn keeps_the_users_plugins_and_drops_another_nooks_mod() {
+        let other = std::env::temp_dir().join(format!("nook-plugin-dirs-{}", std::process::id()));
+        fs::create_dir_all(other.join("mod")).unwrap();
+        fs::write(other.join("nook.exe"), b"").unwrap();
+        let inherited = format!(r"C:\plugins\mine;;{}", other.join("mod").display());
+        let dirs = plugin_dirs(OsStr::new(&inherited), r"C:\nook\mod".into()).unwrap();
+        assert_eq!(dirs, OsStr::new(r"C:\plugins\mine;C:\nook\mod"));
+        assert_eq!(plugin_dirs(OsStr::new(""), r"C:\nook\mod".into()).unwrap(), OsStr::new(r"C:\nook\mod"));
+        fs::remove_dir_all(other).unwrap();
+    }
 }
