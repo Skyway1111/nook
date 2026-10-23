@@ -166,7 +166,8 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     const outside = e => e.target !== input && finish(true)
     addEventListener('pointerdown', outside, true)
     input.onblur = () => finish(true)
-    input.onkeydown = e => (e.key === 'Enter' ? finish(true) : e.key === 'Escape' && finish(false))
+    // A handler property that returns false cancels the key, so this one returns nothing.
+    input.onkeydown = e => { if (e.key === 'Enter' || e.key === 'Escape') finish(e.key === 'Enter') }
     // Explorer refuses these as they're typed.
     input.addEventListener('beforeinput', e => {
       if (/[\\/:*?"<>|]/.test(e.data ?? '')) {
