@@ -4,6 +4,7 @@
 // fill, and pasted images' folder as JSON to NOOK_STATE, and reads requests from the .cmd file beside it:
 // { command, args, at }.
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
+const MODELS = ['fable', 'opus', 'sonnet', 'haiku'] // the menu's aliases, each its family's latest model
 const ROWS = 20 // the tallest picture, in rows
 const ROW_PIXELS = 20 // a picture's pixels per row, so a small one draws near its own size
 const INDENT = 5 // to the text after `  ⎿  `
@@ -19,14 +20,14 @@ async function report($, file, patch) {
   if (text !== wrote) await $.fs.write(file, (wrote = text))
 }
 
-/** The model, the `/model` aliases with the one in use, and the model's saved effort when it changes. */
+/** The model, the menu's aliases that Claude offers, and the model's saved effort when it changes. */
 async function model($) {
   const id = await $.session.model()
   if (id === state.model) return {}
   const row = (await $.config.list()).find(r => r.key === 'model')
   const { modelSettings, effortLevel } = await $.settings.read()
   const effort = modelSettings?.[id.replace(/\[.*\]$/, '')]?.effortLevel ?? effortLevel
-  return { model: id, alias: row?.value, models: row?.options, ...(effort && { effort }) }
+  return { model: id, models: MODELS.filter(a => row?.options?.includes(a)), ...(effort && { effort }) }
 }
 
 /** Runs a request from nook's menus, if one arrived: `/model <alias>` or `/effort <level>`. */

@@ -14,8 +14,7 @@ function ruleLabel(s, cols) {
   return m ? (m[1] ?? '') : null
 }
 
-/** A `/model` alias as the menu shows it: opus[1m] is Opus 1M. */
-const aliasLabel = a => a[0].toUpperCase() + a.slice(1).replace('[1m]', ' 1M')
+const capital = s => s[0].toUpperCase() + s.slice(1)
 
 /** A cell color as CSS: Claude's RGB, a theme palette color, or '' for the default. */
 function color(none, rgb, c) {
@@ -33,7 +32,7 @@ const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi)
 function chipsHtml({ model, effort, context }) {
   if (!model) return ''
   const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(model) // claude-opus-5-5[1m] is Opus 5.5
-  const name = m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ''}` : model
+  const name = m ? `${capital(m[1])} ${m[2]}${m[3] ? `.${m[3]}` : ''}` : model
   const words = `<button data-menu="model">${esc(name)}</button><button data-menu="effort">${esc(effort ?? 'effort')}</button>`
   if (!context?.window) return words
   const { tokens = 0, percent = 0 } = context // a new or cleared session has no tokens yet
@@ -278,8 +277,9 @@ export function startComposer(term, host, id) {
     if (!menu) return
     // The mod runs the pick as /model or /effort once Claude is idle, and the draft stays as typed.
     const pick = (command, args) => () => { invoke('pty_command', { id, command, args }); term.focus() }
+    const family = /^claude-([a-z]+)/.exec(state.model)?.[1] // the alias that names the model in use
     openMenu(e, menu === 'model'
-      ? (state.models ?? []).map(a => [aliasLabel(a), a === state.alias ? CHECK : '', pick('model', a)])
+      ? (state.models ?? []).map(a => [capital(a), a === family ? CHECK : '', pick('model', a)])
       : (state.efforts ?? []).map(l => [l, l === state.effort ? CHECK : '', pick('effort', l)]))
   })
 
