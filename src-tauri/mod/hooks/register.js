@@ -793,7 +793,13 @@ export function register(on) {
       if (parts) rows.push([[cut(command, 40), null], ...parts])
     }
     const read = readPaths(e.props.calls, root)
+    // Pictures Claude read, then pictures its commands saved: a folded Read draws nothing of its own.
     const pictures = []
+    for (const call of e.props.calls) {
+      if (call.tool !== 'Read' || call.isRunning || call.isErrored) continue
+      const size = readSize(String(call.input?.file_path ?? ''), call.output)
+      if (size) pictures.push([call.input.file_path, size])
+    }
     for (const call of e.props.calls) pictures.push(...((await made.get(call.tool_use_id)) ?? []))
     if (!rows.length && !read.length && !pictures.length) return next(e)
     const { Box, Text } = $.ui.resolve(e)
