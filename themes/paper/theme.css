@@ -1,0 +1,52 @@
+/* Paper: a light theme for daylight. Warm off-white pages, ink-dark text, and a deep blue for Claude. */
+
+:root {
+  --h: 250;
+  --scheme: light;
+  --bg: #f4f1ea;
+  --raised: #e9e4d9;
+  --hover: oklch(.2 .02 60 / .06);
+  --line: oklch(.2 .02 60 / .12);
+  --ink-1: #1f1d1a;
+  --ink-2: #4a463f;
+  --ink-3: #87806f;
+  --accent: #2f5bb7;
+  --shadow: 0 10px 28px oklch(.3 .03 60 / .18);
+  --icon-image: #a2378f;
+  --icon-code: #1b7a80;
+
+  --term-bg:
+    radial-gradient(90% 70% at 100% 0%, oklch(.93 .03 250 / .8), transparent 70%),
+    radial-gradient(70% 60% at 0% 100%, oklch(.94 .04 80 / .7), transparent 70%),
+    #faf8f3;
+  --term-fg: #2a2723;
+  --cursor: #2f5bb7;
+  --selection: oklch(.6 .12 250 / .25);
+
+  /* Darker than a dark theme's, so each still reads on paper. */
+  --ansi-black: #2a2723;
+  --ansi-red: #b42f2f;
+  --ansi-green: #2f7d32;
+  --ansi-yellow: #8a6200;
+  --ansi-blue: #2f5bb7;
+  --ansi-magenta: #8e3a9c;
+  --ansi-cyan: #11717a;
+  --ansi-white: #d8d2c4;
+  --ansi-bright-black: #7d7667;
+  --ansi-bright-red: #cc4a3c;
+  --ansi-bright-green: #3e9443;
+  --ansi-bright-yellow: #a77a00;
+  --ansi-bright-blue: #4673cc;
+  --ansi-bright-magenta: #a650b4;
+  --ansi-bright-cyan: #1c8a93;
+  --ansi-bright-white: #f4f1ea;
+
+  --claude-claude: #c15f3c;
+  --claude-claudeShimmer: color-mix(in oklch, var(--claude-claude), black 25%);
+  --claude-clawd_background: var(--ansi-white);
+  --claude-permissionShimmer: color-mix(in oklch, var(--claude-permission), black 25%);
+  --claude-userMessageBackground: oklch(.2 .02 60 / .06);
+  --claude-userMessageBackgroundHover: oklch(.2 .02 60 / .1);
+
+  --wallpaper-opacity: .4;
+}

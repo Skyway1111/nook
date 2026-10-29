@@ -66,7 +66,7 @@ To push and fetch over HTTPS, click **Sign in** under GitHub in the same drawer.
 
 ## Themes
 
-**Theme** in the Settings drawer shows a card for each installed theme. Click one to use it in every window. nook ships with five themes. Twilight sets Frederic Edwin Church's painting *Twilight in the Wilderness* behind the window. Fjord, Ember, Phosphor, and Sakura are color only: slate and frost, charcoal and coals, an old green screen, and plum with petal pink. A newer nook adds the themes it ships without bringing back one you removed.
+**Theme** in the Settings drawer shows a card for each installed theme. Click one to use it in every window. nook ships with six themes. Twilight sets Frederic Edwin Church's painting *Twilight in the Wilderness* behind the window. Fjord, Ember, Phosphor, and Sakura are color only: slate and frost, charcoal and coals, an old green screen, and plum with petal pink. Paper is the light one, for daylight. A newer nook adds the themes it ships without bringing back one you removed.
 
 To make a theme from any photo or painting, click **From a picture…**. nook reads the picture's own palette and builds the theme from it, in the window, with nothing uploaded.
 
