@@ -8,7 +8,7 @@ export const ICON = {
   dir: '', file: '', image: '', code: '', doc: '', drive: '', diff: '±',
   claude: '', pin: '', unpin: '', add: '', copy: '', open: '', explorer: '',
   cut: '', paste: '', rename: '', delete: '', folder: '', openWith: '', properties: '',
-  theme: '', play: '', history: '', worktree: '',
+  theme: '', play: '', history: '', worktree: '', merge: '',
   prompt: '', send: '', save: '', split: '', close: '',
 }
 export const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i

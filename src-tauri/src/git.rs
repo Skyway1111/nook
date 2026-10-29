@@ -19,8 +19,9 @@ const UNTRACKED_SHOWN: usize = 100;
 
 /// Runs git in `dir`, feeding it `input`. Ok is its output; Err is what it said went wrong.
 fn run(dir: &Path, args: &[impl AsRef<OsStr>], input: Option<&str>) -> Result<String, String> {
-    // Nobody can answer a hidden prompt: fail, don't hang.
-    crate::run(Command::new("git").current_dir(dir).args(args).env("GIT_TERMINAL_PROMPT", "0"), input)
+    // Nobody can answer a hidden prompt: fail, don't hang. An editor of ":" is one git never opens, so
+    // continuing a merge or rebase keeps the message git wrote.
+    crate::run(Command::new("git").current_dir(dir).args(args).env("GIT_TERMINAL_PROMPT", "0").env("GIT_EDITOR", ":"), input)
 }
 
 /// Any git command in `dir`: staging, commits, branches, sync, and GitHub sign-in through
@@ -45,6 +46,8 @@ pub struct Status {
     remote: Option<String>,
     /// The last commit's subject.
     subject: String,
+    /// What git is in the middle of: merge, rebase, cherry-pick, revert, or am.
+    operation: Option<&'static str>,
     changes: Vec<Change>,
 }
 
@@ -98,10 +101,36 @@ pub async fn git_status(path: String) -> Result<Option<Status>, String> {
         if let Some(oid) = &s.oid {
             s.subject = subject(root, oid);
         }
+        s.operation = operation(root);
         Ok(Some(s))
     })
     .await
     .map_err(err)?
+}
+
+/// What git is in the middle of in the repository at `root`, from the files it keeps in its git folder
+/// meanwhile: a few file checks, no process.
+fn operation(root: &Path) -> Option<&'static str> {
+    let dot = root.join(".git");
+    // In a worktree or submodule, `.git` is a file that names the git folder.
+    let dir = match std::fs::read_to_string(&dot) {
+        Ok(file) => root.join(file.strip_prefix("gitdir:")?.trim()),
+        Err(_) => dot,
+    };
+    let has = |name: &str| dir.join(name).exists();
+    if has("rebase-merge") {
+        Some("rebase")
+    } else if has("rebase-apply") {
+        Some(if has("rebase-apply/applying") { "am" } else { "rebase" })
+    } else if has("MERGE_HEAD") {
+        Some("merge")
+    } else if has("CHERRY_PICK_HEAD") {
+        Some("cherry-pick")
+    } else if has("REVERT_HEAD") {
+        Some("revert")
+    } else {
+        None
+    }
 }
 
 /// Commit subjects by id. A commit never changes, so an entry never goes stale.
@@ -349,6 +378,23 @@ mod tests {
         assert_eq!(s.changes, [change("a b.txt", 'M', Staged::Off, 1, 1)]);
         assert_eq!(subject(&dir, s.oid.as_deref().unwrap()), "First");
         assert!(git(&["commit", "-q", "-m", "x"], None).is_err()); // nothing staged
+
+        // A merge that conflicts, then carries on once settled, with the message git wrote.
+        assert_eq!(operation(&dir), None);
+        git(&[&id[..], &["commit", "-qam", "Spanish"]].concat(), None).unwrap();
+        git(&["switch", "-qc", "french", "HEAD~1"], None).unwrap();
+        std::fs::write(dir.join("a b.txt"), "un\n").unwrap();
+        git(&[&id[..], &["commit", "-qam", "French"]].concat(), None).unwrap();
+        git(&["switch", "-q", "main"], None).unwrap();
+        assert!(git(&[&id[..], &["merge", "french"]].concat(), None).is_err());
+        assert_eq!(operation(&dir), Some("merge"));
+        let s = parse_status(&read(&["status", "--porcelain=v2", "-z", "--branch"]), "");
+        assert_eq!(s.changes, [change("a b.txt", 'U', Staged::Off, 0, 0)]);
+        std::fs::write(dir.join("a b.txt"), "uno, un\n").unwrap();
+        git(&["add", "a b.txt"], None).unwrap();
+        git(&[&id[..], &["commit", "--no-edit"]].concat(), None).unwrap();
+        assert_eq!(operation(&dir), None);
+        assert_eq!(subject(&dir, read(&["rev-parse", "HEAD"]).trim()), "Merge branch 'french'");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -1,6 +1,6 @@
 // The git panel: the active tab's repository, its changes, branch, and commit box. Every action
 // is a git command run by git.rs, so hooks and credential helpers behave as in a terminal. diff.js
-// draws the diff tabs it opens, and history.js the history tabs.
+// draws the diff tabs it opens, history.js the history tabs, and merge.js a conflicted file's tab.
 import { invoke } from '@tauri-apps/api/core'
 import { $, el, openMenu, openPicker, dragPath } from './ui.js'
 import { ICON, basename } from './files.js'
@@ -27,6 +27,14 @@ const SYNC = {
 }
 // Paths go over stdin, NUL-separated: no command-line limit, and no file name read as a flag.
 const PATHSPEC = ['--pathspec-from-file=-', '--pathspec-file-nul']
+/** What git is in the middle of: how the panel says it, and the commands that finish it or call it off. */
+const OPERATION = {
+  merge: ['Merging', ['commit', '--no-edit'], ['merge', '--abort']],
+  rebase: ['Rebasing', ['rebase', '--continue'], ['rebase', '--abort']],
+  'cherry-pick': ['Cherry-picking', ['cherry-pick', '--continue'], ['cherry-pick', '--abort']],
+  revert: ['Reverting', ['revert', '--continue'], ['revert', '--abort']],
+  am: ['Applying patches', ['am', '--continue'], ['am', '--abort']],
+}
 /** The last segment of a git path; an untracked folder keeps its trailing slash. */
 const leaf = rel => rel.slice(rel.lastIndexOf('/', rel.length - 2) + 1)
 /** A git path as a path under `root`. */
@@ -108,6 +116,15 @@ export function startGit({ openView, openFile, insertPath }) {
     if (!items.length) items.push(el('li', { className: 'empty', textContent: 'No changes' }))
     list.replaceChildren(...items)
 
+    const op = OPERATION[s.operation]
+    const conflicts = changes.filter(c => c.kind === 'U').length
+    $('git-op').hidden = !op
+    if (op) {
+      $('git-op-text').textContent = conflicts ? `${op[0]} \u00b7 ${conflicts} conflict${conflicts > 1 ? 's' : ''}` : `${op[0]} \u00b7 ready to continue`
+      Object.assign($('git-continue'), { disabled: conflicts > 0, title: conflicts ? 'Settle the conflicts first' : `git ${op[1].join(' ')}` })
+      $('git-abort').title = `git ${op[2].join(' ')}: back to where you started`
+    }
+
     $('git-branch-name').textContent = s.branch ?? `detached at ${s.oid?.slice(0, 7)}`
     const next = nextSync()
     $('git-sync-group').hidden = !next
@@ -123,10 +140,11 @@ export function startGit({ openView, openFile, insertPath }) {
     const staged = changes.filter(c => c.staged !== 'off')
     const target = staged.length ? staged : changes.filter(c => c.kind !== '?' && c.kind !== 'U')
     commitAll = !staged.length
-    suggestion = target.length === 1 ? `${VERB[target[0].kind] ?? 'Update'} ${leaf(target[0].path)}` : ''
-    message.placeholder = suggestion || 'Commit message'
+    suggestion = !op && target.length === 1 ? `${VERB[target[0].kind] ?? 'Update'} ${leaf(target[0].path)}` : ''
+    message.placeholder = op ? (s.operation === 'merge' ? 'Merge commit message' : `${op[0]}: Continue finishes it`) : suggestion || 'Commit message'
     commitButton.textContent = commitAll && target.length ? 'Commit tracked' : 'Commit'
-    commitButton.disabled = !target.length || committing
+    // Mid-merge a commit with your own message finishes it; mid-rebase and the like, only Continue does.
+    commitButton.disabled = !target.length || committing || (op && (conflicts > 0 || s.operation !== 'merge'))
 
     $('git-last').hidden = !s.oid
     $('git-subject').textContent = $('git-subject').title = s.subject
@@ -196,6 +214,17 @@ export function startGit({ openView, openFile, insertPath }) {
     })
   }
 
+  /** A conflicted file's tab, to settle its conflicts and mark it resolved. */
+  function openMerge(status, rel) {
+    const { root } = status
+    const path = abs(root, rel)
+    const run = args => act(args, undefined, root).then(ok => ok || said)
+    openView('merge', leaf(rel), path, view => {
+      const merge = import('./merge.js').then(m => m.startMerge(view, { root, path, rel, name: leaf(rel), run, openFile }))
+      return { refresh: () => merge.then(m => m.refresh()) }
+    })
+  }
+
   /** A history tab of `rel` in the repository `status` describes ('' is all of it), at the commit `oid` if given. */
   function openHistory(status, rel, oid) {
     const { root } = status
@@ -225,7 +254,8 @@ export function startGit({ openView, openFile, insertPath }) {
     } else if (group) {
       if (!collapsed.delete(group)) collapsed.add(group)
       render()
-    } else openDiff(s, path)
+    } else if (s.changes.find(c => c.path === path)?.kind === 'U') openMerge(s, path)
+    else openDiff(s, path)
   })
   list.addEventListener('contextmenu', e => {
     const li = e.target.closest('li.change')
@@ -247,6 +277,9 @@ export function startGit({ openView, openFile, insertPath }) {
   })
   $('git-diff').onclick = () => openDiff(s, '')
   $('git-subject').onclick = $('git-history').onclick = () => openHistory(s, '')
+  $('git-continue').onclick = () => act(OPERATION[s.operation][1])
+  $('git-abort').onclick = e =>
+    openMenu(e, [[`Abort and undo the ${s.operation === 'am' ? 'patches' : s.operation}`, ICON.delete, () => act(OPERATION[s.operation][2])]])
   $('git-stage-all').onclick = () => stage(s.changes, s.changes.some(c => c.staged !== 'on'))
 
   $('git-branch').onclick = async e => {
