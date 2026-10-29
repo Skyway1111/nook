@@ -262,7 +262,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     search ??= import('./search.js').then(m => m.startSearch(term, host))
     search.then(s => s.open())
   }
-  const turns = startTurns(term)
+  const turns = startTurns(term, send)
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true
     if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyF') {
