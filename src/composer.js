@@ -27,6 +27,7 @@ const fg = cell => color(cell.isFgDefault(), cell.isFgRGB(), cell.getFgColor())
 const bg = cell => color(cell.isBgDefault(), cell.isBgRGB(), cell.getBgColor()) // such as Claude's selection
 
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi)
+const same = (a, b) => a?.from === b?.from && a?.to === b?.to && a?.px === b?.px
 
 /** The model and effort menus and the context ring, from what nook's mod reports (`src-tauri/mod`). */
 function chipsHtml({ model, effort, context }) {
@@ -61,6 +62,9 @@ export function startComposer(term, host, id) {
   let geo = null // the screen's box inside the host, measured on resize
   let held = null // the rows of the frame xterm holds while a resize waits for Claude's redraw
   let tall = 0 // the card's height as last laid out, 0 while it or its tab is hidden
+  let taller = false // whether the card is taller than Claude's prompt block
+  let gap = null // blank rows under the transcript that take the card instead of the transcript's top: { from, to, top }
+  let raised = null // the rows between that gap and the prompt, raised with the card: { from, to, px }
   let report = '' // the mod's last report, as JSON
   let state = {} // ...and parsed
   let chips = ''
@@ -216,14 +220,17 @@ export function startComposer(term, host, id) {
     const typed = next.draft !== shown.draft
     shown = next
     card.hidden = false
-    if (!changed) return
+    // The rows above the prompt can change the rows the card raises, as when a menu opens.
+    if (!changed && !(taller && !same(gap, blanks(term.rows - next.block)))) return
     if (typed) reveal()
     layout()
   }
 
   /** Hides Claude's prompt block under the card, which sits on the terminal's bottom edge, and moves the screen
    * by the card's height less that block, so Claude's rows above the prompt, such as the slash menu, sit right
-   * above the card. A frame xterm holds through a resize keeps its bottom row on the screen's bottom row. */
+   * above the card. While the transcript is short, the blank rows under it take the card instead, so its top
+   * stays on screen and only the rows between them and the prompt move up. A frame xterm holds through a resize
+   * keeps its bottom row on the screen's bottom row. */
   function layout() {
     if (!geo) return
     if (card.offsetHeight !== tall) {
@@ -237,13 +244,51 @@ export function startComposer(term, host, id) {
     if (card.hidden) {
       rows.style.clipPath = ''
       screen.style.transform = helpers.style.transform = ''
+      raise(null)
       return
     }
     const below = shown.block * h
     rows.style.clipPath = `inset(0 0 ${below + hold}px 0)`
     const shift = snap(tall - below)
-    screen.style.transform = shift ? `translateY(${-shift}px)` : ''
+    taller = shift > 0
+    if (held == null) gap = taller ? blanks(term.rows - shown.block) : null // a held frame keeps its rows
+    const lift = gap ? Math.min(shift, snap((gap.to - gap.from) * h)) : 0
+    screen.style.transform = shift - lift ? `translateY(${lift - shift}px)` : ''
+    raise(lift ? { from: gap.to, to: gap.top, px: lift } : null)
     follow()
+  }
+
+  /** The lowest run of two or more blank rows above row `top` with something above it, or null. A single blank
+   * row is a paragraph's end, which moves as Claude writes. */
+  function blanks(top) {
+    for (let y = top - 1, below = top; y >= 0; y--) {
+      if (!end(line(y), 0)) continue
+      if (below - y > 2) return { from: y + 1, to: below, top }
+      below = y
+    }
+    return null
+  }
+
+  /** Moves rows `next.from` up to `next.to` up `next.px` more than the screen. */
+  function raise(next) {
+    if (same(raised, next)) return
+    const set = ({ from, to }, transform) => { for (let y = from; y < to; y++) if (rows.children[y]) rows.children[y].style.transform = transform }
+    if (raised) set(raised, '')
+    if (next) set(next, `translateY(${-next.px}px)`)
+    raised = next
+  }
+
+  // xterm finds the cell under the pointer from the screen's box, so a press, a move, or a link's hover over the
+  // raised rows goes to the rows they are: Claude's slash menu takes clicks.
+  const mouse = term._core?._mouseService
+  for (const f of ['getCoords', 'getMouseReportCoords']) {
+    const real = mouse?.[f]?.bind(mouse)
+    if (real) mouse[f] = (e, ...rest) => real(raised && held == null ? lower(e) : e, ...rest)
+  }
+  function lower(e) {
+    const h = geo.height / term.rows
+    const y = e.clientY - screen.getBoundingClientRect().top + raised.px
+    return y >= raised.from * h && y < raised.to * h ? { clientX: e.clientX, clientY: e.clientY + raised.px } : e
   }
 
   /** Moves xterm's textarea, which sits at Claude's cursor cell, to the card's caret. */

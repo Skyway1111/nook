@@ -10,8 +10,7 @@ import { el } from './ui.js'
 
 const FRAME_MS = 100 // ten frames a second. Characters step from cell to cell, so more frames would only cost.
 const SPEEDS = [.25, 3] // --wallpaper-speed's range. Below 1 the frames slow with the scene, so a slower scene costs less.
-const ECHO_MS = 50 // after a key, the next frame waits this long, so the key's echo never waits on a frame
-const REST_MS = 600 // after a resize, the wallpaper holds still this long
+const ECHO_MS = 50 // after a key, a frame waits this long at most for the key's echo, and draws in the animation frame after it
 const THUMB_PX = 4 // the picker's thumbnails draw their cells this many pixels high
 const SETTLE_MS = 100 // while the pane resizes, the last bitmap stretches; it redraws at the new size once this long passes without one, as backdrops.js does
 const still = matchMedia('(prefers-reduced-motion: reduce)')
@@ -107,7 +106,8 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   let cells = null // the canvas's context, cells, and glyph atlas, from fit, while a scene shows
   let onCanvas = null, spare = null // the grid on the canvas, and one to draw the next frame into
   let floor = 0 // the scene stands this many CSS pixels above the pane's bottom, on the composer card
-  let quiet = -Infinity, lastFrame = -Infinity, raf = 0 // no frame draws before `quiet`, after a key or a resize
+  let quiet = -Infinity, lastFrame = -Infinity, raf = 0 // no frame draws before `quiet`, while the pane resizes
+  let typed = -Infinity // when the last key went down; until a terminal paints its echo, no frame draws on its own
   let picker = null // the open picker's { focus, restyle, tick, close }
   const held = new Map() // a picker slider's value, by variable, shown until theme.css carries it
 
@@ -147,14 +147,16 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
     onCanvas = g
   }
 
-  // One loop serves the pane and the picker's thumbnails. It stops while nothing moves, and waits out a key's echo.
-  // A timer wakes it once a frame, and the frame draws in the next animation frame, so the page isn't asked
-  // for an animation frame sixty times a second to draw ten.
+  // One loop serves the pane and the picker's thumbnails. It stops while nothing moves. A timer wakes it once a
+  // frame, and the frame draws in the next animation frame, so the page isn't asked for an animation frame sixty
+  // times a second to draw ten. A frame that comes due while a key waits for its echo draws in the animation
+  // frame after a terminal paints, so the echo never waits on it, and a held key never stops the scene.
   let timer = 0
+  const due = now => now - lastFrame >= frameMs() - 4 && now >= quiet
   function schedule() {
     if (timer || raf || (!live() && !picker) || still.matches) return
     const now = performance.now()
-    const wait = Math.max(0, frameMs() - (now - lastFrame), quiet - now)
+    const wait = Math.max(0, frameMs() - (now - lastFrame), quiet - now, typed + ECHO_MS - now)
     timer = setTimeout(() => {
       timer = 0
       if (!raf) raf = requestAnimationFrame(frame)
@@ -163,13 +165,23 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   function frame(now) {
     raf = 0
     if (!live() && !picker) return
-    if (now - lastFrame >= frameMs() - 4 && now >= quiet) {
+    if (due(now) && now - typed >= ECHO_MS) {
       lastFrame = now
       if (live()) draw(now)
       picker?.tick(clock(now))
     }
     schedule()
   }
+  pane.addEventListener('nook-render', () => {
+    if (typed === -Infinity) return
+    typed = -Infinity // the echo painted
+    if (!timer && !raf) return
+    clearTimeout(timer)
+    cancelAnimationFrame(raf) // one that would share the echo's paint
+    timer = raf = 0
+    if (due(performance.now() + 16)) raf = requestAnimationFrame(frame)
+    else schedule()
+  })
 
   /** Shows or hides the canvas for what's in front, and runs the loop while anything moves. */
   function update() {
@@ -220,11 +232,11 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   }
   new ResizeObserver(() => {
     if (!cells) return
-    quiet = performance.now() + REST_MS
+    quiet = performance.now() + SETTLE_MS // the scene moves on from the redraw at the settled size
     resettle()
   }).observe(pane)
   pane.addEventListener('nook-card', () => { if (cells && stand() !== floor) resettle() })
-  addEventListener('keydown', () => { if (!picker) quiet = Math.max(quiet, performance.now() + ECHO_MS) }, true)
+  addEventListener('keydown', () => { if (!picker) typed = performance.now() }, true)
   document.addEventListener('visibilitychange', update)
   addEventListener('focus', () => { focused = true; update() })
   addEventListener('blur', () => { focused = false; update() })

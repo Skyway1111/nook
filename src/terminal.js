@@ -261,6 +261,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
       again = false
       refit()
     }
+    host.dispatchEvent(new Event('nook-render', { bubbles: true })) // the wallpaper's frame that waits on a key's echo follows it
   })
   new ResizeObserver(refit).observe(host)
 

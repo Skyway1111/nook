@@ -260,9 +260,16 @@ export function startPictures(term, screen, reply = () => {}) {
     wrote,
     /** The file a picture on screen was named by, or undefined for one sent whole or drawn by nook. */
     pathOf: id => files.get(id)?.path,
-    /** Hides the placeholder cells among a row's new spans, under the picture that covers them. */
+    /** Blanks the placeholder cells among a row's new spans, under the picture that covers them. No font has
+     * U+10EEEE, so laid out as text, each cell sent the browser looking for one, about 37 ms a row per redraw. */
     hide(spans) {
-      if (seen) for (const s of spans) if (s.textContent.startsWith(PLACEHOLDER)) s.style.visibility = 'hidden'
+      if (!seen) return
+      for (const s of spans) {
+        if (!s.textContent.startsWith(PLACEHOLDER)) continue
+        s.textContent = ' '.repeat(s.textContent.split(PLACEHOLDER).length - 1)
+        s.style.letterSpacing = '' // xterm's, which squeezed the fallback glyphs into their cells
+        s.style.visibility = 'hidden'
+      }
     },
   }
 }
