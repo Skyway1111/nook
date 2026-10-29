@@ -99,6 +99,7 @@ const git = startGit({ openView: (...args) => tabs.openView(...args), openFile, 
 tabs = startTabs({
   settings,
   home,
+  onSessionsOpen: list => invoke('update_settings', { patch: { sessions: list } }).catch(() => {}),
   openFolder: dir => { document.body.classList.remove('files-hidden'); files.go(dir) },
   onShow: tab => {
     files.mark(tab.viewer ? tab.path : '')
@@ -282,7 +283,15 @@ addEventListener('keydown', e => {
 addEventListener('contextmenu', e => e.preventDefault())
 
 mark('chrome')
-await tabs.openClaude(cwd)
+// The Claude sessions open when nook last closed come back, resumed, each starting as its tab first shows,
+// so reopening five costs what opening one does.
+const reopen = window.NOOK_REOPEN ? settings.sessions : []
+if (reopen.length) {
+  const opened = await Promise.all(reopen.map(s => tabs.openClaude(s.dir, [], { resume: s, later: true })))
+  const first = opened[reopen.findIndex(s => s.active)] ?? opened[0]
+  tabs.show(first)
+  await first.started
+} else await tabs.openClaude(cwd)
 mark('spawned')
 // First run only: the welcome loads once Claude's tab is up, so it never delays an open.
 if (drawer.firstRun) welcome()

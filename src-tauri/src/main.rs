@@ -82,6 +82,25 @@ struct Settings {
     /// Quick prompts, which Ctrl+Shift+P pastes into Claude's prompt. `{file}` is the file open last,
     /// `{folder}` the file browser's folder.
     prompts: Vec<Prompt>,
+    /// Whether nook reopens the Claude sessions that were open when it closed.
+    reopen_sessions: bool,
+    /// The Claude sessions open now, in tab order, for the next start to resume.
+    sessions: Vec<OpenSession>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct OpenSession {
+    /// Where the tab started Claude.
+    dir: String,
+    /// Claude Code's session id, for `claude --resume`.
+    id: String,
+    /// Its first prompt, for the tab's tooltip until it starts.
+    #[serde(default)]
+    prompt: String,
+    /// Whether its tab was the one showing.
+    #[serde(default)]
+    active: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -114,6 +133,8 @@ impl Default for Settings {
             theme: None,
             claude_follows: true,
             claude_theme: None,
+            reopen_sessions: true,
+            sessions: Vec::new(),
             prompts: PROMPTS.iter().map(|(name, text)| Prompt { name: name.to_string(), text: text.to_string() }).collect(),
         }
     }
@@ -162,10 +183,11 @@ struct Boot {
 #[tauri::command(async)]
 fn boot(app: AppHandle) -> Boot {
     app.state::<pty::Sessions>().close_all();
-    let (settings, error) = match read_settings(&app) {
+    let (mut settings, error) = match read_settings(&app) {
         Ok(s) => (s, None),
         Err(e) => (Settings::default(), Some(e)),
     };
+    settings.sessions.retain(|s| Path::new(&s.dir).is_dir()); // a folder since moved or deleted reopens nothing
     let home = std::env::var(HOME_VAR).unwrap_or_default();
     Boot { settings, error, config_dir: config_dir(&app), home }
 }
@@ -380,10 +402,10 @@ fn main() {
             let settings = read_settings(app.handle()).unwrap_or_default();
             priority::keep_typing_path_elevated(settings.command.first().map_or("", String::as_str));
             // `nook <dir>` opens there; otherwise in the last session's folder.
-            let start = std::env::args()
-                .nth(1)
-                .as_deref()
-                .and_then(dir_arg)
+            let asked = std::env::args().nth(1).as_deref().and_then(dir_arg);
+            // A folder asked for opens a new session there instead of reopening the last ones.
+            let reopen = asked.is_none() && settings.reopen_sessions;
+            let start = asked
                 .or(Some(settings.last_dir).filter(|d| Path::new(d).is_dir()))
                 .unwrap_or_else(|| Settings::default().last_dir);
             // Browser args, and on Linux the compositing mode, are fixed when the webview starts: a change
@@ -407,8 +429,9 @@ fn main() {
                 .background_color(tauri::window::Color(20, 18, 28, 255))
                 .additional_browser_args(&format!("{WRY_ARGS}{gpu}"))
                 .initialization_script(format!(
-                    "window.NOOK_CWD = {}; window.NOOK_BENCH = {};",
+                    "window.NOOK_CWD = {}; window.NOOK_REOPEN = {}; window.NOOK_BENCH = {};",
                     serde_json::to_string(&start)?,
+                    reopen,
                     bench
                 ))
                 // The settings drawer's font pickers list installed fonts through queryLocalFonts().
@@ -493,6 +516,14 @@ mod tests {
         assert!(s.gpu);
         assert_eq!((s.git_width, s.files_width), (Some(300), None));
         assert!(merge(Settings::default(), patch(json!({ "command": "claude" }))).is_err());
+    }
+
+    #[test]
+    fn keeps_the_open_sessions() {
+        let patch = json!({ "sessions": [{ "dir": "/work", "id": "abc", "active": true }] });
+        let s = merge(Settings::default(), patch.as_object().unwrap().clone()).unwrap();
+        assert_eq!(s.sessions, [super::OpenSession { dir: "/work".into(), id: "abc".into(), prompt: String::new(), active: true }]);
+        assert!(s.reopen_sessions);
     }
 
     #[test]

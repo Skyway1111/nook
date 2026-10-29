@@ -23,7 +23,7 @@ sash.onpointerdown = e => {
 sash.ondblclick = () => pane.style.removeProperty('--split')
 
 /** `settings.command` is what each new Claude tab runs. */
-export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
+export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, openFolder }) {
   const tabs = []
   let active = null
   let claude = null // the Claude tab shown last: where paths go while a file tab is showing
@@ -74,11 +74,13 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
     retitle()
     onShow(tab)
     focus()
+    save()
     sessions.poll() // a done mark clears as its tab shows
   }
 
   // A hidden terminal skips theme changes, so it catches up as it shows. Its size catches up on its own.
   function catchUp(tab) {
+    tab.start?.()
     if (tab.look !== look) tab.terminal?.restyle()
     tab.look = look
     tab.viewer?.refresh()
@@ -135,6 +137,7 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
       if (view.attention) win.requestUserAttention(UserAttentionType.Informational).catch(() => {})
       retitle()
       onSessions?.()
+      save()
     },
   })
   addEventListener('focus', () => sessions.poll())
@@ -165,6 +168,7 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
     tab.view.remove()
     tab.terminal?.close()
     tab.viewer?.close?.()
+    if (tab.type === 'claude' && tabs.length) save() // the window closes with its last tab: its sessions reopen
     if (claude === tab) claude = tabs.findLast(t => !t.viewer) ?? null
     if (file === tab) file = null
     if (!tabs.length) win.close()
@@ -172,23 +176,55 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
   }
 
   /** A Claude tab in `cwd`, its command given Claude's flags `args`, such as `['--continue']`. */
-  async function openClaude(cwd, args = []) {
+  /** A Claude tab in `cwd`, its command given Claude's flags `args`. `resume`, a saved session's
+   * `{ id, prompt }`, makes a tab that resumes it, and with `later` it starts only when first shown. */
+  async function openClaude(cwd, args = [], { resume, later = false } = {}) {
     const tab = add('claude', basename(cwd), cwd)
+    tab.cwd = cwd
+    tab.resume = resume
+    if (resume) {
+      args = [...args, '--resume', resume.id]
+      if (resume.prompt) tab.el.title = `${cwd}\nResumes “${resume.prompt}”`
+    }
     tab.view.classList.add('claude')
     const host = tab.view.appendChild(el('div', { className: 'xterm-host' }))
     // A key that answers Claude's question clears the tab's waiting mark at once, not when the tool ends.
     host.addEventListener('keydown', e => ANSWERS.test(e.code) && !e.target.closest('.find') && sessions.answered(tab), true)
-    show(tab) // the terminal measures its size, so it starts visible
-    tab.terminal = await startTerminal(host, {
+    // The terminal measures its size, so it starts as its tab first shows.
+    tab.start = () => (tab.started ??= startTerminal(host, {
       cwd,
       command: claudeWith(settings.command, args),
       home,
       openPath: (path, kind, line, col) => (kind === 'dir' ? openFolder(path) : openFile(path, line, col)),
       onTitle: t => { tab.label.textContent = t ? `${tab.name} · ${t}` : tab.name },
       onExit: () => close(tab),
-    })
-    if (!tabs.includes(tab)) tab.terminal.close() // closed while its shell started
-    else if (active === tab) focus()
+    }).then(terminal => {
+      tab.terminal = terminal
+      if (!tabs.includes(tab)) terminal.close() // closed while its shell started
+      else if (active === tab) focus()
+      save()
+    }))
+    if (later) {
+      save()
+      return tab
+    }
+    show(tab)
+    await tab.start()
+    return tab
+  }
+
+  // The Claude sessions open now, saved as they change, so the next start can reopen them. Compared with
+  // what settings.json holds, so a start that changes nothing writes nothing before its terminal spawns.
+  const said = list => JSON.stringify(list.map(s => [s.dir, s.id, s.prompt || '', !!s.active]))
+  let saved = said(settings.sessions ?? [])
+  function save() {
+    const list = tabs.filter(t => t.type === 'claude').map(t => {
+      const report = sessions.report(t) ?? {}
+      const id = report.session ?? t.resume?.id
+      return id && { dir: t.cwd, id, prompt: report.prompt || t.resume?.prompt || '', active: t === active || undefined }
+    }).filter(Boolean)
+    const text = said(list)
+    if (text !== saved) onSessionsOpen?.((saved = text, list))
   }
 
   /** A tab that isn't Claude's: `start(view, tab)` fills its view and returns `{ refresh }`, and
