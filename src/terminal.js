@@ -345,6 +345,8 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     paste: text => { term.paste(text); term.focus() },
     /** Presses Enter, as to send what was pasted. */
     submit: () => send('\r'),
+    /** Pastes `text` and sends it, without taking the keys: for a tab that isn't in front. */
+    prompt: text => { term.paste(text); setTimeout(() => send('\r'), 50) },
     focus: () => term.focus(),
     find,
     /** Shows the prompt you sent before the view's top, or after it. */

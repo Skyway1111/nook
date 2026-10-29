@@ -45,6 +45,17 @@ export function notice(view, report = {}, name = '') {
   return { title: `Claude finished${where}`, body: prompt || 'Done' }
 }
 
+/** Why a prompt can't be sent to this session now, or null when it can. A session asking something would
+ * take the prompt's Enter as its answer, and one with no report yet may still be at Claude's own questions. */
+export function cannotSend(view, report = {}) {
+  if (!report.status) return 'Still starting'
+  if (view?.mark === 'waiting' || report.status === 'waiting') return 'Answer its question first'
+  return null
+}
+
+/** Whether a session starts picked to get a prompt sent to several: free to take one, and not mid-turn. */
+export const pickedAtFirst = (view, report = {}) => !cannotSend(view, report) && report.status !== 'working'
+
 /** How many sessions want the user: waiting on them, or done since they last looked. */
 export const wanting = views => views.filter(v => v.mark === 'waiting' || v.mark === 'done').length
 

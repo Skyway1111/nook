@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { follow, wanting, ago, modelName, summary, answeredReport, notice, ANSWERS } from './sessions.js'
+import { follow, wanting, ago, modelName, summary, answeredReport, notice, cannotSend, pickedAtFirst, ANSWERS } from './sessions.js'
 
 const run = (steps, view) => steps.map(([report, watched]) => (view = follow(view, report, watched)))
 
@@ -84,4 +84,14 @@ test('a notice names what Claude asks about, or the prompt it finished, and only
   assert.deepEqual(notice({ mark: 'done', attention: true }, report, 'nook'), { title: 'Claude finished in nook', body: '“Ship it”' })
   assert.deepEqual(notice({ mark: 'waiting', attention: true }, {}), { title: 'Claude needs you', body: 'Waiting on you' })
   assert.equal(notice({ mark: 'working', attention: false }, report, 'nook'), null)
+})
+
+test('a prompt goes to several sessions only where Enter sends it, and starts on the ones between turns', () => {
+  const idle = { status: 'idle' }, working = { status: 'working' }, waiting = { status: 'waiting' }
+  assert.equal(cannotSend({ mark: '' }, idle), null)
+  assert.equal(cannotSend({ mark: 'done' }, idle), null)
+  assert.equal(cannotSend({ mark: 'working' }, working), null) // Claude queues it for after this turn
+  assert.equal(cannotSend({ mark: 'waiting' }, waiting), 'Answer its question first')
+  assert.equal(cannotSend(undefined, {}), 'Still starting')
+  assert.deepEqual([idle, working, waiting, {}].map(r => pickedAtFirst({ mark: '' }, r)), [true, false, false, false])
 })

@@ -195,6 +195,7 @@ dashboard = startDashboard($('pane'), {
   open: tab => tabs.show(tab),
   newSession,
   showChanges: path => git.changes(path),
+  send: (tab, text) => tabs.prompt(tab, text),
   onClose: () => tabs.focus(),
 })
 $('new-tab').onclick = newSession
