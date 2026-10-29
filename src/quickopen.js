@@ -1,6 +1,6 @@
 // Quick open (Ctrl+P) and the command palette (F1): one box over the top of the window.
-// Loaded on the first Ctrl+P, so it adds nothing to cold open or to an idle window. Typed text finds files in the active tab's repository, or its folder outside one. `>` finds commands, and
-// `:` goes to a line in the open file. Nothing is indexed until the box first opens, and each later open shows the last index at once while a fresh one builds behind it.
+// Loaded on the first Ctrl+P, so it adds nothing to cold open or to an idle window. Typed text finds files in the active tab's repository, or its folder outside one. `>` finds commands,
+// `:` goes to a line in the open file, and `%` finds text inside the files. Nothing is indexed until the box first opens, and each later open shows the last index at once while a fresh one builds behind it.
 import { invoke } from '@tauri-apps/api/core'
 import { $, el } from './ui.js'
 import { rank } from './fuzzy.js'
@@ -78,6 +78,32 @@ export function startQuickOpen({ dir, commands, gotoLine, openFile, insertPath, 
     return li
   }
 
+  /** A line that holds the text searched for, with the match in bold, and where it is under that. */
+  function hitRow(hit) {
+    const k = kind({ name: hit.file })
+    const li = el('li', { className: `row hit ${k}` })
+    const where = el('small', { textContent: `${hit.file}:${hit.line}` })
+    li.append(el('i', { className: 'icon', textContent: ICON[k] }), marked(hit.text, Array.from({ length: hit.len }, (_, i) => hit.at + i)), where)
+    return li
+  }
+
+  // Text search runs in Rust once typing pauses; the box shows the last search's lines until the next lands.
+  let search = { query: null, found: null, error: '', running: false }
+  let searchTimer = 0
+  function searchFor(query) {
+    if (query === search.query) return
+    search = { ...search, query, running: query.length >= 2 }
+    clearTimeout(searchTimer)
+    if (!search.running) return
+    const folder = asked
+    searchTimer = setTimeout(() => invoke('search_text', { dir: folder, query }).then(found => {
+      if (found.stale || search.query !== query) return
+      search = { query, found, error: '', running: false }
+    }, e => {
+      if (search.query === query) search = { query, found: null, error: String(e), running: false }
+    }).finally(() => { if (!box.hidden && input.value.startsWith('%')) render() }), 150)
+  }
+
   function commandRow(command, positions) {
     const li = el('li', { className: 'row command' })
     li.append(el('i', { className: 'icon', textContent: command.icon ?? '' }), marked(command.title, positions))
@@ -94,6 +120,28 @@ export function startQuickOpen({ dir, commands, gotoLine, openFile, insertPath, 
         act: i => found[i].item.run(),
         hint: found.length ? 'Enter runs the command' : 'No command matches',
         count: found.length,
+      }
+    }
+    if (query.startsWith('%')) {
+      const text = query.slice(1)
+      searchFor(text)
+      const { found, error, running } = search
+      const hits = found && search.query === text ? found.hits : []
+      const n = hits.length
+      return {
+        rows: hits.map(hitRow),
+        act: (i, how) => {
+          const file = absolute(found.root, hits[i].file)
+          if (how === 'prompt') return insertPath(file)
+          if (how === 'reveal') return reveal(file)
+          openFile(file, hits[i].line, hits[i].col)
+        },
+        hint: error ? `Can't search: ${error}`
+          : text.length < 2 ? 'Type at least two letters to find them inside files'
+          : running ? 'Searching…'
+          : `${n ? n.toLocaleString() : 'No'} line${n === 1 ? '' : 's'}${found?.partial ? ' (stopped there)' : ''} in ${found?.searched.toLocaleString()} files`,
+        keys: n ? 'Enter open at the line · Shift+Enter add to prompt · Alt+Enter show in files' : '',
+        count: n,
       }
     }
     if (query.startsWith(':')) {
@@ -200,7 +248,10 @@ export function startQuickOpen({ dir, commands, gotoLine, openFile, insertPath, 
     index = indexFor(asked)
     box.hidden = false
     input.value = prefix
-    input.placeholder = prefix.startsWith('>') ? 'Run a command' : 'Find a file by name · > for commands · : for a line'
+    input.placeholder = prefix.startsWith('>') ? 'Run a command'
+      : prefix.startsWith('%') ? 'Find text inside the files'
+      : 'Find a file by name · > for commands · : for a line · % for text in files'
+    search = { query: null, found: null, error: '', running: false }
     at = 0
     render()
     input.focus()

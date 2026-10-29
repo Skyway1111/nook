@@ -19,11 +19,11 @@ const SKIP: &[&str] = &["node_modules", "target", "__pycache__", "bower_componen
 #[derive(Serialize)]
 pub struct Index {
     /// The folder the paths are relative to: the repository's top folder, or the folder asked about.
-    root: String,
+    pub(crate) root: String,
     /// Relative paths, with `/` between folders on every system.
-    files: Vec<String>,
+    pub(crate) files: Vec<String>,
     /// Whether the list stopped at the limit or the time budget.
-    partial: bool,
+    pub(crate) partial: bool,
 }
 
 /// Every file under `dir`'s repository, as git sees it: tracked files and untracked ones that aren't

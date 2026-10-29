@@ -8,6 +8,7 @@ mod index;
 #[cfg_attr(not(windows), path = "priority_unix.rs")]
 mod priority;
 mod pty;
+mod search;
 #[cfg_attr(not(windows), path = "shell_unix.rs")]
 mod shell;
 mod theme;
@@ -479,6 +480,7 @@ fn main() {
             theme::zip_holds_theme,
             list_dir,
             index::index_files,
+            search::search_text,
             file_stamp,
             path_kinds,
             read_text,
