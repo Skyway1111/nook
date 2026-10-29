@@ -59,6 +59,8 @@ To push and fetch over HTTPS, click **Sign in** under GitHub in the same drawer.
 
 **Theme** in the Settings drawer shows a card for each installed theme. Click one to use it in every window. nook ships with Twilight, which sets Frederic Edwin Church's painting *Twilight in the Wilderness* behind the window.
 
+To make a theme from any photo or painting, click **From a picture…**. nook reads the picture's own palette and builds the theme from it, in the window, with nothing uploaded.
+
 To install a theme, click **Install…** and pick its .zip, or right-click a theme's folder or .zip in the file browser and pick **Install theme**. Your own `theme.css` applies over the theme, so your fonts and sizes stay when you switch.
 
 With **Claude's colors follow the theme** on, picking a theme also sets Claude's own theme to nook's. nook writes only the `theme` key of `~/.claude/settings.json`, the key `/theme` writes, and puts your Claude theme back when you turn this off. Claude reads its theme when it starts, so restart open Claude tabs to recolor them.
