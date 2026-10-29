@@ -130,6 +130,16 @@ export function startPictures(term, screen, reply = () => {}) {
         }, () => answer("EBADPNG:can't draw the picture"))
         return
       }
+      if (/\.pdf$/i.test(path)) {
+        // A PDF Claude read or a command saved: its first page, drawn by pdf.js at the box's size.
+        const [columns, rows] = [Number(k.c), Number(k.r)]
+        import('./pdfpage.js').then(m => m.pdfUrl(path, boxSize(columns, rows))).then(url => {
+          keep(id, { url, columns, rows, blob: true, path })
+          answer('OK')
+          draw()
+        }, () => answer("EBADPNG:can't draw the PDF"))
+        return
+      }
       // An HTML page Claude wrote shows as the page itself, laid out wide and scaled into its box.
       const page = /\.html?$/i.test(path)
       keep(id, { url: page ? pageUrl(path) : convertFileSrc(path), columns: Number(k.c), rows: Number(k.r), page: page && folder(path), path })
