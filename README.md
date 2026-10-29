@@ -68,6 +68,8 @@ To push and fetch over HTTPS, click **Sign in** under GitHub in the same drawer.
 
 **Theme** in the Settings drawer shows a card for each installed theme. Click one to use it in every window. nook ships with six themes. Twilight sets Frederic Edwin Church's painting *Twilight in the Wilderness* behind the window. Fjord, Ember, Phosphor, and Sakura are color only: slate and frost, charcoal and coals, an old green screen, and plum with petal pink. Paper is the light one, for daylight. A newer nook adds the themes it ships without bringing back one you removed.
 
+With **Match the system's light and dark** on, nook keeps one theme for each: the one you pick while the system is light is its day theme, and the one you pick while it's dark is its night theme, and nook switches between them as the system does. Turning it on starts the other side as Paper by day, or nook's own by night.
+
 To make a theme from any photo or painting, click **From a picture…**. nook reads the picture's own palette and builds the theme from it, in the window, with nothing uploaded.
 
 To install a theme, click **Install…** and pick its .zip, or right-click a theme's folder or .zip in the file browser and pick **Install theme**. Your own `theme.css` applies over the theme, so your fonts and sizes stay when you switch.

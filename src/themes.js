@@ -59,16 +59,54 @@ export function startThemes({ configDir, home, settings, save, reread }) {
 
   async function use(name) {
     say()
-    await save({ theme: name })
+    // With the system's light and dark, a pick is the theme for whichever the system shows now.
+    await save({ theme: name, ...(settings.lightDark && { [slot()]: name ?? '' }) })
     await reread()
     if (settings.claudeFollows) await setFollow(true)
+    sky()
   }
 
   async function drop(name) {
     if (!(await invoke('recycle', { path: paths.join(dir, name) }))) return
     if (name === active) await use(null)
+    const gone = Object.fromEntries(['dayTheme', 'nightTheme'].filter(k => settings[k] === name).map(k => [k, '']))
+    if (Object.keys(gone).length) await save(gone)
     await show()
   }
+
+  // The system's light and dark: each has its own theme, picked while the system shows it. "" is nook's own,
+  // and a missing one leaves the theme as it is.
+  const dark = matchMedia('(prefers-color-scheme: dark)')
+  const daynight = $('settings-daynight')
+  const slot = () => dark.matches ? 'nightTheme' : 'dayTheme'
+  const named = theme => theme ? label(theme) : 'nook'
+  function sky() {
+    daynight.checked = !!settings.lightDark
+    const { dayTheme: day, nightTheme: night } = settings
+    const note = $('settings-daynight-note')
+    note.textContent = settings.lightDark && day != null && night != null
+      ? `${named(day)} while the system is light, ${named(night)} while it's dark. Pick a theme to change the one for now.` : ''
+    note.hidden = !note.textContent
+  }
+  async function matchSky() {
+    const want = settings.lightDark ? settings[slot()] : null
+    if (want != null && (want || null) !== (settings.theme ?? null)) await use(want || null)
+  }
+  dark.addEventListener('change', () => matchSky().catch(say))
+  daynight.onchange = async () => {
+    const patch = { lightDark: daynight.checked }
+    if (daynight.checked) {
+      // The theme in use is the one for now. The other side starts as Paper by day, or nook's own by night.
+      patch[slot()] = settings.theme ?? ''
+      const other = dark.matches ? 'dayTheme' : 'nightTheme'
+      const paper = (await list()).some(([n]) => n === 'paper')
+      if (settings[other] == null) patch[other] = dark.matches ? (paper ? 'paper' : null) : ''
+    }
+    await save(patch)
+    sky()
+  }
+  sky()
+  matchSky().catch(say)
 
   const watchers = new Set()
   async function installed(name) {
