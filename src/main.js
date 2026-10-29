@@ -200,6 +200,7 @@ dashboard = startDashboard($('pane'), {
   showChanges: path => git.changes(path),
   review: ({ tab, report }) => git.review(report.root || tab.path, report.touched ?? [], `${tab.name} · Claude's changes`),
   send: (tab, text) => tabs.prompt(tab, text),
+  answer: (tab, allow) => tabs.answer(tab, allow),
   onClose: () => tabs.focus(),
 })
 $('new-tab').onclick = newSession

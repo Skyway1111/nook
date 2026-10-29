@@ -1,11 +1,12 @@
 // The sessions dashboard: every Claude tab at a glance, over the pane. Each card shows what its session is
 // doing and since when, the prompt it's on, its model, how full its context is and what it has cost, and the
-// files Claude wrote; a click or Enter opens that tab, and a session filling up can be compacted from its card.
+// files Claude wrote; a click or Enter opens that tab. From a card you can allow or deny the call a session asks
+// permission for, and compact a session filling up.
 // The header names the account's rate limits. It draws only while open, and then redraws when a report changes
 // and once a second for the clocks, so a closed dashboard costs nothing. Its prompt box sends one prompt to
 // every ticked session at once, which starts ticked when it sits between turns.
 import { el } from './ui.js'
-import { ago, modelName, summary, cannotSend, pickedAtFirst, fill, FULL, money, limits } from './sessions.js'
+import { ago, modelName, summary, cannotSend, pickedAtFirst, asking, fill, FULL, money, limits } from './sessions.js'
 
 const FILES = 4 // the files a card lists
 const WORDS = { working: 'Working', waiting: 'Waiting on you', done: 'Done', '': 'Idle' }
@@ -13,12 +14,12 @@ const WORDS = { working: 'Working', waiting: 'Waiting on you', done: 'Done', '':
 /** `list()` gives `[{ tab, view, report }]` for every Claude tab, `open(tab)` shows one, `newSession()`
  * starts another, `send(tab, text)` sends one a prompt, and `review(session)` opens all it changed. `button` toggles the dashboard; `onClose` hears
  * it close. */
-export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, onClose }) {
+export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, answer, onClose }) {
   let box = null
   let timer = 0
   let at = 0 // the card the arrow keys are on
   let ticks = new WeakMap() // the sessions you ticked or unticked; the rest go by pickedAtFirst
-  let sentAt = 0, sentTo = 0 // when the last prompt went and to how many (or the tab compacted), which the header says for a moment
+  let said = '', saidAt = 0 // what the dashboard last did, such as "Sent to 2 sessions", which the header says for a moment
   const picked = ({ tab, view, report }) => !cannotSend(view, report) && (ticks.get(tab) ?? pickedAtFirst(view, report))
   const outside = e => { if (!box?.contains(e.target) && !button?.contains(e.target)) close() }
 
@@ -28,7 +29,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     const c = el('button', { className: `session${i === at ? ' at' : ''}` })
     c.dataset.mark = mark
     c.innerHTML = '<header><b class="pick" role="checkbox"></b><b class="mark"></b><span class="state"></span><span class="where"></span></header>' +
-      '<i class="fill" role="meter" aria-valuemin="0" aria-valuemax="100"></i><p class="prompt"></p><p class="doing"></p><p class="answer"></p><footer></footer><p class="files"></p>'
+      '<i class="fill" role="meter" aria-valuemin="0" aria-valuemax="100"></i><p class="prompt"></p><p class="doing"></p><p class="asks"></p><p class="answer"></p><footer></footer><p class="files"></p>'
     c.querySelector('.state').textContent = WORDS[mark] + since
     c.querySelector('.where').textContent = tab.name
     c.querySelector('.where').title = tab.path
@@ -40,6 +41,16 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     c.querySelector('.prompt').textContent = report.prompt ? `“${report.prompt}”` : 'No prompt yet'
     const busy = mark === 'working' || mark === 'waiting'
     c.querySelector('.doing').textContent = busy ? report.activity ?? '' : ''
+    // A permission prompt, answered from here: its first choice allows the call once, Escape denies it.
+    const asks = asking(view, report)
+    if (asks) {
+      c.querySelector('.doing').hidden = true
+      const run = asks.tool === 'Bash' && asks.what.replace(/^Bash · /, '')
+      c.querySelector('.asks').append(
+        el('span', { className: 'what', textContent: run ? `Run ${run}?` : `Allow ${asks.what}?`, title: asks.what }),
+        el('span', { className: 'file act', textContent: 'Allow', title: 'Allow it this once, as choosing Yes in the tab does' }),
+        el('span', { className: 'file deny', textContent: 'Deny', title: 'Deny it, as Escape does in the tab: Claude stops and waits for you' }))
+    }
     // Between turns, what Claude said at the end of the last one.
     c.querySelector('.answer').textContent = busy ? '' : report.answer ?? ''
     // How full its context is, as a bar under the header that turns the waiting color from FULL on.
@@ -75,6 +86,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     c.title = tab.path
     c.onclick = e => {
       if (e.target.closest('.pick')) return tick(i)
+      if (e.target.closest('.asks .file')) return decide(tab, e.target.closest('.act') != null)
       if (e.target.closest('.act')) return compact(tab)
       const file = e.target.closest('.file')
       close()
@@ -89,9 +101,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     if (!box) return
     const sessions = list()
     at = Math.min(at, Math.max(0, sessions.length - 1))
-    box.querySelector('header .count').textContent = Date.now() - sentAt < 3000
-      ? typeof sentTo === 'string' ? `Compacting ${sentTo}` : `Sent to ${sentTo} session${sentTo > 1 ? 's' : ''}`
-      : summary(sessions.map(s => s.view?.mark ?? ''))
+    box.querySelector('header .count').textContent = Date.now() - saidAt < 3000 ? said : summary(sessions.map(s => s.view?.mark ?? ''))
     // The account's rate limits, which every session spends from.
     const shown = limits(sessions.map(s => s.report))
     const lim = box.querySelector('header .limits')
@@ -117,11 +127,20 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     render()
   }
 
+  function say(text) {
+    said = text
+    saidAt = Date.now()
+    render()
+  }
+
+  function decide(tab, allow) {
+    answer(tab, allow)
+    say(`${allow ? 'Allowed' : 'Denied'} in ${tab.name}`)
+  }
+
   function compact(tab) {
     send(tab, '/compact')
-    sentAt = Date.now()
-    sentTo = tab.name
-    render()
+    say(`Compacting ${tab.name}`)
   }
 
   function sendAll() {
@@ -133,9 +152,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     area.value = ''
     area.style.height = ''
     ticks = new WeakMap() // they're working now, and start unticked the next time
-    sentAt = Date.now()
-    sentTo = to.length
-    render()
+    say(`Sent to ${to.length} session${to.length > 1 ? 's' : ''}`)
   }
 
   function show() {

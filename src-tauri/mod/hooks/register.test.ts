@@ -83,7 +83,14 @@ test('a permission prompt or a question to the person waits on them', async ($, 
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: 'Deploy', turnId: 't1' })
   await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm publish' } })
-  expect(last(reports)).toMatchObject({ status: 'waiting' })
+  // What it asks about, so nook's dashboard can offer to allow or deny it.
+  expect(last(reports)).toMatchObject({ status: 'waiting', asks: { tool: 'Bash', what: 'Bash · npm publish' } })
+  // Once the call runs, or the turn ends, nothing is asked any more.
+  await $.tool.call({ tool: 'Bash', command: 'npm publish' })
+  expect(last(reports)).toMatchObject({ status: 'working', asks: null })
+  await $.classic.PermissionRequest({ tool_name: 'Write', tool_input: { file_path: '/work/a.md' } })
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: true, reason: 'aborted', turnId: 't1' })
+  expect(last(reports)).toMatchObject({ status: 'idle', asks: null })
 })
 
 test('a session nook did not start reports nothing', async ($, on) => {

@@ -314,6 +314,11 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     },
     /** Sends `text` to a Claude tab as a prompt, leaving the tab in front where it is. */
     prompt: (tab, text) => tab.terminal?.prompt(text),
+    /** Answers the permission prompt a Claude tab shows, with its first choice (allow once) or Escape (deny). */
+    answer(tab, allow) {
+      tab.terminal?.key(allow ? '1' : '\x1b')
+      sessions.answered(tab)
+    },
     /** Pastes `text` into the Claude tab shown last, and with `submit`, sends it. */
     paste(text, submit = false) {
       if (!claude?.terminal) return

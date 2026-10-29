@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { follow, wanting, ago, modelName, summary, answeredReport, notice, cannotSend, pickedAtFirst, fill, money, limits, ANSWERS } from './sessions.js'
+import { follow, wanting, ago, modelName, summary, answeredReport, notice, cannotSend, pickedAtFirst, asking, fill, money, limits, ANSWERS } from './sessions.js'
 
 const run = (steps, view) => steps.map(([report, watched]) => (view = follow(view, report, watched)))
 
@@ -117,4 +117,13 @@ test('the account\'s limits: the newest unreset reading of each window, the full
     { name: '5-hour', used: 14.5, resetsAt: Date.parse('2026-10-29T20:00:00Z') },
   ])
   assert.deepEqual(limits([{}, { limits: [] }], now), [])
+})
+
+test('a card offers to answer a permission prompt only while its session waits on it', () => {
+  const asks = { tool: 'Bash', what: 'Bash · git push' }
+  assert.deepEqual(asking({ mark: 'waiting' }, { status: 'waiting', asks }), asks)
+  assert.equal(asking({ mark: 'waiting' }, { status: 'waiting', asks: null }), null) // Claude asks a question
+  assert.equal(asking({ mark: 'working' }, answeredReport({ status: 'waiting', since: 5, asks }, 5)), null) // answered in the tab
+  assert.equal(asking({ mark: 'working' }, { status: 'working', asks: null }), null)
+  assert.equal(asking(undefined, {}), null)
 })
