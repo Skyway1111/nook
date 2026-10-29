@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { follow, wanting, ago, modelName, summary, answeredReport, notice, cannotSend, pickedAtFirst, asking, planLine, fill, money, limits, ANSWERS } from './sessions.js'
+import { follow, wanting, ago, modelName, summary, answeredReport, notice, cannotSend, pickedAtFirst, asking, planLine, fill, money, limits, due, ANSWERS } from './sessions.js'
 
 const run = (steps, view) => steps.map(([report, watched]) => (view = follow(view, report, watched)))
 
@@ -134,4 +134,13 @@ test('a card reads Claude\'s plan as how far it has got and what it is on', () =
   assert.equal(planLine({ done: 2, total: 5, now: 'Fixing the parser' }), '2 of 5 · Fixing the parser')
   assert.equal(planLine({ done: 2, total: 5, now: '' }), '2 of 5')
   assert.equal(planLine({ done: 5, total: 5, now: '' }), 'All 5 done')
+})
+
+test('a queued prompt goes once the turn it was queued in has ended, one per turn', () => {
+  assert.ok(!due([], 2, { status: 'idle', turns: 3 }))
+  assert.ok(!due(['tests'], 2, { status: 'working', turns: 2 }))
+  assert.ok(!due(['tests'], 2, { status: 'idle', turns: 2 })) // still idle just after the last one went
+  assert.ok(!due(['tests'], 2, { status: 'waiting', turns: 3 }))
+  assert.ok(due(['tests'], 2, { status: 'idle', turns: 3 }))
+  assert.ok(due(['tests'], 0, { status: 'idle', turns: 1 }))
 })

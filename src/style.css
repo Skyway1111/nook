@@ -200,6 +200,10 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 .sessions .session .plan .steps i { width: 7px; height: 7px; border-radius: 2px; background: var(--line); }
 .sessions .session .plan .steps i.done { background: var(--session-done); }
 .sessions .session .plan .words { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sessions .session .queue { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--ink-2); }
+.sessions .session .queue:empty { display: none; }
+.sessions .session .queue .next { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessions .session .queue .file { flex: none; }
 .sessions .session .doing[hidden] { display: none; }
 .sessions .session .asks .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-term); font-size: .8rem; color: var(--ink-1); }
 .sessions .mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
@@ -217,6 +221,9 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 .sessions .send textarea:focus { border-color: var(--accent); }
 .sessions .send .go { flex: none; height: 32px; padding: 0 12px; border-radius: 8px; background: var(--accent); color: var(--bg); font-weight: 600; font-size: .86rem; }
 .sessions .send .go:disabled { background: var(--hover); color: var(--ink-3); }
+.sessions .send .then { flex: none; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-1); font-size: .86rem; }
+.sessions .send .then:hover:not(:disabled) { background: var(--hover); }
+.sessions .send .then:disabled { color: var(--ink-3); }
 .sessions .send .fan { flex: none; display: flex; align-items: center; height: 32px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .sessions .send .fan input { width: 2.6em; height: 100%; border: 0; background: transparent; color: var(--ink-1); text-align: center; font: inherit; font-size: .86rem; }
 .sessions .send .fan .start { height: 100%; padding: 0 10px; border-left: 1px solid var(--line); color: var(--ink-1); font-size: .86rem; }
