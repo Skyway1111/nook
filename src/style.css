@@ -477,7 +477,24 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .cm-editor .cm-scroller { font: var(--term-font-size)/1.5 var(--font-term); }
 .cm-editor .cm-content { padding: 16px 0 24px; }
 .cm-editor .cm-gutters { background: none; color: var(--ink-3); border: 0; }
-.cm-editor .cm-lineNumbers .cm-gutterElement { padding: 0 20px 0 24px; }
+.cm-editor .cm-lineNumbers .cm-gutterElement { padding: 0 8px 0 24px; }
+.cm-editor .cm-foldGutter .cm-gutterElement { padding: 0 12px 0 0; cursor: pointer; }
+.cm-editor .fold { font-size: .7em; color: var(--ink-3); opacity: 0; transition: opacity .15s; }
+.cm-editor .cm-gutters:hover .fold, .cm-editor .fold.shut { opacity: 1; }
+.cm-editor .cm-gutterElement:hover > .fold { color: var(--accent); }
+.cm-editor .cm-foldPlaceholder { margin: 0 4px; padding: 0 6px; border: 0; border-radius: 4px; background: var(--hover); color: var(--ink-2); cursor: pointer; }
+/* A file tab's status line, and the completions box. */
+.cm-editor .cm-status { display: flex; align-items: center; gap: 18px; height: 24px; padding: 0 14px; font-size: .8rem; color: var(--ink-3); white-space: nowrap; }
+.cm-editor .cm-panels-bottom { border-top: 1px solid var(--line); }
+.cm-editor .cm-status .fill { flex: 1; }
+.cm-editor .cm-status button { padding: 0; color: inherit; background: none; }
+.cm-editor .cm-status button:hover { color: var(--accent); }
+.cm-editor .cm-tooltip { background: var(--raised); color: var(--ink-1); border: 1px solid var(--line); border-radius: 7px; box-shadow: var(--shadow); overflow: hidden; }
+.cm-editor .cm-tooltip-autocomplete > ul { font: var(--term-font-size)/1.5 var(--font-term); max-height: 14em; }
+.cm-editor .cm-tooltip-autocomplete > ul > li { padding: 1px 10px; }
+.cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected] { background: var(--hover); color: var(--ink-1); box-shadow: inset 2px 0 0 var(--accent); }
+.cm-editor .cm-completionMatchedText { text-decoration: none; color: var(--accent); font-weight: 600; }
+.cm-editor .cm-completionDetail { margin-left: 1em; color: var(--ink-3); font-style: normal; }
 .cm-editor .cm-activeLine { background: var(--hover); }
 .cm-editor .cm-activeLineGutter { background: none; color: var(--ink-1); }
 .cm-editor .cm-cursor { border-left: 2px solid var(--cursor); }

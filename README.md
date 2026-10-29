@@ -25,7 +25,8 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 - **Pasted screenshots.** Ctrl+V pastes a screenshot straight into Claude. Hover `[Image #N]` to see the image, and click it to open it.
 - **Pictures in the transcript.** Each image you paste shows under your prompt, and each image or SVG Claude reads shows under the `Read`.
 - **A prompt card.** The prompt shows in a card with the model, the effort, and a ring for how full the context is. Pick a model or an effort from the card's menus.
-- **File tabs.** Click a file to open it in a tab. Code and text open in an editor with syntax colors, Markdown, CSV and TSV, and SVG open rendered with an **Edit** button: a CSV or TSV as a table that sorts by any column and scrolls 100,000 rows as smoothly as 100, and an SVG drawn live from its text. Images zoom with the wheel and pan with a drag, audio and video play, and PDFs open in the webview's own viewer.
+- **File tabs.** Click a file to open it in a tab. Code and text open in an editor with syntax colors, Markdown, CSV and TSV, and SVG open rendered with an **Edit** button: a CSV or TSV as a table that sorts by any column and scrolls tens of thousands of rows as smoothly as a hundred, and an SVG drawn live from its text. Images zoom with the wheel and pan with a drag, audio and video play, and PDFs open in the webview's own viewer.
+- **An editor for code.** Fold any block from the gutter, get brackets closed and words completed as you type, add cursors with Ctrl+D, Ctrl+Alt+Up and Down, or Alt+drag, and see the caret, language, indent, and line ending in a line under the text. Alt+Z wraps long lines.
 - **Safe edits.** An open file follows changes on disk. If Claude changes a file while you have unsaved edits, nook keeps your edits and offers **Overwrite** or **Reload**.
 - **A git panel** for the open tab's repository. Stage files, commit, switch or create branches, and fetch, pull, or push. Its diff tab shows staged and unstaged changes in syntax colors, unified or side by side, and stages, unstages, or discards a hunk or just the lines you pick in it.
 - **Living wallpapers.** Click the brush in the titlebar to pick a scene drawn in characters behind Claude, always moving: drifting clouds, sea turtles, a koi pond, jellyfish, paper boats, fireflies, a moonlit night, rain, an aurora, snowfall, a campfire, a lava lamp, orbiting planets, or code rain. Arrows preview a scene, Enter keeps it, and Esc puts back the last one. The wallpaper holds still while you type and while nook is in the background.
@@ -45,6 +46,9 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 | Ctrl+Tab, Ctrl+Shift+Tab | Next or previous tab |
 | Ctrl+S | Save the open file |
 | Ctrl+F | Find and replace in the editor |
+| Ctrl+D | Select the next match of the selection, as another cursor |
+| Ctrl+Shift+[, Ctrl+Shift+] | Fold or unfold the block at the caret |
+| Alt+Z | Wrap long lines in the editor, or stop wrapping them |
 | Ctrl+W | Close a file tab. In a Claude tab, Claude gets it. |
 | Middle-click a tab | Close it |
 | Ctrl+Enter | Commit, from the commit message box |
