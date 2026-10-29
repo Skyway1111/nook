@@ -110,6 +110,32 @@ pub async fn install_theme_zip(app: AppHandle, request: Request<'_>) -> Result<S
     .map_err(err)?
 }
 
+/// Saves a theme the webview packed as `<name>.zip` in Downloads, or `<name> (2).zip` and on when that's
+/// taken, and returns where. The body is the theme's name, a NUL, then the bytes.
+#[tauri::command]
+pub async fn save_theme_zip(app: AppHandle, request: Request<'_>) -> Result<String, String> {
+    let InvokeBody::Raw(body) = request.body() else { return Err("expected a .zip".into()) };
+    let at = body.iter().position(|&b| b == 0).ok_or("expected a name")?;
+    let name = String::from_utf8_lossy(&body[..at]).into_owned();
+    if Path::new(&name).file_name().and_then(|n| n.to_str()) != Some(&name) || name.starts_with('.') {
+        return Err(format!("{name} isn't a theme's name"));
+    }
+    // A Linux desktop without XDG's user folders names no Downloads, so it's the home folder's.
+    let downloads = app.path().download_dir().or_else(|_| app.path().home_dir().map(|h| h.join("Downloads"))).map_err(err)?;
+    let bytes = body[at + 1..].to_vec();
+    spawn_blocking(move || {
+        fs::create_dir_all(&downloads).map_err(err)?;
+        let path = (1..)
+            .map(|n| downloads.join(if n == 1 { format!("{name}.zip") } else { format!("{name} ({n}).zip") }))
+            .find(|p| !p.exists())
+            .unwrap();
+        fs::write(&path, bytes).map_err(err)?;
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(err)?
+}
+
 /// Whether a .zip holds a theme: a theme.css at its top or in one folder inside.
 #[tauri::command]
 pub async fn zip_holds_theme(path: String) -> bool {

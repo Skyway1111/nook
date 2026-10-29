@@ -39,7 +39,9 @@ export function startThemes({ configDir, home, settings, save, reread, showTheme
     if (name) {
       const remove = el('button', { className: 'icon remove', title: 'Remove', innerHTML: '&#xE74D;' })
       remove.onclick = e => { e.stopPropagation(); drop(name).catch(say) }
-      div.append(remove)
+      const share = el('button', { className: 'icon share', title: 'Save as a .zip to share', innerHTML: '&#xE896;' })
+      share.onclick = e => { e.stopPropagation(); pack(name) }
+      div.append(share, remove)
     }
     return div
   }
@@ -133,6 +135,31 @@ export function startThemes({ configDir, home, settings, save, reread, showTheme
     body.set(head)
     body.set(new Uint8Array(await file.arrayBuffer()), head.length)
     await invoke('install_theme_zip', body).then(installed).catch(e => say(`nook can't install ${file.name}: ${e}.`))
+  }
+
+  // A theme to share: its folder, pictures and fonts included, as a .zip in Downloads that Install… takes.
+  async function pack(name) {
+    say(`Packing ${label(name)}…`)
+    try {
+      const { zip } = await import('./themer.js')
+      const files = []
+      async function walk(at, inside) {
+        for (const e of await invoke('list_dir', { path: at })) {
+          const path = paths.join(at, e.name)
+          if (e.dir) await walk(path, `${inside}/${e.name}`)
+          else files.push([`${inside}/${e.name}`, new Uint8Array(await (await fetch(convertFileSrc(path))).arrayBuffer())])
+        }
+      }
+      await walk(paths.join(dir, name), name)
+      const head = new TextEncoder().encode(`${name}\0`)
+      const packed = zip(files)
+      const body = new Uint8Array(head.length + packed.length)
+      body.set(head)
+      body.set(packed, head.length)
+      say(`Saved ${label(name)} to ${await invoke('save_theme_zip', body)}. Install… in anyone's nook takes it.`)
+    } catch (e) {
+      say(`nook can't pack ${label(name)}: ${e.message ?? e}.`)
+    }
   }
 
   // A theme from a picture: its palette, the picture, a soft copy and a card, packed as a .zip in the webview.

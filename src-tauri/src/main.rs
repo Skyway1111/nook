@@ -511,6 +511,7 @@ fn main() {
             theme::read_theme,
             theme::install_theme,
             theme::install_theme_zip,
+            theme::save_theme_zip,
             theme::zip_holds_theme,
             list_dir,
             index::index_files,
