@@ -44,6 +44,42 @@ export function moved(before, after) {
   return null
 }
 
+/** Paging through Claude's fullscreen view, for `term` whose keys go to Claude through `send`: `screen()`
+ * reads the rows shown, `redrawn()` waits for Claude's redraw after a key, and `page(up, rows)` presses Page
+ * Up or Page Down and says how far the transcript moved from `rows`: `{ after, shift }`, with shift 0 at the
+ * view's end and null when it can't tell. */
+export function startPaging(term, send) {
+  const screen = () => Array.from({ length: term.rows }, (_, y) => term.buffer.active.getLine(y)?.translateToString(true) ?? '')
+
+  /** Whether Claude redrew after a key: output came and then paused. */
+  function redrawn() {
+    return new Promise(done => {
+      let quiet
+      const wait = setTimeout(() => end(false), WAIT_MS)
+      const parsed = term.onWriteParsed(() => {
+        clearTimeout(wait)
+        clearTimeout(quiet)
+        quiet = setTimeout(() => end(true), QUIET_MS)
+      })
+      function end(drew) {
+        parsed.dispose()
+        clearTimeout(wait)
+        clearTimeout(quiet)
+        done(drew)
+      }
+    })
+  }
+
+  async function page(up, rows = screen()) {
+    send(up ? PAGE_UP : PAGE_DOWN)
+    const drew = await redrawn()
+    const after = screen()
+    return { after, shift: drew ? moved(rows, after) : 0 }
+  }
+
+  return { screen, page, redrawn }
+}
+
 /** Jumps for `term`, whose keys go to Claude through `send`. Returns `{ jump(up), dispose }`. */
 export function startTurns(term, send) {
   let flash // the row decoration still fading
@@ -80,26 +116,7 @@ export function startTurns(term, send) {
     }
   }
 
-  const screen = () => Array.from({ length: term.rows }, (_, y) => term.buffer.active.getLine(y)?.translateToString(true) ?? '')
-
-  /** Whether Claude redrew after a key: output came and then paused. */
-  function redrawn() {
-    return new Promise(done => {
-      let quiet
-      const wait = setTimeout(() => end(false), WAIT_MS)
-      const parsed = term.onWriteParsed(() => {
-        clearTimeout(wait)
-        clearTimeout(quiet)
-        quiet = setTimeout(() => end(true), QUIET_MS)
-      })
-      function end(drew) {
-        parsed.dispose()
-        clearTimeout(wait)
-        clearTimeout(quiet)
-        done(drew)
-      }
-    })
-  }
+  const { screen, page } = startPaging(term, send)
 
   // The prompt a jump on Claude's own view last flashed: while it still shows on that row, the next jump
   // goes on from it, not from the view's top.
@@ -126,10 +143,7 @@ export function startTurns(term, send) {
           const below = prompts.find(r => r > from)
           if (below && below <= half) return land(below, rows)
         }
-        send(up ? PAGE_UP : PAGE_DOWN)
-        const drew = await redrawn()
-        const after = screen()
-        const shift = drew ? moved(rows, after) : 0
+        const { after, shift } = await page(up, rows)
         if (shift === null) return // the view changed past reading: leave it where Claude put it
         if (shift === 0) {
           // The view is at its end: a prompt still below the top flashes where it is.
