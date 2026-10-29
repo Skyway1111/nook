@@ -18,7 +18,7 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 
 - **Claude in tabs.** Click **+**, press Ctrl+N, or right-click a folder and pick **New Claude session here**. Each tab runs Claude's own interface, unchanged.
 - **Open with nook.** In Explorer, right-click a folder, or the empty space inside one, and pick **Open with nook**.
-- **A file browser for the whole disk**, with pins, breadcrumbs, back and forward, and a typed path bar. Right-click a file to cut, copy, rename, or delete it. A deleted file goes to the Recycle Bin, or on Linux to the trash. Ctrl+click or Shift+click picks several files at once. Drag files onto a folder, a pin, or a folder in the path bar to move them there, or hold Ctrl as you drop to copy them. Files dropped from Explorer onto a folder are copied into it. A folder of 100,000 files opens as fast as one of 100. Ctrl+Shift+E moves through the list with the keys: arrows, Enter, Backspace to go up, and the first letters of a name to jump to it.
+- **A file browser for the whole disk**, with pins, breadcrumbs, back and forward, and a typed path bar. Right-click a file to cut, copy, rename, or delete it. A deleted file goes to the Recycle Bin, or on Linux to the trash. Ctrl+click or Shift+click picks several files at once. Drag files onto a folder, a pin, or a folder in the path bar to move them there, or hold Ctrl as you drop to copy them. Files dropped from Explorer onto a folder are copied into it. A folder of 100,000 files opens as fast as one of 100. Ctrl+Shift+E moves through the list with the keys: arrows, Enter, Backspace to go up, and the first letters of a name to jump to it. The Filter box beside the arrows, or Ctrl+F in the list, shows only the names holding what you type.
 - **Quick open.** Ctrl+P finds any file in the open tab's repository, or its folder outside one, by a few letters of its name. Files you opened lately come first. Enter opens it, Shift+Enter adds its path to Claude's prompt, and Alt+Enter shows it in the file browser. Type `:` and a number to go to a line, or `%` and some text to find it inside the files: each matching line shows with its file and line number, and Enter opens the file there.
 - **A command palette.** F1, or `>` in quick open, runs any of nook's commands by name.
 - **Paths into the prompt.** Drag a file from the sidebar or from Explorer into the terminal to add its path to your prompt.
@@ -43,7 +43,7 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 | Ctrl+N | New Claude session in the file browser's folder |
 | Ctrl+P | Quick open: find a file, `>` for commands, `:` for a line, `%` for text in files |
 | F1 | Run a command |
-| Ctrl+Shift+E | Move through the file browser with the keys. Shift+arrows pick, Space picks one, F2 renames, Delete deletes, Ctrl+Enter adds to Claude's prompt, Esc gives the keys back. |
+| Ctrl+Shift+E | Move through the file browser with the keys. Shift+arrows pick, Space picks one, F2 renames, Delete deletes, Ctrl+Enter adds to Claude's prompt, Ctrl+F or / filters by name, Esc gives the keys back. |
 | Ctrl+Tab, Ctrl+Shift+Tab | Next or previous tab |
 | Ctrl+S | Save the open file |
 | Ctrl+F | Find and replace in the editor |
