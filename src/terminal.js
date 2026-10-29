@@ -213,6 +213,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     if (e.type !== 'keydown') return true
     if (e.altKey && e.key === 'F4') return false // the system closes the window
     if (e.ctrlKey && e.key === 'Tab') return false // the tab strip cycles
+    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[PS]$/.test(e.code)) return false // quick prompts, sessions
     const ctrl = e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() // with Caps Lock on, Ctrl+C is 'C'
     if (ctrl === 'n') return false // the window opens a Claude tab
     // Let the browser paste, so the paste listener below sees the clipboard.
@@ -269,6 +270,8 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     id, // the session's, for its mod's reports
     restyle: () => { applyTheme(term); refit() },
     paste: text => { term.paste(text); term.focus() },
+    /** Presses Enter, as to send what was pasted. */
+    submit: () => send('\r'),
     focus: () => term.focus(),
     close: () => {
       clearTimeout(hold?.timer)

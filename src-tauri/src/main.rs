@@ -1,6 +1,7 @@
 //! nook's window, settings.json, the file commands, and `run`. Every IPC command registers here.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod commands;
 mod git;
 mod history;
 #[cfg_attr(not(windows), path = "priority_unix.rs")]
@@ -77,7 +78,26 @@ struct Settings {
     claude_follows: bool,
     /// Claude's theme before nook set it, for when Claude stops following.
     claude_theme: Option<String>,
+    /// Quick prompts, which Ctrl+Shift+P pastes into Claude's prompt. `{file}` is the file open last,
+    /// `{folder}` the file browser's folder.
+    prompts: Vec<Prompt>,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+struct Prompt {
+    name: String,
+    text: String,
+}
+
+/// The quick prompts nook starts with.
+const PROMPTS: [(&str, &str); 6] = [
+    ("Review my changes", "Review my uncommitted changes for bugs, and for anything I'd regret shipping."),
+    ("Explain this file", "Explain {file}: what it does, how it fits in, and anything surprising."),
+    ("Write tests", "Write tests for {file} that cover its edge cases, then run them."),
+    ("Fix the failing tests", "Run the tests, find why the failing ones fail, and fix the cause rather than the test."),
+    ("Plan first", "Before changing anything, write a short plan and wait for my go-ahead: "),
+    ("Commit", "Commit the staged changes with a message that says why, not just what."),
+];
 
 impl Default for Settings {
     fn default() -> Self {
@@ -93,6 +113,7 @@ impl Default for Settings {
             theme: None,
             claude_follows: true,
             claude_theme: None,
+            prompts: PROMPTS.iter().map(|(name, text)| Prompt { name: name.to_string(), text: text.to_string() }).collect(),
         }
     }
 }
@@ -410,6 +431,7 @@ fn main() {
             pty::pty_state,
             pty::pty_states,
             history::claude_sessions,
+            commands::claude_commands,
             pty::pty_command,
             pty::session_image,
         ])

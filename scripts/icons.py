@@ -29,6 +29,7 @@ ICONS = {
     0xE718: "pin",
     0xE72A: "arrow_right",  # Forward
     0xE72B: "arrow_left",  # Back
+    0xE724: "send",  # a quick prompt sent as typed
     0xE738: "subtract",  # a checkbox's mixed state
     0xE73E: "checkmark",
     0xE74A: "arrow_up",
@@ -66,6 +67,7 @@ ICONS = {
     0xE922: "maximize",
     0xE923: "square_multiple",  # ChromeRestore
     0xE943: "code",
+    0xE945: "flash",  # LightningBolt: a quick prompt
     0xEB9F: "image",
     0xEDA2: "hard_drive",
     0xF000: "document_text",

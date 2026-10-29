@@ -17,6 +17,7 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
   const tabs = []
   let active = null
   let claude = null // the Claude tab shown last: where paths go while a file tab is showing
+  let file = null // the file tab shown last: what a quick prompt's {file} names
   let look = 0 // counts theme changes; each terminal notes the one it last took
 
   function add(type, name, path) {
@@ -41,6 +42,7 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
     tab.el.classList.add('active')
     tab.view.hidden = false
     if (!tab.viewer) claude = tab
+    else file = tab
     // A hidden terminal skips theme changes, so it catches up as it shows. Its size catches up on its own.
     if (tab.look !== look) tab.terminal?.restyle()
     tab.look = look
@@ -103,6 +105,7 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
     tab.terminal?.close()
     tab.viewer?.close?.()
     if (claude === tab) claude = tabs.findLast(t => !t.viewer) ?? null
+    if (file === tab) file = null
     if (!tabs.length) win.close()
     else if (active === tab) show(tabs[Math.min(i, tabs.length - 1)])
   }
@@ -180,6 +183,8 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
   return {
     openClaude,
     openFile,
+    /** The file whose tab showed last, while it's open. */
+    lastFile: () => file?.path,
     show,
     /** Every Claude tab with its session's view and newest report, in strip order. */
     sessions: () => tabs.filter(t => t.terminal).map(tab => ({ tab, view: sessions.view(tab), report: sessions.report(tab) ?? {} })),
@@ -190,10 +195,13 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
       active?.terminal?.restyle()
       if (active) active.look = look
     },
-    paste(text) {
+    /** Pastes `text` into the Claude tab shown last, and with `submit`, sends it. */
+    paste(text, submit = false) {
       if (!claude?.terminal) return
+      const { terminal } = claude
       show(claude)
-      claude.terminal.paste(text)
+      terminal.paste(text)
+      if (submit) setTimeout(terminal.submit, 50) // after Claude has taken the paste
     },
   }
 }

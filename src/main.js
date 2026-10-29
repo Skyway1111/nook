@@ -15,6 +15,7 @@ import { startWallpaper } from './wallpaper.js'
 import { startDashboard } from './dashboard.js'
 import { $, openMenu, openPicker } from './ui.js'
 import { SAFE, worktreeName, since } from './launch.js'
+import { expand, offer, saved } from './prompts.js'
 
 const win = getCurrentWindow()
 if (window.NOOK_BENCH) import('./bench.js').then(m => m.startBench())
@@ -142,6 +143,8 @@ $('launch').onclick = () => {
     ['Continue last session', ICON.play, () => launch(['--continue'])],
     ['Resume a session…', ICON.history, () => resume(at)],
     ['New session in a worktree…', ICON.worktree, () => worktree(at)],
+    null,
+    ['Quick prompt… (Ctrl+Shift+P)', ICON.prompt, quickPrompts],
   ])
 }
 async function resume(at) {
@@ -159,6 +162,30 @@ function worktree(at) {
     ? [[`Start Claude in worktree ${query || name}`, ICON.worktree, () => launch(['--worktree', query || name])]]
     : [['Letters, digits, dots, dashes and underscores only', '', () => {}]])
 }
+// Quick prompts: settings.json's prompts and the slash commands and skills Claude offers here, pasted into
+// Claude's prompt to edit or send. Read when the picker opens, so edits to either show the next time.
+async function quickPrompts() {
+  const [current, commands] = await Promise.all([
+    invoke('settings').catch(() => settings),
+    invoke('claude_commands', { dir: here() }).catch(() => []),
+  ])
+  const vars = { file: tabs.lastFile(), folder: here() }
+  const icons = { prompt: ICON.prompt, command: ICON.code, send: ICON.send, save: ICON.save }
+  const label = r => r.kind === 'send' ? `Send to Claude: ${r.name}` : r.kind === 'save' ? `Save as a prompt: ${r.name}`
+    : r.description ? `${r.name} · ${r.description}` : r.name
+  const pick = r => () => {
+    if (r.kind === 'save') return invoke('update_settings', { patch: { prompts: saved(current.prompts ?? [], r.text) } }).catch(banner)
+    tabs.paste(expand(r.text, vars), r.kind === 'send')
+  }
+  openPicker({ clientX: innerWidth / 2 - 180, clientY: 48 }, 'Quick prompt, /command, or anything to send', query =>
+    offer(current.prompts ?? [], commands, query).map(r => [label(r), icons[r.kind], pick(r)]))
+}
+addEventListener('keydown', e => {
+  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyP') {
+    e.preventDefault()
+    quickPrompts()
+  }
+})
 $('toggle-git').onclick = () => { document.body.classList.toggle('git-hidden'); git.refresh(); tabs.focus() }
 
 $('open-config').onclick = drawer.toggle
