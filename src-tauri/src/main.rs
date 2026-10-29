@@ -10,6 +10,7 @@ mod notify;
 mod priority;
 mod pty;
 mod replace;
+mod defs;
 mod search;
 #[cfg_attr(not(windows), path = "shell_unix.rs")]
 mod shell;
@@ -520,6 +521,7 @@ fn main() {
             replace::find_in_files,
             replace::replace_in_files,
             replace::undo_replace,
+            defs::workspace_symbols,
             file_stamp,
             path_kinds,
             peek_lines,

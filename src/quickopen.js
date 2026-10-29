@@ -1,6 +1,7 @@
 // Quick open (Ctrl+P) and the command palette (F1): one box over the top of the window.
 // Loaded on the first Ctrl+P, so it adds nothing to cold open or to an idle window. Typed text finds files in the active tab's repository, or its folder outside one. `>` finds commands,
-// `:` goes to a line in the open file, `@` to a symbol in it, and `%` finds text inside the files. Nothing is indexed until the box first opens, and each later open shows the last index at once while a fresh one builds behind it.
+// `:` goes to a line in the open file, `@` to a symbol in it, `#` to where a name is defined anywhere in the
+// repository, and `%` finds text inside the files. Nothing is indexed until the box first opens, and each later open shows the last index at once while a fresh one builds behind it.
 import { invoke } from '@tauri-apps/api/core'
 import { $, el } from './ui.js'
 import { rank } from './fuzzy.js'
@@ -22,10 +23,11 @@ const KINDS = {
 /**
  * `dir()` is the folder to search: the active tab's. `commands()` lists `{ title, keys, run }`. `gotoLine(line,
  * col)` moves the open file's caret and returns false when no file is open. `outline()` is the open file's
- * symbols, from viewer.js, or null with no file open. `openFile` and `insertPath` take an absolute path; `reveal`
- * shows one in the file browser. `onClose` returns focus to the tab.
+ * symbols, from viewer.js, or null with no file open. `openPath()` is the open file's path, or null, so `#` can rank
+ * the definitions near it first. `openFile` and `insertPath` take an absolute path; `reveal` shows one in the file
+ * browser. `onClose` returns focus to the tab.
  */
-export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, insertPath, reveal, onClose }) {
+export function startQuickOpen({ dir, commands, gotoLine, outline, openPath, openFile, insertPath, reveal, onClose }) {
   const box = el('div', { id: 'quick', hidden: true })
   const input = el('input', { spellcheck: false, autocomplete: 'off' })
   const list = el('ul')
@@ -58,6 +60,37 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, ins
   }
 
   const absolute = (root, rel) => paths.fromSlashes(root, rel)
+  /** `path` relative to `root` with `/` between folders, as the indexes hold paths, or null outside it. */
+  const relative = (root, path) => (path && paths.within(path, root) && !paths.same(path, root)
+    ? path.slice(root.length + (root.endsWith(paths.SEP) ? 0 : 1)).replaceAll(paths.SEP, '/') : null)
+  /** For `#`: a definition in the open file ranks ahead of its namesakes, and one in the same folder next. */
+  function nearness(entry) {
+    const here = relative(entry.root, openPath())
+    if (!here) return () => 0
+    const folder = here.slice(0, here.lastIndexOf('/') + 1)
+    return file => (entry.files[file] === here ? 3 : entry.files[file].startsWith(folder) && !entry.files[file].includes('/', folder.length) ? 1 : 0)
+  }
+
+  // Where names are defined across the folder's repository, for `#` and F12, read from Rust's line scanner the way
+  // the file list is: when first asked, then again behind the last one once it's older than STALE_MS.
+  const definitions = new Map() // a folder asked about → { root, files, defs, kinds, at, partial, building, error }
+  function defsFor(folder) {
+    let entry = definitions.get(folder)
+    if (!entry) definitions.set(folder, (entry = { root: folder, files: [], defs: [], kinds: [], at: -Infinity, partial: false }))
+    if (!entry.building && performance.now() - entry.at > STALE_MS) {
+      entry.building = invoke('workspace_symbols', { dir: folder }).then(
+        ({ root, files, defs, kinds, partial }) => {
+          for (const d of defs) d.push(d[0].toLowerCase()) // ranked on every key, so lowercased once
+          Object.assign(entry, { root, files, defs, kinds, partial, at: performance.now(), error: '' })
+        },
+        e => { entry.error = String(e); entry.at = performance.now() },
+      ).finally(() => {
+        entry.building = null
+        if (!box.hidden && asked === folder && input.value.startsWith('#')) render()
+      })
+    }
+    return entry
+  }
 
   /** A label with the letters at `positions` (offsets into `text` from `offset`) in bold. */
   function marked(text, positions, offset = 0) {
@@ -135,6 +168,17 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, ins
     return li
   }
 
+  /** A definition: its kind, its name, and the file and line it's in. */
+  function defRow([name, k, file, line], positions, entry) {
+    const kindName = entry.kinds[k]
+    const [letter, word] = KINDS[kindName] ?? ['·', kindName]
+    const li = el('li', { className: 'row symbol' })
+    li.append(el('i', { className: `kind ${kindName}`, textContent: letter, title: word }), marked(name, positions),
+      el('small', { textContent: `${entry.files[file]}:${line}` }))
+    li.title = absolute(entry.root, entry.files[file])
+    return li
+  }
+
   function commandRow(command, positions) {
     const li = el('li', { className: 'row command' })
     li.append(el('i', { className: 'icon', textContent: command.icon ?? '' }), marked(command.title, positions))
@@ -207,6 +251,32 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, ins
         count: found.length,
       }
     }
+    if (query.startsWith('#')) {
+      const entry = defsFor(asked)
+      const text = query.slice(1).trim()
+      const lower = text.toLowerCase()
+      const near = nearness(entry)
+      // The name exactly as typed first, then in any case, then the fuzzy matches; each nearest the open file first.
+      const boost = d => (d[0] === text ? 31 : d[5] === lower ? 30 : 0) + near(d[2])
+      const found = text ? rank(text, entry.defs, { text: d => d[0], lower: d => d[5], boost, limit: 100 }) : []
+      const n = entry.defs.length
+      const where = d => absolute(entry.root, entry.files[d[2]])
+      return {
+        rows: found.map(r => defRow(r.item, r.positions, entry)),
+        act: (i, how) => {
+          const d = found[i].item
+          if (how === 'prompt') return insertPath(where(d))
+          if (how === 'reveal') return reveal(where(d))
+          openFile(where(d), d[3], d[4])
+        },
+        hint: entry.error ? `Can't read definitions: ${entry.error}`
+          : entry.at < 0 ? 'Finding definitions…'
+          : !text ? `Type a name to go to where it's defined · ${n.toLocaleString()} in ${entry.files.length.toLocaleString()} files${entry.partial ? ' (stopped there)' : ''}`
+          : `${found.length ? `${found.length === 100 ? '100+' : found.length} of` : 'None of the'} ${n.toLocaleString()} definitions match`,
+        keys: found.length ? 'Enter open at it · Shift+Enter add to prompt · Alt+Enter show in files' : '',
+        count: found.length,
+      }
+    }
     if (query.startsWith(':')) {
       const [line, col] = query.slice(1).split(/[:,]/).map(n => parseInt(n, 10))
       const ok = Number.isFinite(line)
@@ -221,7 +291,8 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, ins
     const root = index.root
     const recentHere = new Map()
     recentFiles().forEach((p, i) => {
-      if (paths.within(p, root) && !paths.same(p, root)) recentHere.set(p.slice(root.length + (root.endsWith(paths.SEP) ? 0 : 1)).replaceAll(paths.SEP, '/'), RECENT_MAX - i)
+      const rel = relative(root, p)
+      if (rel) recentHere.set(rel, RECENT_MAX - i)
     })
     // Files opened lately come first on an empty query, and lead their ties on a typed one.
     const items = query.trim() || !recentHere.size ? index.files : [...recentHere.keys(), ...index.files.filter(f => !recentHere.has(f))]
@@ -317,7 +388,8 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, ins
     input.placeholder = prefix.startsWith('>') ? 'Run a command'
       : prefix.startsWith('%') ? 'Find text inside the files'
       : prefix.startsWith('@') ? 'Go to a symbol in the file'
-      : 'Find a file by name · > for commands · : for a line · @ for a symbol · % for text in files'
+      : prefix.startsWith('#') ? 'Go to where a name is defined in the repository'
+      : 'Find a file by name · > commands · : a line · @ a symbol in the file · # a definition · % text in files'
     search = { query: null, found: null, error: '', running: false }
     symbols = null
     at = 0
@@ -340,9 +412,23 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, ins
     open,
     /** Ctrl+P's, F1's and Ctrl+Shift+O's: closes the box when it shows that mode, and opens it otherwise. */
     toggle(prefix, typed = '') {
-      const mode = v => (v[0] === '>' || v[0] === '@' ? v[0] : '')
+      const mode = v => ('>@#'.includes(v[0] ?? '-') ? v[0] : '')
       if (!box.hidden && mode(input.value) === prefix) close()
       else open(prefix + typed)
+    },
+    /**
+     * F12's: opens where `word` is defined when the repository, or else the open file, defines it once, and
+     * otherwise `#word` to choose from. Waits on a scan already running, so a file just saved counts.
+     */
+    async define(word) {
+      const entry = defsFor(dir())
+      await entry.building
+      const exact = word ? entry.defs.filter(d => d[0] === word) : []
+      const near = nearness(entry)
+      const here = exact.filter(d => near(d[2]) === 3)
+      const one = exact.length === 1 ? exact[0] : here.length === 1 ? here[0] : null
+      if (one) return openFile(absolute(entry.root, entry.files[one[2]]), one[3], one[4])
+      open(`#${word}`)
     },
   }
 }

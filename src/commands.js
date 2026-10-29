@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { ICON } from './files.js'
 import { path as paths } from './paths.js'
 
-export function appCommands({ tabs, files, git, drawer, wallpaper, openQuick, quickPrompts, findInFiles, newSession, insertPath, home, banner, welcome }) {
+export function appCommands({ tabs, files, git, drawer, wallpaper, openQuick, quickPrompts, findInFiles, goToDefinition, goBack, canGoBack, newSession, insertPath, home, banner, welcome }) {
   const active = () => tabs.active()
   const claude = () => active()?.terminal ?? null
   const file = () => (active()?.viewer?.dirty ? active().path : null) // a file tab, the only kind that saves
@@ -40,6 +40,9 @@ export function appCommands({ tabs, files, git, drawer, wallpaper, openQuick, qu
     { title: 'Go to file…', keys: 'Ctrl+P', icon: ICON.file, run: () => openQuick('') },
     { title: 'Go to line…', keys: 'Ctrl+P, then :', icon: '\uE8D2', when: file, run: () => openQuick(':') },
     { title: 'Go to symbol in file…', keys: 'Ctrl+Shift+O', icon: '\uE943', when: () => active()?.viewer?.outline, run: () => openQuick('@') },
+    { title: 'Go to definition', keys: 'F12', icon: '\uE943', when: () => active()?.viewer?.word, run: goToDefinition },
+    { title: 'Go to a definition in the repository…', keys: 'Ctrl+T in a file, or Ctrl+P, then #', icon: '\uE943', run: () => openQuick('#') },
+    { title: 'Go back to where F12 was pressed', keys: 'Alt+Left', icon: '\uE72B', when: canGoBack, run: goBack },
     { title: 'Find text in files…', keys: 'Ctrl+P, then %', icon: '\uE721', run: () => openQuick('%') },
     { title: 'Find and replace in files…', keys: 'Ctrl+Shift+H', icon: '\uE721', run: () => findInFiles(true) },
     { title: 'Save file', keys: 'Ctrl+S', icon: '\uE74E', when: file, run: () => active().viewer.save() },

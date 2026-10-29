@@ -151,6 +151,33 @@ function findInFiles(replacing = false) {
   } else tabs.show(searchTab)
   searchTab.viewer.open(text.includes('\n') ? '' : text, replacing)
 }
+// F12 goes to where the word at the caret is defined, Ctrl+T to any definition in the repository, and Alt+Left back
+// to where F12 was pressed. They're a file tab's keys: a Claude tab's terminal keeps its own. Alt+Left is the
+// editor's own move until F12 has left somewhere to go back to.
+const backs = [] // { path, line, col } where each F12 was pressed, newest last
+function goToDefinition() {
+  const tab = tabs.active()
+  const at = tab?.viewer?.caret?.()
+  if (at && backs.push({ path: tab.path, ...at }) > 50) backs.shift()
+  openQuick().then(q => q.define(tab?.viewer?.word?.() ?? '')).catch(banner)
+}
+function goBack() {
+  const to = backs.pop()
+  if (to) openFile(to.path, to.line, to.col)
+}
+addEventListener('keydown', e => {
+  if (!tabs.active()?.viewer?.word || e.repeat || e.metaKey) return
+  const plain = !e.ctrlKey && !e.altKey && !e.shiftKey
+  const run = e.key === 'F12' && plain ? goToDefinition
+    : e.key === 'ArrowLeft' && e.altKey && !e.ctrlKey && !e.shiftKey && backs.length ? goBack
+    : e.code === 'KeyT' && e.ctrlKey && !e.altKey && !e.shiftKey ? () => openQuick().then(q => q.toggle('#')).catch(banner)
+    : null
+  if (!run) return
+  e.preventDefault()
+  e.stopPropagation()
+  run()
+}, true)
+
 // nook's welcome: on the first run, and from the command palette after.
 function welcome() {
   if ($('welcome')) return
@@ -171,10 +198,14 @@ const openQuick = () => {
       openQuick: prefix => openQuick().then(q => q.open(prefix)),
       quickPrompts,
       findInFiles,
+      goToDefinition,
+      goBack,
+      canGoBack: () => backs.length > 0,
       welcome,
     }),
     gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
     outline: () => tabs.active()?.viewer?.outline?.() ?? null,
+    openPath: () => (tabs.active()?.viewer?.word ? tabs.active().path : null),
     openFile,
     insertPath,
     reveal: path => files.reveal(path),
