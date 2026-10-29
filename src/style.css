@@ -286,6 +286,8 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 #git .split .pill:first-child { border-radius: 6px 0 0 6px; }
 #git .split .pill:last-child { padding: 0 7px; border-radius: 0 6px 6px 0; font-size: 8px; }
 #git-sync .icon { margin-right: 6px; }
+/* While a sync runs, a bar fills behind its label as git reports progress. */
+#git #git-sync.busy { background: linear-gradient(to right, color-mix(in oklch, var(--accent) 28%, var(--raised)) calc(var(--done, 0) * 100%), var(--raised) 0); opacity: 1; }
 #git #git-branch { flex-shrink: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }
 #git-branch span { overflow: hidden; text-overflow: ellipsis; }
 svg.glyph { flex: none; width: 15px; height: 15px; }

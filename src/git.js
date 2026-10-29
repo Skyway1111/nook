@@ -1,10 +1,11 @@
 // The git panel: the active tab's repository, its changes, branch, and commit box. Every action
 // is a git command run by git.rs, so hooks and credential helpers behave as in a terminal. diff.js
 // draws the diff tabs it opens, history.js the history tabs, and merge.js a conflicted file's tab.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, Channel } from '@tauri-apps/api/core'
 import { $, el, openMenu, openPicker, dragPath } from './ui.js'
 import { ICON, basename } from './files.js'
 import { path as paths } from './paths.js'
+import { progressOf } from './progress.js'
 
 const panel = $('git')
 const list = $('git-list')
@@ -154,8 +155,12 @@ export function startGit({ openView, openFile, insertPath }) {
       const [label, , glyph] = SYNC[kind]
       const busy = syncing?.root === s.root
       syncButton.firstChild.textContent = glyph
-      syncButton.lastChild.textContent = busy ? `${syncing.label}…` : count ? `${label} ${count}` : label
+      syncButton.lastChild.textContent = count ? `${label} ${count}` : label
+      syncButton.title = ''
+      syncButton.style.removeProperty('--done')
       syncButton.disabled = $('git-sync-more').disabled = busy
+      syncButton.classList.toggle('busy', busy)
+      if (busy) showSync()
     }
 
     const staged = changes.filter(c => c.staged !== 'off')
@@ -207,10 +212,14 @@ export function startGit({ openView, openFile, insertPath }) {
   // Writes run one at a time: two at once collide on the index lock.
   let queue = Promise.resolve()
   let said = '' // what the last write that failed said
-  /** Runs a write in `dir`, the panel's repository unless given. Resolves to whether it worked. */
-  function act(args, input, dir = s.root) {
+  /**
+   * Runs a write in `dir`, the panel's repository unless given. Resolves to whether it worked. Given
+   * `onProgress`, git reports how far along it is, and each line it writes goes there as it comes.
+   */
+  function act(args, input, dir = s.root, onProgress) {
+    const progress = onProgress && Object.assign(new Channel(), { onmessage: onProgress })
     const done = queue
-      .then(() => invoke('git', { dir, args, input }))
+      .then(() => (progress ? invoke('git_progress', { dir, args, progress }) : invoke('git', { dir, args, input })))
       .then(() => (say(''), true), e => (say((said = String(e))), false))
     queue = done
     done.then(refresh)
@@ -416,11 +425,22 @@ export function startGit({ openView, openFile, insertPath }) {
   }
   async function sync(kind) {
     const root = s.root
-    syncing = { root, label: SYNC[kind][1] }
+    syncing = { root, label: SYNC[kind][1], line: '', done: 0 }
     render()
-    await act(kind === 'publish' ? ['push', '-u', s.remote, 'HEAD'] : [kind])
+    const args = kind === 'publish' ? ['push', '-u', s.remote, 'HEAD'] : [kind]
+    await act(args, undefined, root, line => {
+      if (syncing?.root !== root) return
+      Object.assign(syncing, progressOf(line, syncing.done))
+      if (s?.root === root) showSync()
+    })
     syncing = null
     if (s) render()
+  }
+  /** The sync button while one runs: what git is doing, and a bar for how far along it is. */
+  function showSync() {
+    syncButton.lastChild.textContent = `${syncing.label}…${syncing.done ? ` ${Math.round(syncing.done * 100)}%` : ''}`
+    syncButton.title = syncing.line
+    syncButton.style.setProperty('--done', syncing.done)
   }
   syncButton.onclick = () => sync(nextSync()[0])
   $('git-sync-more').onclick = e => {
