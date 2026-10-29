@@ -80,24 +80,33 @@ export function hidePreview() {
   preview.hidden = true
 }
 
-/** Pointer-driven drag (HTML5 drag-and-drop is unavailable while Tauri handles OS file drops). */
-export function dragPath(downEvent, path, onDrop) {
+/**
+ * Pointer-driven drag (HTML5 drag-and-drop is unavailable while Tauri handles OS file drops). `onDrop(target,
+ * up)` gets the element under the pointer and the pointerup. `over(target, move)` follows the pointer while
+ * dragging, and gets null once the drag ends. `label` is the ghost's text.
+ */
+export function dragPath(downEvent, path, onDrop, { label = paths.basename(path), over } = {}) {
   const [x0, y0] = [downEvent.clientX, downEvent.clientY]
   let dragging = false
   const move = e => {
     if (!dragging && Math.hypot(e.clientX - x0, e.clientY - y0) > 6) {
       dragging = true
       hidePreview()
-      ghost.textContent = paths.basename(path)
+      ghost.textContent = label
       ghost.hidden = false
     }
-    if (dragging) ghost.style.translate = `${e.clientX + 12}px ${e.clientY + 10}px`
+    if (!dragging) return
+    ghost.style.translate = `${e.clientX + 12}px ${e.clientY + 10}px`
+    over?.(document.elementFromPoint(e.clientX, e.clientY), e)
   }
   const up = e => {
     removeEventListener('pointermove', move)
     removeEventListener('pointerup', up)
     ghost.hidden = true
-    if (dragging) onDrop(document.elementFromPoint(e.clientX, e.clientY))
+    if (dragging) {
+      over?.(null, e)
+      onDrop(document.elementFromPoint(e.clientX, e.clientY), e)
+    }
   }
   addEventListener('pointermove', move)
   addEventListener('pointerup', up)

@@ -166,9 +166,14 @@ addEventListener('keydown', e => {
   openQuick().then(q => q.toggle(commands ? '>' : '', typed)).catch(banner).finally(() => removeEventListener('keydown', hold, true))
 }, true)
 
-// Files dropped from Explorer become paths in the prompt (Claude Code attaches images itself).
-getCurrentWebview().onDragDropEvent(e => {
-  if (e.payload.type === 'drop') tabs.paste(e.payload.paths.map(quote).join(' ') + ' ')
+// Files dropped from Explorer become paths in the prompt (Claude Code attaches images itself), or, dropped on a
+// folder in the file browser, copies in that folder. Tauri gives the pointer in physical pixels.
+getCurrentWebview().onDragDropEvent(({ payload: { type, position, paths: dropped } }) => {
+  const dir = type === 'leave' || !position ? files.dropFolder(null) : files.dropFolder(position.x / devicePixelRatio, position.y / devicePixelRatio)
+  if (type !== 'drop') return
+  files.dropFolder(null)
+  if (dir) files.receive(dropped, dir)
+  else tabs.paste(dropped.map(quote).join(' ') + ' ')
 })
 
 // Titlebar
