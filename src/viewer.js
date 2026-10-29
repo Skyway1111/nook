@@ -371,6 +371,21 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     reveal,
     /** Quick open's `@`, or null before the text has loaded. */
     outline: () => (editor ? outline() : null),
+    /** F12's: the selection when it's a few words on one line, or else the word at the caret, or ''. */
+    word: () => {
+      if (!editor) return ''
+      const { from, to, empty } = editor.state.selection.main
+      const range = empty ? editor.state.wordAt(from) : { from, to }
+      const text = range ? editor.state.sliceDoc(range.from, range.to).trim() : ''
+      return text.length <= 100 && !text.includes('\n') ? text : ''
+    },
+    /** Where the caret is, 1-based, for going back to it; null before the text has loaded. */
+    caret: () => {
+      if (!editor) return null
+      const head = editor.state.selection.main.head
+      const line = editor.state.doc.lineAt(head)
+      return { line: line.number, col: head - line.from + 1 }
+    },
     /** The text selected in the editor, or ''. */
     selection: () => (editor ? editor.state.sliceDoc(editor.state.selection.main.from, editor.state.selection.main.to) : ''),
     /** Replaces the text with `f(text)` as one edit, once the file has loaded. */
