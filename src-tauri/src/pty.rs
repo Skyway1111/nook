@@ -57,6 +57,7 @@ fn state_file(id: u64) -> PathBuf {
 }
 
 fn forget(id: u64) {
+    crate::ide::close(id);
     let _ = std::fs::remove_file(state_file(id));
     let _ = std::fs::remove_file(state_file(id).with_extension("cmd"));
 }
@@ -118,6 +119,9 @@ pub fn pty_spawn(
     cmd.env("CLAUDE_CODE_PLUGIN_DIRS", plugin_dirs(&inherited, nook_mod).map_err(err)?);
     cmd.env("NOOK_STATE", state_file(id));
     cmd.env("NOOK_CLAUDE_TEMP", claude_temp()); // where the mod finds the session's pasted images
+    if let Some(port) = crate::ide::open(id) {
+        cmd.env("CLAUDE_CODE_SSE_PORT", port.to_string()); // Claude connects to nook as its editor
+    }
     let mut child = pair.slave.spawn_command(cmd).map_err(err)?;
     let mut reader = pair.master.try_clone_reader().map_err(err)?;
     let writer = pair.master.take_writer().map_err(err)?;
