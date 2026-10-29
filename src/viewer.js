@@ -2,7 +2,7 @@
 // rendered and toggle to their source. previews.js draws all but Markdown, and loads when one first opens.
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { IMAGE, basename } from './files.js'
-import { el } from './ui.js'
+import { el, openMenu } from './ui.js'
 import { path as paths } from './paths.js'
 
 const SCHEME = /^[a-z][\w+.-]*:/i
@@ -44,6 +44,15 @@ async function markdown(text, path) {
 }
 
 const button = (html, onclick) => el('button', { innerHTML: html, onclick })
+
+// Blame is on or off for every file tab at once, and stays as it was left. Alt+B, or the gutter's menu, turns it.
+const BLAME_KEY = 'nook.blame'
+let blameOn = (() => { try { return localStorage.getItem(BLAME_KEY) === '1' } catch { return false } })()
+function setBlameOn(on) {
+  blameOn = on
+  try { localStorage.setItem(BLAME_KEY, on ? '1' : '0') } catch {}
+  dispatchEvent(new Event('nook-blame'))
+}
 
 const note = (path, error) => [
   el('p', { textContent: `nook can't show ${basename(path)}: ${error}.` }),
@@ -98,11 +107,35 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
   }
   const conflict = () => tell(`${name} changed on disk.`, ['Overwrite', () => save(true)], ['Reload', () => refresh(true)])
 
+  // Blame asks git about the editor's own text, so it holds for unsaved edits too: a while after the last one.
+  let blaming = 0 // counts blame runs, so an old one's answer is dropped
+  let reblame
+  async function blame() {
+    clearTimeout(reblame)
+    const n = ++blaming
+    if (!editor) return
+    const { showBlame } = await editing()
+    if (!blameOn) return showBlame(editor, null)
+    const text = editor.state.doc.toString()
+    const args = ['blame', '--porcelain', '--contents', '-', '--', name]
+    const out = await invoke('git', { dir: paths.parent(path), args, input: text }).catch(() => null)
+    if (n !== blaming || !editor) return
+    const { parseBlame } = await import('./blame.js')
+    // Outside a repository, or not yet committed: no gutter.
+    showBlame(editor, out && parseBlame(out), oid => dispatchEvent(new CustomEvent('nook-history', { detail: { path, oid } })))
+  }
+  const onBlame = () => blame()
+  addEventListener('nook-blame', onBlame)
+
   let pending // an autosave's timer
   function changed() {
     const now = !editor.state.doc.eq(saved)
     if (now !== dirty) onDirty((dirty = now))
     onText?.(editor.state.doc.toString())
+    if (blameOn) {
+      clearTimeout(reblame)
+      reblame = setTimeout(blame, 1500)
+    }
     if (autosave && dirty) {
       clearTimeout(pending)
       pending = setTimeout(save, 300)
@@ -147,6 +180,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
     saved = editor.state.doc
     changed()
     paint('text', [editor.dom, ...(page ? [page, toggle] : []), bar])
+    if (blameOn) blame()
     if (page) preview(previewing && !target)
     if (document.activeElement === view) focus()
     if (target) reveal(target)
@@ -212,6 +246,12 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
 
   view.addEventListener('keydown', e => {
     if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 's') save()
+    else if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === 'b' && editor) (e.preventDefault(), setBlameOn(!blameOn))
+  })
+  view.addEventListener('contextmenu', e => {
+    if (!editor || !e.target.closest('.cm-gutters')) return
+    e.preventDefault()
+    openMenu(e, [[blameOn ? 'Hide blame' : 'Show blame', '\uE81C', () => setBlameOn(!blameOn)]])
   })
 
   function follow(e) {
@@ -236,6 +276,10 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
       if (editor) editor.dispatch({ changes: change(text, f(text)) })
     }),
     focus,
-    close: () => { editor?.destroy(); drawing?.close?.(); player?.close?.() },
+    close: () => {
+      removeEventListener('nook-blame', onBlame)
+      clearTimeout(reblame)
+      editor?.destroy(); drawing?.close?.(); player?.close?.()
+    },
   }
 }

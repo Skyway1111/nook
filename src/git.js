@@ -31,6 +31,8 @@ const PATHSPEC = ['--pathspec-from-file=-', '--pathspec-file-nul']
 const leaf = rel => rel.slice(rel.lastIndexOf('/', rel.length - 2) + 1)
 /** A git path as a path under `root`. */
 const abs = (root, rel) => paths.fromSlashes(root, rel)
+/** A path under `root` as a git path. */
+const relative = (root, path) => path.slice(root.length).replace(/^[\\/]/, '').replaceAll(paths.SEP, '/')
 
 export function startGit({ openView, openFile, insertPath }) {
   let want = null // the active tab's path
@@ -194,15 +196,21 @@ export function startGit({ openView, openFile, insertPath }) {
     })
   }
 
-  /** A history tab of `rel` in the repository `status` describes; '' is all of it. */
-  function openHistory(status, rel) {
+  /** A history tab of `rel` in the repository `status` describes ('' is all of it), at the commit `oid` if given. */
+  function openHistory(status, rel, oid) {
     const { root } = status
     const run = args => act(args, undefined, root).then(ok => ok || said)
-    openView('history', rel ? `${leaf(rel)} history` : `${basename(root)} history`, rel ? abs(root, rel) : root, view => {
+    const tab = openView('history', rel ? `${leaf(rel)} history` : `${basename(root)} history`, rel ? abs(root, rel) : root, view => {
       const history = import('./history.js').then(m => m.startHistory(view, { root, rel, openFile, run }))
-      return { refresh: () => history.then(h => h.refresh()) }
+      return { refresh: () => history.then(h => h.refresh()), goTo: oid => history.then(h => h.goTo(oid)) }
     })
+    if (oid) tab.viewer.goTo(oid)
   }
+  // A click in a file's blame: its history, at that commit.
+  addEventListener('nook-history', async ({ detail: { path, oid } }) => {
+    const status = await invoke('git_status', { path }).catch(() => null)
+    if (status?.root && paths.within(path, status.root)) openHistory(status, relative(status.root, path), oid)
+  })
 
   list.addEventListener('click', e => {
     const li = e.target.closest('li')
@@ -321,8 +329,7 @@ export function startGit({ openView, openFile, insertPath }) {
     async changes(path) {
       const status = await invoke('git_status', { path }).catch(() => null)
       if (!status?.root || !paths.within(path, status.root)) return openFile(path)
-      const rel = path.slice(status.root.length).replace(/^[\\/]/, '').replaceAll(paths.SEP, '/')
-      openDiff(status, rel)
+      openDiff(status, relative(status.root, path))
     },
     /** Follows the tab now showing: a Claude tab's folder, or an open file. */
     show(path) {
