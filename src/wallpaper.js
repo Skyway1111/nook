@@ -84,7 +84,16 @@ function atlas(w, h, font, colors) {
 export function startWallpaper(pane, { button, save, tune, onClose }) {
   const canvas = pane.insertBefore(el('canvas', { className: 'wallpaper', hidden: true }), pane.firstChild)
   let speed = 1, since = performance.now(), before = 0 // the scene's clock runs at `speed` from `since`, when it read `before`
-  const clock = now => before + (now - since) * speed / 1000 // seconds, in the scene's time
+  let resting = false // with `--wallpaper-motion: working`, the scene holds still, its clock stopped, while no Claude session works
+  let motion = 'always', working = false // theme.css's `--wallpaper-motion`, and whether a session in this window works
+  const clock = now => before + (now - since) * (resting ? 0 : speed) / 1000 // seconds, in the scene's time
+  /** Changes the clock's pace with `change`, the scene going on from where it is. */
+  const rebase = change => {
+    const now = performance.now()
+    before = clock(now)
+    since = now
+    change()
+  }
   const frameMs = () => FRAME_MS / Math.min(1, speed)
   let look = { id: 'none', size: 14, family: 'monospace', colors: {} } // theme.css's, at the last restyle
   let previewing = null // a scene the picker shows before it's kept
@@ -99,7 +108,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   const id = () => previewing ?? look.id
   let faded = false // at no strength at all, the scene isn't drawn
   const shown = () => !!scene(id()) && showing && !faded
-  const live = () => shown() && focused && !document.hidden
+  const live = () => shown() && focused && !document.hidden && !resting
 
   function measure() {
     onCanvas = spare = null // a new bitmap starts blank
@@ -149,6 +158,8 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
 
   /** Shows or hides the canvas for what's in front, and runs the loop while anything moves. */
   function update() {
+    const rest = motion === 'working' && !working && !picker // the open picker shows every scene moving
+    if (rest !== resting) rebase(() => { resting = rest })
     canvas.hidden = !shown()
     if (shown() !== !!cells) measure()
     if (shown()) draw()
@@ -158,11 +169,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   /** Sets the scene's pace from a `--wallpaper-speed` value. */
   function retime(value) {
     const pace = Math.min(SPEEDS[1], Math.max(SPEEDS[0], parseFloat(value) || 1))
-    if (pace === speed) return
-    const now = performance.now()
-    before = clock(now) // the scene goes on from where it is, at the new pace
-    since = now
-    speed = pace
+    if (pace !== speed) rebase(() => { speed = pace })
   }
 
   /** Reads the scene, colors, and cell size from theme.css. */
@@ -179,7 +186,8 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
       family: v('--font-term') || 'monospace',
       colors: Object.fromEntries(ROLES.map(r => [r, rgba(v(`--wallpaper-${r}`) || v('--ink-3'))])),
     }
-    for (const [name, value] of held) if (parseFloat(v(name)) === parseFloat(value)) held.delete(name)
+    for (const [name, value] of held) if (v(name) === value || parseFloat(v(name)) === parseFloat(value)) held.delete(name)
+    motion = held.get('--wallpaper-motion') ?? v('--wallpaper-motion')
     retime(held.get('--wallpaper-speed') ?? v('--wallpaper-speed'))
     const strength = held.get('--wallpaper-opacity')
     canvas.style.opacity = strength ?? ''
@@ -245,6 +253,18 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
         row.append(el('span', { textContent: label }), input)
         return row
       }))
+      // Still while Claude rests: the wallpaper moves only while a session in this window works, so it shows
+      // when Claude is busy and costs nothing while it isn't.
+      const toggle = el('input', { type: 'checkbox', checked: motion === 'working' })
+      toggle.onchange = () => {
+        const value = toggle.checked ? 'working' : 'always'
+        held.set('--wallpaper-motion', value)
+        motion = value
+        tune('--wallpaper-motion', toggle.checked ? value : null).catch(e => { held.delete('--wallpaper-motion'); restyle(); throw e })
+      }
+      const row = el('label', { title: 'Hold still while no Claude session in this window is working' })
+      row.append(toggle, el('span', { textContent: 'Move only while Claude works' }))
+      box.appendChild(el('footer', { className: 'motion' })).append(row)
     }
     pane.append(box)
 
@@ -324,6 +344,12 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
 
   return {
     restyle,
+    /** Whether any Claude session in this window is working, which moves a wallpaper set to `working`. */
+    working(on) {
+      if (on === working) return
+      working = on
+      update()
+    },
     /** Whether a Claude tab is in front, the only kind the wallpaper shows behind. */
     show(claude) {
       showing = claude
