@@ -66,7 +66,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { diagramBox, errorLine, failingTests, headerSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, splitDiagrams, splitPictures, summary, testCounts } from './register.js'
+import { diagramBox, mathBox, errorLine, failingTests, headerSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, splitBlocks, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -253,8 +253,8 @@ test('a failed test run names the tests that failed', () => {
 
 test('a reply\'s mermaid blocks split out, each with a box sized from its source', () => {
   const reply = 'The flow:\n\n```mermaid\nflowchart LR\n  a --> b\n```\n\nThen:\n```mermaid\nsequenceDiagram\n  A->>B: hi\n  B-->>A: ok\n```\nDone.'
-  expect(splitDiagrams(reply)).toEqual(['The flow:', 'flowchart LR\n  a --> b', 'Then:', 'sequenceDiagram\n  A->>B: hi\n  B-->>A: ok', 'Done.'])
-  expect(splitDiagrams('Half a block:\n```mermaid\ngraph TD\n')).toEqual(['Half a block:\n```mermaid\ngraph TD\n'])
+  expect(splitBlocks(reply)).toEqual(['The flow:', ['mermaid', 'flowchart LR\n  a --> b'], 'Then:', ['mermaid', 'sequenceDiagram\n  A->>B: hi\n  B-->>A: ok'], 'Done.'])
+  expect(splitBlocks('Half a block:\n```mermaid\ngraph TD\n')).toEqual(['Half a block:\n```mermaid\ngraph TD\n'])
   expect(diagramBox('flowchart LR\n  a --> b', 120)).toEqual([100, 8])
   expect(diagramBox(['graph TD', ...Array.from({ length: 8 }, (_, i) => `  n${i} --> n${i + 1}`)].join('\n'), 70)).toEqual([70, 27])
   expect(diagramBox(['graph TD', ...Array(40).fill('  a --> b')].join('\n'), 70)).toEqual([70, 40])
@@ -336,4 +336,32 @@ test('a reply that links a picture file draws it after its paragraph, in any ter
   const none = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AssistantMessage', requestId: 'r3', props: { text: 'See ![x](gone.png)', isFirstOfReply: true } })
   expect((await none.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine: See ![x](gone.png)')
   await none.unmount()
+})
+
+test('a reply\'s display formulas split out, on lines of their own and outside code, each sized from its source', () => {
+  const reply = 'Energy:\n\n$$\nE = mc^2\n$$\n\nand \\[ a^2 \\] inline\n\\[\\frac{a}{b}\\]\n```sh\n$$ echo $$\n```\nCosts $5, or $$x$$ inline.'
+  expect(splitBlocks(reply)).toEqual([
+    'Energy:', ['math', 'E = mc^2'], 'and \\[ a^2 \\] inline', ['math', '\\frac{a}{b}'], '```sh\n$$ echo $$\n```\nCosts $5, or $$x$$ inline.',
+  ])
+  expect(mathBox('E = mc^2', 77)).toEqual([77, 2])
+  expect(mathBox('\\frac{a}{b}', 120)).toEqual([100, 3])
+  expect(mathBox('\\sum_{i=1}^n i^2', 77)).toEqual([77, 4])
+  expect(mathBox('\\int_0^1 x\\,dx', 77)).toEqual([77, 3])
+  expect(mathBox('\\begin{aligned} a &= b \\\\ c &= d \\\\ e &= f \\end{aligned}', 77)).toEqual([77, 4])
+})
+
+test('a reply with a display formula draws it in its place, in a tab nook started only', async ($, on) => {
+  const reports: Record<string, unknown>[] = []
+  const written: Record<string, string> = {}
+  nook(on, reports, ['terminal'], written)
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: `engine: ${e.props.text}` }))
+  await $.session.start({ cwd: '/work' })
+  const text = 'So:\n\n$$\n\\frac{1}{2}\n$$\n\nDone.'
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AssistantMessage', requestId: 'r1', props: { text, isFirstOfReply: true } })
+  expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine: So:')
+  const image = await ui.find({ type: 'Image' })
+  expect(image?.props).toMatchObject({ source: { file: expect.stringMatching(/^\/nook\/math-\w+\.tex$/) }, rows: 3, alt: 'formula' })
+  expect(written[image?.props.source.file]).toBe('\\frac{1}{2}')
+  expect((await ui.find({ type: 'Markdown' }))?.props.text).toBe('Done.')
+  await ui.unmount()
 })
