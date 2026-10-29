@@ -18,6 +18,7 @@ const SLOW = 3000 // ms past which a command's outcome line says how long it too
 const TIMES = 500 // the most commands whose run time is kept
 const times = new Map() // a Bash call's tool_use_id -> ms it ran
 const GROUP_ROWS = 6 // the most outcome rows under a folded run of calls
+const READ_NAMES = 8 // the most files the row of a folded run's reads names
 let state = { efforts: LEVELS }
 let wrote = ''
 let handled = '' // the last request run, so each runs once
@@ -171,6 +172,17 @@ export function errorLine(text) {
   return lines[at].trim() + (place ? ` at ${place}` : '')
 }
 
+/** The files a folded run of calls read, each relative to `root` when inside it and once only, so nook
+ * links each one in the row (Ctrl+click opens it, resting the mouse shows its lines). */
+export function readPaths(calls, root) {
+  const inside = root && root.replace(/[\\/]+$/, '') + sep(root)
+  const paths = calls
+    .filter(c => c.tool === 'Read' && !c.isRunning && !c.isErrored && !c.isInterrupted && c.input?.file_path)
+    .map(c => String(c.input.file_path))
+    .map(p => (inside && p.startsWith(inside) ? p.slice(inside.length) : p))
+  return [...new Set(paths)]
+}
+
 /** One outcome row under Claude's own, its parts dim unless they carry a color. */
 function outcomeRow(Box, Text, parts) {
   const runs = parts.flatMap(([text, color], i) => [
@@ -311,8 +323,8 @@ export function register(on) {
     const { Box, Text } = $.ui.resolve(e)
     return Box({ flexDirection: 'column', children: [await next(e), outcomeRow(Box, Text, parts)] })
   })
-  // A run of calls Claude folds into one line, such as `Ran 2 shell commands`: under it, each finished
-  // command that has something to say, by its own words.
+  // A run of calls Claude folds into one line, such as `Read 3 files, ran 2 shell commands`: under it, the
+  // files it read, and each finished command that has something to say, by its own words.
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
     if (e.props.isExpanded) return next(e)
     const rows = []
@@ -322,10 +334,15 @@ export function register(on) {
       const command = String(call.input?.command ?? '').split('\n')[0]
       if (parts) rows.push([[command.length > 40 ? `${command.slice(0, 39)}…` : command, null], ...parts])
     }
-    if (!rows.length) return next(e)
+    const read = readPaths(e.props.calls, await $.session.root().catch(() => ''))
+    if (!rows.length && !read.length) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const shown = rows.slice(0, GROUP_ROWS).map(parts => outcomeRow(Box, Text, parts))
     if (rows.length > GROUP_ROWS) shown.push(outcomeRow(Box, Text, [[`and ${rows.length - GROUP_ROWS} more`, null]]))
+    if (read.length) {
+      const more = read.length > READ_NAMES ? `, and ${read.length - READ_NAMES} more` : ''
+      shown.unshift(outcomeRow(Box, Text, [[`${read.slice(0, READ_NAMES).join(', ')}${more}`, null]]))
+    }
     return Box({ flexDirection: 'column', children: [await next(e), ...shown] })
   })
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
