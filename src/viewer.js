@@ -72,7 +72,7 @@ function change(a, b) {
 }
 
 /** `onText` hears the editor's text after each load and edit. `autosave` saves a moment after each edit. */
-export function startViewer(view, path, { openFile, onDirty, onText, autosave }) {
+export function startViewer(view, path, { openFile, onDirty, onText, autosave, mention: toPrompt }) {
   view.tabIndex = -1 // focusable, so the keyboard scrolls it
   const name = basename(path)
   let shown, failed // on disk at the last read or write: the file's text, or why it can't be shown
@@ -329,8 +329,22 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
 
   const focus = () => (!editor ? player?.el ?? view : previewing ? page : editor).focus()
 
+  /** Names the picked lines, or the file when none are picked, in Claude's prompt. A pick that ends at the start
+   * of a line leaves that line out, as a drag over whole lines does. */
+  function mention() {
+    if (!toPrompt) return
+    const { from, to, empty } = editor?.state.selection.main ?? { empty: true }
+    if (empty) return toPrompt(null)
+    const doc = editor.state.doc
+    const first = doc.lineAt(from).number
+    const end = doc.lineAt(to)
+    toPrompt([first, Math.max(first, end.number - (end.from === to ? 1 : 0))])
+  }
+
   view.addEventListener('keydown', e => {
-    if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 's') save()
+    // Ctrl+Alt+K, as in Claude's own editor extensions.
+    if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'k') (e.preventDefault(), mention())
+    else if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 's') save()
     else if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === 'b' && editor) (e.preventDefault(), setBlameOn(!blameOn))
   })
   view.addEventListener('contextmenu', e => {
@@ -363,6 +377,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
       if (editor) editor.dispatch({ changes: change(text, f(text)) })
     }),
     focus,
+    mention,
     close: () => {
       removeEventListener('nook-blame', onBlame)
       clearTimeout(reblame)

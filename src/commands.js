@@ -44,6 +44,7 @@ export function appCommands({ tabs, files, git, drawer, wallpaper, openQuick, qu
     { title: 'Show file in file browser', icon: ICON.explorer, when: file, run: () => files.reveal(file()) },
     { title: 'Copy file path', icon: ICON.copy, when: file, run: () => copy(file()) },
     { title: 'Add file to Claude\'s prompt', icon: ICON.add, when: file, run: () => insertPath(file()) },
+    { title: 'Add selected lines to Claude\'s prompt', keys: 'Ctrl+Alt+K', icon: ICON.add, when: () => active()?.viewer?.mention, run: () => active().viewer.mention() },
     { title: 'Open file with default app', icon: ICON.open, when: file, run: () => invoke('open_path', { path: file() }).catch(banner) },
     { title: 'New file in current folder', icon: ICON.file, when: () => files.current(), run: () => files.create(false) },
     { title: 'New folder in current folder', icon: ICON.folder, when: () => files.current(), run: () => files.create(true) },

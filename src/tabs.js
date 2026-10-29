@@ -3,6 +3,7 @@ import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { startTerminal } from './terminal.js'
 import { startViewer } from './viewer.js'
+import { path as paths } from './paths.js'
 import { ICON, kind, same, basename } from './files.js'
 import { $, el, openMenu } from './ui.js'
 import { claudeWith } from './launch.js'
@@ -248,6 +249,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     const tab = openView(kind({ name }), name, path, (view, tab) => startViewer(view, path, {
       openFile,
       onDirty: dirty => tab.el.classList.toggle('dirty', dirty),
+      mention: lines => claude && paste(paths.mention(path, claude.cwd, lines) + ' '),
     }))
     if (line) tab.viewer.reveal?.({ line, col })
   }
@@ -291,6 +293,15 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
   // An open file follows edits on disk, Claude's included.
   setInterval(() => document.hidden || active?.viewer?.refresh(), 2000)
 
+  /** Pastes `text` into the Claude tab shown last, and with `submit`, sends it. */
+  function paste(text, submit = false) {
+    if (!claude?.terminal) return
+    const { terminal } = claude
+    show(claude)
+    terminal.paste(text)
+    if (submit) setTimeout(terminal.submit, 50) // after Claude has taken the paste
+  }
+
   return {
     openClaude,
     openFile,
@@ -327,13 +338,6 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
       tab.terminal?.key(allow ? '1' : '\x1b')
       sessions.answered(tab)
     },
-    /** Pastes `text` into the Claude tab shown last, and with `submit`, sends it. */
-    paste(text, submit = false) {
-      if (!claude?.terminal) return
-      const { terminal } = claude
-      show(claude)
-      terminal.paste(text)
-      if (submit) setTimeout(terminal.submit, 50) // after Claude has taken the paste
-    },
+    paste,
   }
 }

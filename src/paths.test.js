@@ -40,3 +40,12 @@ test('a file URL resolves a relative link beside the file on either system', () 
     assert.equal(p.fromUrl(new URL('pics/c%20d.png', p.toUrl(file)).pathname), want)
   }
 })
+
+test('a file and its picked lines read as Claude\'s @ mention, relative to the session when inside it', () => {
+  assert.equal(nix.mention('/work/src/app.js', '/work', [5, 9]), '@src/app.js#L5-9')
+  assert.equal(nix.mention('/work/src/app.js', '/work/', [5, 5]), '@src/app.js#L5')
+  assert.equal(nix.mention('/work/my notes.txt', '/work', [2, 3]), '@"my notes.txt"#L2-3')
+  assert.equal(nix.mention('/elsewhere/a.js', '/work', null), '@/elsewhere/a.js')
+  assert.equal(nix.mention('/workshop/a.js', '/work', [1, 2]), '@/workshop/a.js#L1-2')
+  assert.equal(win.mention('c:\\Repo\\src\\a.rs', 'C:\\repo', [3, 4]), '@src\\a.rs#L3-4')
+})

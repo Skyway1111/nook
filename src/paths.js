@@ -45,6 +45,15 @@ export function pathsFor(windows) {
     basename: p => (p === '' ? TOP : isRoot(p) ? (windows ? p.slice(0, 2) : p) : p.slice(p.lastIndexOf(SEP) + 1)),
     /** A path relative to `dir` with `/` between its parts, as git and URLs write one, under `dir`. */
     fromSlashes: (dir, rel) => dir + SEP + rel.replace(/\/$/, '').replaceAll('/', SEP),
+    /** How Claude's prompt names lines `[first, last]` of the file at `p` (or the whole file, without them):
+     * `@src/app.js#L5-9`, relative to the session's folder `dir` when it's inside, and quoted with a space. */
+    mention(p, dir, lines) {
+      const name = dir && !same(p, dir) && fold(p).startsWith(fold(dir.endsWith(SEP) ? dir : dir + SEP))
+        ? p.slice(dir.length + (dir.endsWith(SEP) ? 0 : 1))
+        : p
+      const range = !lines ? '' : lines[0] === lines[1] ? `#L${lines[0]}` : `#L${lines[0]}-${lines[1]}`
+      return `@${/\s/.test(name) ? `"${name}"` : name}${range}`
+    },
     /** A file:// URL's path for `p`. */
     toUrl: p => 'file://' + (windows ? '/' : '') + p.split(SEP).map(encodeURIComponent).join('/'),
     /** The path of a file:// URL's `pathname`. */
