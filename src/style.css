@@ -718,6 +718,12 @@ svg.defs { position: absolute; width: 0; height: 0; }
 #quick li b { font-weight: 700; color: var(--accent); }
 #quick li .icon { flex: none; width: 14px; text-align: center; color: var(--ink-3); }
 #quick li.command > span { flex: 1; max-width: none; }
+#quick li.symbol small { direction: ltr; }
+#quick .kind { flex: none; width: 16px; font: 700 .8rem/16px var(--font-term); text-align: center; border-radius: 4px; color: var(--ansi-cyan); background: color-mix(in srgb, currentColor 14%, transparent); }
+#quick .kind:is(.function, .method) { color: var(--ansi-magenta); }
+#quick .kind:is(.class, .struct, .interface, .trait, .impl, .enum, .type) { color: var(--ansi-yellow); }
+#quick .kind.module { color: var(--ansi-blue); }
+#quick .kind:is(.heading, .rule) { color: var(--accent); }
 #quick kbd { flex: none; font: .8rem var(--font-term); color: var(--ink-3); padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; }
 #quick footer { flex: none; display: flex; justify-content: space-between; gap: 12px; padding: 6px 8px 0; font-size: .8rem; color: var(--ink-3); white-space: nowrap; overflow: hidden; }
 #quick footer span:last-child { overflow: hidden; text-overflow: ellipsis; }

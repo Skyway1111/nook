@@ -142,6 +142,7 @@ const openQuick = () => {
       welcome,
     }),
     gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
+    outline: () => tabs.active()?.viewer?.outline?.() ?? null,
     openFile,
     insertPath,
     reveal: path => files.reveal(path),
@@ -152,7 +153,9 @@ const openQuick = () => {
 addEventListener('keydown', e => {
   const files = e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'p'
   const commands = e.key === 'F1' && !e.ctrlKey && !e.shiftKey
-  if (!(files || commands) || e.altKey || e.metaKey || e.repeat) return
+  // Ctrl+Shift+O is a file tab's; in a Claude tab, Claude gets it.
+  const symbols = e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'o' && !!tabs.active()?.viewer?.outline
+  if (!(files || commands || symbols) || e.altKey || e.metaKey || e.repeat) return
   e.preventDefault()
   e.stopPropagation()
   // Letters typed while the box's code loads go to the box, not to Claude.
@@ -164,7 +167,7 @@ addEventListener('keydown', e => {
     typed += k.key
   }
   addEventListener('keydown', hold, true)
-  openQuick().then(q => q.toggle(commands ? '>' : '', typed)).catch(banner).finally(() => removeEventListener('keydown', hold, true))
+  openQuick().then(q => q.toggle(commands ? '>' : symbols ? '@' : '', typed)).catch(banner).finally(() => removeEventListener('keydown', hold, true))
 }, true)
 
 // Files dropped from Explorer become paths in the prompt (Claude Code attaches images itself), or, dropped on a
