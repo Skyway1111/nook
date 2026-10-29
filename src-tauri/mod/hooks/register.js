@@ -1,8 +1,10 @@
 // Tells nook's composer what to show beside Claude's prompt, runs the two commands its menus send, and
 // draws pictures in the transcript: ones Claude read, an SVG it wrote, ones a shell command wrote, ones a reply links, and a reply's diagrams and formulas, with its inline math written in plain symbols. Every hook passes its event on unchanged, and the render hooks add
-// pictures under Claude's own drawing, and under a shell command's result the line that says how it went. The mod writes the session's model, effort, effort levels, context
+// pictures under Claude's own drawing, and under a shell command's result the line that says how it went, and under an edit's diff an Undo. The mod writes the session's model, effort, effort levels, context
 // fill, pasted images' folder, what the session is doing, and a command to type as JSON to NOOK_STATE, and reads requests from
 // the .cmd file beside it: { command, args, at }.
+import { atom, read, update } from 'claude-code'
+
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const MODELS = ['fable', 'opus', 'sonnet', 'haiku'] // the menu's aliases, each its family's latest model
 const ROWS = 20 // the tallest picture, in rows
@@ -628,6 +630,68 @@ export function searchParts(call, root) {
   return parts
 }
 
+const UNDONE = 200 // the most edits kept as undone
+const undone = atom({ plugin: 'nook', key: 'undone' }, []) // the edits undone with their row's Undo, by tool_use_id
+
+/** The line where `want` stands in `lines` nearest to `at`, or -1 where it stands nowhere. */
+function nearest(lines, want, at) {
+  const fits = i => i >= 0 && i + want.length <= lines.length && want.every((l, k) => lines[i + k] === l)
+  for (let d = 0; d <= lines.length; d++) {
+    if (fits(at - d)) return at - d
+    if (d && fits(at + d)) return at + d
+  }
+  return -1
+}
+
+/** A file's text with an edit's hunks taken back out (`back`), or put in again, or null when a hunk's lines
+ * no longer stand in the file as the edit left them. A hunk is matched where it says, else at the nearest
+ * place its lines stand, so lines added or cut elsewhere since don't stop it. */
+export function applyHunks(text, hunks, back) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  const lines = text.split(/\r?\n/)
+  let shift = 0 // how far the file has moved from where the hunks say, at the next hunk
+  for (const hunk of hunks) {
+    const body = hunk.lines.filter(l => !l.startsWith('\\')) // `\ No newline at end of file`
+    const now = body.filter(l => l[0] !== (back ? '-' : '+')).map(l => l.slice(1))
+    const then = body.filter(l => l[0] !== (back ? '+' : '-')).map(l => l.slice(1))
+    if (!now.length) return null // nothing to find it by
+    const start = (back ? hunk.newStart : hunk.oldStart) - 1
+    const at = nearest(lines, now, start + shift)
+    if (at < 0) return null
+    lines.splice(at, now.length, ...then)
+    shift = at - start + then.length - now.length
+  }
+  return lines.join(eol)
+}
+
+/** The Undo under a finished edit's diff, which takes the edit back out of its file, and then puts it back. */
+async function undoRow($, e, root) {
+  const { tool_use_id: id, output } = e.props
+  const path = output.filePath
+  const name = relative(path, root)
+  const isUndone = (await read($, undone)).includes(id)
+  const { Box, Button } = $.ui.resolve(e)
+  return Box({
+    paddingLeft: INDENT,
+    children: [Button({
+      key: `undo:${id}`,
+      label: isUndone ? '↷ Redo' : '↶ Undo',
+      plain: true,
+      dimColor: true,
+      onPress: async () => {
+        const back = !(await read($, undone)).includes(id)
+        const text = await $.fs.read(path).catch(() => null)
+        if (text === null) return $.ui.toast(`${name} can't be read now`)
+        const changed = applyHunks(text, output.structuredPatch, back)
+        if (changed === null) return $.ui.toast(`${name} has changed where this edit was, so it can't be ${back ? 'undone' : 'put back'}`)
+        await $.fs.write(path, changed)
+        await update($, undone, (ids = []) => (back ? [...ids, id].slice(-UNDONE) : ids.filter(i => i !== id)))
+        $.ui.toast(back ? `Undid the edit to ${name}` : `Put the edit back in ${name}`)
+      },
+    })],
+  })
+}
+
 const SITES = 3 // the most sites a web search's row names
 
 /** What a finished web search found, as row parts: how many results, and the sites they came from. */
@@ -872,10 +936,19 @@ export function register(on) {
       : file && e.surface === 'terminal' && /\.html?$/i.test(wrote) ? PAGE : null
     return size ? withPictures($, e, await next(e), [[input.file_path, size]]) : next(e)
   })
-  // A shell command's or web search's result, drawn alone under its row.
+  // A shell command's or web search's result, drawn alone under its row, and an edit's diff.
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const { tool, tool_use_id, output, isErrored, isExpanded } = e.props
-    if ((tool !== 'Bash' && tool !== 'WebSearch') || isExpanded) return next(e)
+    if (isExpanded) return next(e)
+    // A finished edit, in a terminal: an Undo under its diff. A new file, one held for review, or one too big
+    // to diff has none.
+    if (EDITS.has(tool)) {
+      if (e.surface !== 'terminal' || isErrored || output?.staged || !output?.filePath || !output.structuredPatch?.length) return next(e)
+      const { Box } = $.ui.resolve(e)
+      const root = await $.session.root().catch(() => '')
+      return Box({ flexDirection: 'column', children: [await next(e), await undoRow($, e, root)] })
+    }
+    if (tool !== 'Bash' && tool !== 'WebSearch') return next(e)
     const parts = tool === 'Bash' ? outcome(output, isErrored, times.get(tool_use_id)) : webParts(e.props)
     const pictures = (await made.get(tool_use_id)) ?? []
     if (!parts && !pictures.length) return next(e)
