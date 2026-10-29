@@ -9,6 +9,7 @@ const ROWS = 20 // the tallest picture, in rows
 const ROW_PIXELS = 20 // a picture's pixels per row, so a small one draws near its own size
 const INDENT = 5 // to the text after `  ⎿  `
 const UNKNOWN = [1600, 900] // the size of a picture whose own can't be read
+const PAGE = [1280, 800] // the window an HTML page Claude writes is drawn in
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) // the tools whose file nook marks as Claude's
 const ASKS = new Set(['AskUserQuestion', 'ExitPlanMode']) // the tools that wait on the person
 const TOUCHED = 200 // the most files a report lists
@@ -56,7 +57,8 @@ const READ_NAMES = 8 // the most files the row of a folded run's reads names
 const DRAWS = 'This terminal is nook, which draws more than text in your replies: a ```mermaid code block shows as a diagram, '
   + 'display math on lines of its own ($$ … $$ or \\[ … \\]) is typeset, inline $…$ math shows as Unicode symbols, and a '
   + 'Markdown image link to a local picture file, like ![loss](out/loss.png), shows the picture after its paragraph. '
-  + 'Pictures you read and pictures your commands save show in the transcript too. Use these when a diagram, formula, '
+  + 'Pictures you read and pictures your commands save show in the transcript too, and an HTML file you write shows '
+  + 'as a preview of the page, with its scripts off. Use these when a diagram, formula, '
   + 'or picture makes an answer clearer, not for decoration.'
 let state = { efforts: LEVELS }
 let wrote = ''
@@ -758,8 +760,11 @@ export function register(on) {
   })
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const { tool, input, output } = e.props
+    const wrote = tool === 'Write' && !e.props.isRunning && !e.props.isErrored ? input.file_path ?? '' : ''
+    // An HTML page written in a tab nook started shows as the page, laid out as a 1280 by 800 window would.
     const size = tool === 'Read' ? readSize(input.file_path, output)
-      : tool === 'Write' && /\.svg$/i.test(input.file_path ?? '') && !e.props.isRunning && !e.props.isErrored ? svgSize(String(input.content ?? '')) ?? UNKNOWN : null
+      : /\.svg$/i.test(wrote) ? svgSize(String(input.content ?? '')) ?? UNKNOWN
+      : file && e.surface === 'terminal' && /\.html?$/i.test(wrote) ? PAGE : null
     return size ? withPictures($, e, await next(e), [[input.file_path, size]]) : next(e)
   })
   // A shell command's or web search's result, drawn alone under its row.

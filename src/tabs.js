@@ -134,6 +134,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
         if (tab === active) onShow(tab)
       }
       tab.el.title = describe(tab, view, report)
+      tab.terminal?.wrote(report.touched ?? [])
       if (view.attention) win.requestUserAttention(UserAttentionType.Informational).catch(() => {})
       // With nook's window in the background, the desktop says so too: the tab's dot shows only inside nook.
       const note = settings.notifications !== false && !document.hasFocus() && notice(view, report, tab.name)

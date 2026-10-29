@@ -186,6 +186,8 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 /* Pictures over Claude's transcript, laid out in percents of the screen by pictures.js. */
 .pictures { position: absolute; inset: 0; pointer-events: none; }
 .pictures > div { position: absolute; background: center / contain no-repeat; }
+.pictures > .page { overflow: hidden; border-radius: 4px; outline: 1px solid var(--line); }
+.pictures > .page > iframe { width: 1280px; border: 0; transform-origin: 0 0; background: #fff; pointer-events: none; }
 
 /* Composer: the card over Claude's prompt. It sits under xterm's helpers, so IME text shows above it at its caret. */
 /* Anchored to the terminal, as tall as the screen and never shifted, so no script sizes the card. */

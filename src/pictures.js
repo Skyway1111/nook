@@ -34,7 +34,17 @@ function startsCommand(bytes) {
 const utf8 = new TextDecoder()
 
 const MAX_PICTURES = 64 // sent pictures kept, oldest dropped first
+const PAGE = 1280 // the width an HTML page lays out at, in CSS pixels, before it's scaled into its box
 const MAX_BASE64 = 64 << 20 // the largest picture sent in chunks, in base64
+
+/** The asset URL of an HTML file with its folders kept as the URL's own, so the page's relative links (its
+ * stylesheet, its pictures) resolve beside it. `convertFileSrc` encodes the whole path as one segment. */
+function pageUrl(path) {
+  return convertFileSrc('').replace(/\/$/, '') + '/' + path.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/')
+}
+
+/** The folder of `path`, with forward slashes and a slash at its end. */
+const folder = path => path.replace(/\\/g, '/').replace(/[^/]*$/, '')
 
 /** A sent picture as a URL the page can show: PNG bytes as they are, raw pixels drawn into a PNG. */
 async function pictureUrl(k, base64) {
@@ -58,7 +68,7 @@ async function pictureUrl(k, base64) {
 export function startPictures(term, screen, reply = () => {}) {
   const layer = screen.appendChild(el('div', { className: 'pictures' }))
   const cell = term.buffer.active.getNullCell()
-  const files = new Map() // id -> { url, columns, rows, blob }, oldest first
+  const files = new Map() // id -> { url, columns, rows, blob, page: an HTML page's folder }, oldest first
   let sending = null // a picture arriving in chunks: { keys, parts, size }
   const shown = new Map() // id -> { el, css }
   let seen = false // whether Claude has drawn a picture yet
@@ -120,7 +130,9 @@ export function startPictures(term, screen, reply = () => {}) {
         }, () => answer("EBADPNG:can't draw the picture"))
         return
       }
-      keep(id, { url: convertFileSrc(path), columns: Number(k.c), rows: Number(k.r) })
+      // An HTML page Claude wrote shows as the page itself, laid out wide and scaled into its box.
+      const page = /\.html?$/i.test(path)
+      keep(id, { url: page ? pageUrl(path) : convertFileSrc(path), columns: Number(k.c), rows: Number(k.r), page: page && folder(path) })
       answer('OK')
     } else if (medium === 'd') {
       if (k.m === '1') sending = { keys: k, parts: [payload], size: payload.length }
@@ -188,17 +200,54 @@ export function startPictures(term, screen, reply = () => {}) {
       const { columns: c, rows: r } = file
       const pct = (n, of) => `${(n / of) * 100}%`
       const css = `left:${pct(x0, term.cols)};top:${pct(y0, term.rows)};width:${pct(c, term.cols)};height:${pct(r, term.rows)};`
-        + `background-image:url("${file.url}");${file.left ? 'background-position:left center;' : ''}clip-path:inset(${pct(top - y0, r)} ${pct(x0 + c - 1 - right, c)} `
-        + `${pct(y0 + r - 1 - bottom, r)} ${pct(left - x0, c)})`
+        + (file.page ? '' : `background-image:url("${file.url}");${file.left ? 'background-position:left center;' : ''}`)
+        + `clip-path:inset(${pct(top - y0, r)} ${pct(x0 + c - 1 - right, c)} ${pct(y0 + r - 1 - bottom, r)} ${pct(left - x0, c)})`
       const pic = shown.get(id) ?? { el: layer.appendChild(el('div')) }
       if (pic.css !== css) pic.el.style.cssText = pic.css = css
+      if (file.page) frame(pic, file, c, r)
+      else if (pic.frame) pic.frame.remove(), (pic.frame = null), (pic.el.className = '') // the id now names a picture
       shown.set(id, pic)
+    }
+  }
+
+  /** An HTML page in its box: a frame that runs no script, sends no form and opens nothing, laid out PAGE
+   * pixels wide and scaled to the box's width, as tall as the box's shape gives it. The mouse passes through. */
+  function frame(pic, file, columns, rows) {
+    if (pic.frame?.dataset.url !== file.url) {
+      pic.frame?.remove()
+      pic.frame = document.createElement('iframe')
+      pic.frame.setAttribute('sandbox', '') // set before src, so the page loads sandboxed
+      Object.assign(pic.frame, { tabIndex: -1, title: 'page Claude wrote' })
+      pic.frame.dataset.url = pic.frame.src = file.url
+      pic.el.className = 'page'
+      pic.el.append(pic.frame)
+      pic.style = ''
+    }
+    const width = (screen.clientWidth * columns) / term.cols
+    const height = (screen.clientHeight * rows) / term.rows
+    if (!width || !height) return
+    const style = `height:${Math.round((PAGE * height) / width)}px;transform:scale(${(width / PAGE).toFixed(4)})`
+    if (pic.style !== style) pic.frame.style.cssText = pic.style = style
+  }
+
+  /** Reloads each page on screen once Claude writes a file in its folder or under it, so a page written before
+   * its stylesheet shows with it. `paths` is every file the session wrote, newest last. */
+  let written = []
+  function wrote(paths) {
+    const at = paths.findIndex((p, i) => written[i] !== p)
+    const fresh = (at < 0 ? [] : paths.slice(at)).map(p => p.replace(/\\/g, '/'))
+    written = paths
+    if (!fresh.length) return
+    for (const [id, pic] of shown) {
+      const dir = pic.frame && files.get(id)?.page
+      if (dir && fresh.some(p => p.startsWith(dir))) pic.frame.src = pic.frame.dataset.url
     }
   }
 
   term.onRender(() => seen && draw())
   return {
     read,
+    wrote,
     /** Hides the placeholder cells among a row's new spans, under the picture that covers them. */
     hide(spans) {
       if (seen) for (const s of spans) if (s.textContent.startsWith(PLACEHOLDER)) s.style.visibility = 'hidden'
