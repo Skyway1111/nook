@@ -72,6 +72,7 @@ ICONS = {
     0xEDA2: "hard_drive",
     0xF000: "document_text",
     0xF003: "branch_fork",  # nook's own: a session in a git worktree
+    0xF004: "split_vertical",  # nook's own: open a tab beside another
 }
 
 UPM = 1000  # font units to the em; an icon's 20px box fills it, as a Segoe icon does
