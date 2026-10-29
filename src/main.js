@@ -18,6 +18,9 @@ import { SAFE, worktreeName, since } from './launch.js'
 import { expand, offer, saved } from './prompts.js'
 
 const win = getCurrentWindow()
+// For bench/linux.mjs: how far startup got, in ms since nook started.
+const mark = window.NOOK_BENCH ? event => invoke('bench', { event: `mark:${event}` }) : () => {}
+mark('script')
 if (window.NOOK_BENCH) import('./bench.js').then(m => m.startBench())
 const cwd = window.NOOK_CWD
 const banner = message => Object.assign($('banner'), { hidden: false, textContent: message })
@@ -26,6 +29,7 @@ addEventListener('error', e => banner(e.message))
 addEventListener('unhandledrejection', e => banner(String(e.reason)))
 
 const { settings, error, configDir, home } = await invoke('boot')
+mark('boot')
 
 let tabs, files, wallpaper, dashboard
 const rebake = holdBackdrops([document.body, ...['pane', 'files', 'git'].map($)])
@@ -45,6 +49,7 @@ const drawer = await startSettings({
   showFolder: () => files.go(configDir),
 })
 
+mark('settings')
 wallpaper = startWallpaper($('pane'), {
   button: $('toggle-wallpaper'),
   save: id => drawer.setVariable('--wallpaper', id),
@@ -215,4 +220,6 @@ addEventListener('keydown', e => {
 })
 addEventListener('contextmenu', e => e.preventDefault())
 
+mark('chrome')
 await tabs.openClaude(cwd)
+mark('spawned')
