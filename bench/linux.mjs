@@ -11,6 +11,8 @@
 //   resize full  resize again, once the flood has filled the scrollback, which xterm reflows each time
 //   diff      with --repo: ms from asking for the diff of every change to the frame that shows it, and the CPU
 //             seconds nook spends in the 5 s after, colors included
+//   history   with --repo: ms from asking for the history to the frame that shows its commits; - for a build
+//             without one
 //   tui       key echo, typing CPU, and resize again, in bench/tui.mjs, a stand-in for Claude's fullscreen
 //             view that redraws the whole screen for each key, as Claude does
 // Every launch times its open. The first --sessions launches of each build also run the rest, and each number
@@ -228,6 +230,9 @@ async function session(app) {
     r.diff = (await app.next('diff', 30000, from)).ms
     await sleep(5000)
     r.diffCpu = cpu(pids) - c0
+    from = app.lines.length
+    xdotool('key', 'F8')
+    r.history = await app.next('history', 10000, from).then(l => l.ms, () => NaN)
   }
   return r
 }
@@ -281,7 +286,7 @@ const METRICS = [
   ['memory', 'memory MB', 0, 5],
   ['memoryFull', 'memory full MB', 0, 20], // when the webview collects the flood's garbage varies by tens of MB
   ['resizeFull', 'resize full ms', 1, 3],
-  ...(repo ? [['diff', 'diff ms', 0, 30], ['diffCpu', 'diff CPU s', 2, 0.1]] : []),
+  ...(repo ? [['diff', 'diff ms', 0, 30], ['diffCpu', 'diff CPU s', 2, 0.1], ['history', 'history ms', 0, 30]] : []),
   ['tuiKey', 'tui key echo ms', 1, 2],
   ['tuiKeyP95', 'tui key p95 ms', 1, 4],
   ['tuiTyping', 'tui typing CPU %', 1, 1.5],

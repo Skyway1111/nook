@@ -1,6 +1,6 @@
 // The git panel: the active tab's repository, its changes, branch, and commit box. Every action
 // is a git command run by git.rs, so hooks and credential helpers behave as in a terminal. diff.js
-// draws the diff tabs it opens.
+// draws the diff tabs it opens, and history.js the history tabs.
 import { invoke } from '@tauri-apps/api/core'
 import { $, el, openMenu, openPicker, dragPath } from './ui.js'
 import { ICON, basename } from './files.js'
@@ -194,6 +194,16 @@ export function startGit({ openView, openFile, insertPath }) {
     })
   }
 
+  /** A history tab of `rel` in the repository `status` describes; '' is all of it. */
+  function openHistory(status, rel) {
+    const { root } = status
+    const run = args => act(args, undefined, root).then(ok => ok || said)
+    openView('history', rel ? `${leaf(rel)} history` : `${basename(root)} history`, rel ? abs(root, rel) : root, view => {
+      const history = import('./history.js').then(m => m.startHistory(view, { root, rel, openFile, run }))
+      return { refresh: () => history.then(h => h.refresh()) }
+    })
+  }
+
   list.addEventListener('click', e => {
     const li = e.target.closest('li')
     if (!s || !li || li.classList.contains('empty')) return
@@ -218,6 +228,7 @@ export function startGit({ openView, openFile, insertPath }) {
     openMenu(e, [
       ...(openable ? [['Open file', ICON.open, () => openFile(path)]] : []),
       ['Add to prompt', ICON.add, () => insertPath(path)],
+      ...(c.kind === '?' || c.kind === 'A' ? [] : [['File history', ICON.history, () => openHistory(s, c.from ?? c.path)]]),
     ])
   })
   list.addEventListener('pointerdown', e => {
@@ -227,6 +238,7 @@ export function startGit({ openView, openFile, insertPath }) {
     dragPath(e, path, target => target?.closest('#pane') && insertPath(path))
   })
   $('git-diff').onclick = () => openDiff(s, '')
+  $('git-subject').onclick = $('git-history').onclick = () => openHistory(s, '')
   $('git-stage-all').onclick = () => stage(s.changes, s.changes.some(c => c.staged !== 'on'))
 
   $('git-branch').onclick = async e => {

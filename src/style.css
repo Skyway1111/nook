@@ -336,7 +336,8 @@ svg.defs { position: absolute; width: 0; height: 0; }
 #git-message::placeholder { color: var(--ink-3); }
 #git #git-commit { align-self: flex-end; }
 #git-last { padding-left: 8px; font-size: .9rem; color: var(--ink-3); }
-#git-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#git-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+#git-subject:hover { color: var(--ink-1); }
 
 /* Settings drawer: over the pane's right side, so the open tab shows each change as it lands. */
 #settings {
@@ -535,53 +536,53 @@ svg.defs { position: absolute; width: 0; height: 0; }
 /* Unified files are as wide as their longest line; their headings stay one view wide, at its left edge. */
 .view.diff:not(.sides) .file { width: max-content; min-width: 100%; }
 .view.diff:not(.sides) :is(.diff-bar, h3, .hunk-head) { width: 100cqw; }
-.diff button { height: 24px; padding: 0 9px; border-radius: 6px; font: .9rem var(--font-ui); color: var(--ink-2); white-space: nowrap; }
-.diff button:hover { background: var(--hover); color: var(--ink-1); }
-.diff .pill { background: var(--raised); color: var(--ink-1); }
-.diff .add > b, .diff b.add { color: var(--ansi-green); font-weight: inherit; }
-.diff b.del { color: var(--ansi-red); font-weight: inherit; }
+.view.diff button { height: 24px; padding: 0 9px; border-radius: 6px; font: .9rem var(--font-ui); color: var(--ink-2); white-space: nowrap; }
+.view.diff button:hover { background: var(--hover); color: var(--ink-1); }
+.view.diff .pill { background: var(--raised); color: var(--ink-1); }
+.view.diff .add > b, .view.diff b.add { color: var(--ansi-green); font-weight: inherit; }
+.view.diff b.del { color: var(--ansi-red); font-weight: inherit; }
 .diff-bar {
   position: sticky; top: 0; left: 0; z-index: 3; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px;
   font: .93rem var(--font-ui); color: var(--ink-2); background: var(--bg); border-bottom: 1px solid var(--line);
 }
 .diff-bar .sum { flex: 1; }
 .diff-bar .error { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ansi-red); }
-.diff .seg { display: flex; padding: 2px; border-radius: 7px; background: var(--raised); }
-.diff .seg button.on { background: var(--bg); color: var(--ink-1); }
-.diff h2 { position: sticky; left: 0; margin: 14px 16px 4px; font: 600 .82rem var(--font-ui); color: var(--ink-3); text-transform: uppercase; letter-spacing: .08em; }
-.diff .none, .diff .meta { position: sticky; left: 0; margin: 6px 16px; font: italic .93rem var(--font-ui); color: var(--ink-3); }
-.diff h3 {
+.view.diff .seg { display: flex; padding: 2px; border-radius: 7px; background: var(--raised); }
+.view.diff .seg button.on { background: var(--bg); color: var(--ink-1); }
+.view.diff h2 { position: sticky; left: 0; margin: 14px 16px 4px; font: 600 .82rem var(--font-ui); color: var(--ink-3); text-transform: uppercase; letter-spacing: .08em; }
+.view.diff .none, .view.diff .meta { position: sticky; left: 0; margin: 6px 16px; font: italic .93rem var(--font-ui); color: var(--ink-3); }
+.view.diff h3 {
   position: sticky; top: 40px; left: 0; z-index: 2; display: flex; align-items: center; gap: 8px; margin: 0; height: 34px; padding: 0 12px;
   font: 1rem var(--font-ui); color: var(--ink-1); background: var(--bg); border-bottom: 1px solid var(--line);
 }
-.diff h3 .chevron { color: var(--ink-3); }
-.diff .collapsed > :not(h3) { display: none; }
-.diff h3 .name { font-weight: 600; white-space: nowrap; }
-.diff h3 .dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; color: var(--ink-3); }
-.diff h3 .count { font-size: .9rem; }
-.diff .tools { display: flex; gap: 2px; }
-.diff .tools .icon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "nook icons"; font-size: 12px; }
-.diff .hunk-head { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px 0 16px; margin-top: 6px; color: var(--ink-3); }
+.view.diff h3 .chevron { color: var(--ink-3); }
+.view.diff .collapsed > :not(h3) { display: none; }
+.view.diff h3 .name { font-weight: 600; white-space: nowrap; }
+.view.diff h3 .dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; color: var(--ink-3); }
+.view.diff h3 .count { font-size: .9rem; }
+.view.diff .tools { display: flex; gap: 2px; }
+.view.diff .tools .icon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "nook icons"; font-size: 12px; }
+.view.diff .hunk-head { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px 0 16px; margin-top: 6px; color: var(--ink-3); }
 .view.diff:not(.sides) .hunk-head { position: sticky; left: 0; }
-.diff .hunk-head .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
-.diff .hunk-head .tools { opacity: .55; transition: opacity 120ms; }
-.diff .hunk:hover .hunk-head .tools, .diff .hunk.picking .hunk-head .tools { opacity: 1; }
-.diff .danger:hover { color: var(--ansi-red); }
-.diff .ln { display: flex; width: max-content; min-width: 100%; }
-.diff .cell { display: flex; flex: 1; min-height: 1.5em; white-space: pre; tab-size: 4; }
-.diff .cell i { flex: none; width: 6ch; padding-right: 1.5ch; text-align: right; font-style: normal; color: var(--ink-3); user-select: none; }
-.diff .cell.add { background: color-mix(in oklch, var(--ansi-green) 14%, transparent); }
-.diff .cell.del { background: color-mix(in oklch, var(--ansi-red) 14%, transparent); }
-.diff .cell.add .mark { background: color-mix(in oklch, var(--ansi-green) 30%, transparent); border-radius: 2px; }
-.diff .cell.del .mark { background: color-mix(in oklch, var(--ansi-red) 30%, transparent); border-radius: 2px; }
-.diff .cell:is(.add, .del) { cursor: pointer; }
-.diff .cell:is(.add, .del):hover i { color: var(--ink-1); }
-.diff .cell.picked { box-shadow: inset 3px 0 0 var(--accent); }
-.diff .cell.add.picked { background: color-mix(in oklch, var(--ansi-green) 26%, transparent); }
-.diff .cell.del.picked { background: color-mix(in oklch, var(--ansi-red) 26%, transparent); }
-.diff .cell.picked i { color: var(--accent); }
-.diff .cell.blank { background: repeating-linear-gradient(135deg, transparent 0 6px, var(--hover) 6px 7px); }
-.diff .cell.eol { padding-left: 13ch; font: italic .9rem var(--font-ui); color: var(--ink-3); }
+.view.diff .hunk-head .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.view.diff .hunk-head .tools { opacity: .55; transition: opacity 120ms; }
+.view.diff .hunk:hover .hunk-head .tools, .view.diff .hunk.picking .hunk-head .tools { opacity: 1; }
+.view.diff .danger:hover { color: var(--ansi-red); }
+.view.diff .ln { display: flex; width: max-content; min-width: 100%; }
+.view.diff .cell { display: flex; flex: 1; min-height: 1.5em; white-space: pre; tab-size: 4; }
+.view.diff .cell i { flex: none; width: 6ch; padding-right: 1.5ch; text-align: right; font-style: normal; color: var(--ink-3); user-select: none; }
+.view.diff .cell.add { background: color-mix(in oklch, var(--ansi-green) 14%, transparent); }
+.view.diff .cell.del { background: color-mix(in oklch, var(--ansi-red) 14%, transparent); }
+.view.diff .cell.add .mark { background: color-mix(in oklch, var(--ansi-green) 30%, transparent); border-radius: 2px; }
+.view.diff .cell.del .mark { background: color-mix(in oklch, var(--ansi-red) 30%, transparent); border-radius: 2px; }
+.view.diff .cell:is(.add, .del) { cursor: pointer; }
+.view.diff .cell:is(.add, .del):hover i { color: var(--ink-1); }
+.view.diff .cell.picked { box-shadow: inset 3px 0 0 var(--accent); }
+.view.diff .cell.add.picked { background: color-mix(in oklch, var(--ansi-green) 26%, transparent); }
+.view.diff .cell.del.picked { background: color-mix(in oklch, var(--ansi-red) 26%, transparent); }
+.view.diff .cell.picked i { color: var(--accent); }
+.view.diff .cell.blank { background: repeating-linear-gradient(135deg, transparent 0 6px, var(--hover) 6px 7px); }
+.view.diff .cell.eol { padding-left: 13ch; font: italic .9rem var(--font-ui); color: var(--ink-3); }
 .view.diff.sides .ln { width: auto; }
 .view.diff.sides .cell { flex: 1 1 0; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .view.diff.sides .src { min-width: 0; }
