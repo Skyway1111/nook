@@ -30,7 +30,7 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 - **Safe edits.** An open file follows changes on disk. If Claude changes a file while you have unsaved edits, nook keeps your edits and offers **Overwrite** or **Reload**.
 - **A git panel** for the open tab's repository. Stage files, commit, switch or create branches, and fetch, pull, or push. Its diff tab shows staged and unstaged changes in syntax colors, unified or side by side, and stages, unstages, or discards a hunk or just the lines you pick in it. Its history tab draws every branch's commits as a graph, searches them, shows each commit's message and changes, and checks out, branches from, cherry-picks, or reverts one.
 - **Living wallpapers.** Click the brush in the titlebar to pick a scene drawn in characters behind Claude, always moving: drifting clouds, sea turtles, a koi pond, jellyfish, paper boats, fireflies, a moonlit night, rain, an aurora, snowfall, a campfire, a lava lamp, orbiting planets, or code rain. Arrows preview a scene, Enter keeps it, and Esc puts back the last one. The wallpaper holds still while you type and while nook is in the background.
-- **Themes.** Pick a theme, re-hue the whole app, pick the interface and terminal fonts, and write CSS that restyles any part of nook as you type. Claude's own colors can follow the theme.
+- **Themes.** Pick a theme, re-hue the whole app, pick its accent and terminal colors, turn the wallpaper up or down, pick the interface and terminal fonts, and write CSS that restyles any part of nook as you type. Claude's own colors can follow the theme.
 - **Fast typing under load.** On Windows, nook renders on the CPU and runs its typing path at above-normal priority, so typing stays fast while a training run saturates the GPU or the CPU.
 
 ## Keys
@@ -60,7 +60,7 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 Click the gear in the titlebar. The Settings drawer edits two files in `%APPDATA%\dev.nook.app`, or on Linux in `~/.config/dev.nook.app`. An edit made in any other editor shows in the drawer within a second.
 
 - `settings.json`: **Command** is what each Claude tab runs, one argument per line. The default starts `claude` in Windows PowerShell, or on Linux in a bash login shell. If you have PowerShell 7, change `powershell` to `pwsh`. **Render with the GPU** takes effect after a restart.
-- `theme.css`: your CSS, applied over nook's defaults and the theme in use, as you type. The hue, font, and size controls write their variables here. **nook's defaults** lists every variable.
+- `theme.css`: your CSS, applied over nook's defaults and the theme in use, as you type. The hue, color, wallpaper, font, and size controls write their variables here. **nook's defaults** lists every variable.
 
 To push and fetch over HTTPS, click **Sign in** under GitHub in the same drawer. Git Credential Manager, which ships with Git for Windows, keeps the token. nook never sees it.
 

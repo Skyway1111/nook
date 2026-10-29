@@ -429,7 +429,15 @@ svg.defs { position: absolute; width: 0; height: 0; }
   appearance: none; height: 8px; margin: 0; border-radius: 4px; outline: none;
   background: linear-gradient(to right in oklch, oklch(.75 .12 0), oklch(.75 .12 90), oklch(.75 .12 180), oklch(.75 .12 270), oklch(.75 .12 359));
 }
-.knob .hue::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--line); }
+.knob .swatch { justify-self: start; width: 80px; height: 30px; padding: 3px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); cursor: pointer; }
+.knob .swatch:hover { border-color: var(--accent); }
+.knob .swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.knob .swatch::-webkit-color-swatch { border: 0; border-radius: 3px; }
+.knob .strength {
+  appearance: none; height: 8px; margin: 0; border-radius: 4px; outline: none;
+  background: linear-gradient(to right, transparent, var(--ink-2)), var(--raised);
+}
+.knob :is(.hue, .strength)::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--line); }
 #settings .css-box { position: relative; height: clamp(220px, 42vh, 520px); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--term-bg); }
 #settings-css .cm-content { padding: 10px 0 16px; }
 #settings-css .cm-lineNumbers .cm-gutterElement { padding: 0 10px 0 12px; }
