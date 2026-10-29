@@ -387,6 +387,7 @@ test('inline math reads as plain symbols, and prices, code, and what has no plai
   expect(plainMath('\\alpha_i \\leq \\frac{1}{2}')).toBe('αᵢ ≤ 1/2')
   expect(plainMath('O(n \\log n)')).toBe('O(n log n)')
   expect(plainMath('\\sqrt{x+1}')).toBe('√(x+1)')
+  expect(plainMath('\\bar{x} = \\hat y')).toBe('x\u0304 = y\u0302')
   expect(plainMath('\\begin{pmatrix}a\\end{pmatrix}')).toBe(null)
   expect(plainMath('x^{q}')).toBe(null) // no superscript q in Unicode
   expect(plainInline('Roots of $ax^2 + bx + c = 0$ when $a \\neq 0$, at $x$.')).toBe('Roots of ax² + bx + c = 0 when a ≠ 0, at x.')
@@ -414,4 +415,18 @@ test('a web search\'s row says how many results it found and from which sites', 
   const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'ToolResult', requestId: 's1', props: { tool_use_id: 's1', tool: 'WebSearch', output, isErrored: false, isExpanded: false } })
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toMatch(/7 results.*github\.com, npmjs\.com/)
   await ui.unmount()
+})
+
+test('in a tab nook started, Claude reads what nook draws in its replies; elsewhere, nothing changes', async ($, on) => {
+  const reports: Record<string, unknown>[] = []
+  nook(on, reports)
+  on('prompt.compose', () => ({ sections: [{ id: 'core', text: 'You are Claude.', scope: 'shared' }] }))
+  const facts = { model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', tools: [], outputStyle: null, traits: [] }
+  const before = await $.prompt.compose({ ...facts, surfaces: ['terminal'] })
+  expect(before.sections.map(s => s.id)).toEqual(['core'])
+  await $.session.start({ cwd: '/work' })
+  const { sections } = await $.prompt.compose({ ...facts, surfaces: ['terminal'] })
+  expect(sections.map(s => s.id)).toEqual(['core', 'nook:draws'])
+  expect(sections[1]).toMatchObject({ scope: 'session', text: expect.stringContaining('```mermaid') })
+  expect((await $.prompt.compose({ ...facts, surfaces: [] })).sections.map(s => s.id)).toEqual(['core'])
 })
