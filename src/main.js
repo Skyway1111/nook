@@ -55,6 +55,7 @@ mark('settings')
 wallpaper = startWallpaper($('pane'), {
   button: $('toggle-wallpaper'),
   save: id => drawer.setVariable('--wallpaper', id),
+  tune: (name, value) => drawer.setVariable(name, value),
   onClose: () => tabs.focus(),
 })
 wallpaper.restyle()

@@ -134,6 +134,9 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .wallpapers .card canvas { width: 120px; height: 68px; border-radius: 7px; border: 1px solid var(--line); background: var(--term-bg); }
 .wallpapers .card.at { color: var(--ink-1); }
 .wallpapers .card.at canvas { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.wallpapers footer { display: flex; gap: 24px; padding: 2px 4px 0; font-size: .86rem; color: var(--ink-3); }
+.wallpapers footer label { flex: 1; display: flex; align-items: center; gap: 10px; }
+.wallpapers footer input { flex: 1; }
 
 /* The sessions dashboard, over the pane: a card for each Claude tab. */
 .sessions {
@@ -446,11 +449,11 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .knob .swatch:hover { border-color: var(--accent); }
 .knob .swatch::-webkit-color-swatch-wrapper { padding: 0; }
 .knob .swatch::-webkit-color-swatch { border: 0; border-radius: 3px; }
-.knob .strength {
+:is(.knob, .wallpapers) .strength {
   appearance: none; height: 8px; margin: 0; border-radius: 4px; outline: none;
   background: linear-gradient(to right, transparent, var(--ink-2)), var(--raised);
 }
-.knob :is(.hue, .strength)::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--line); }
+:is(.knob .hue, .strength)::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--line); }
 #settings .css-box { position: relative; height: clamp(220px, 42vh, 520px); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--term-bg); }
 #settings-css .cm-content { padding: 10px 0 16px; }
 #settings-css .cm-lineNumbers .cm-gutterElement { padding: 0 10px 0 12px; }
