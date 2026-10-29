@@ -1,0 +1,56 @@
+/* Contrast: pure black and white, for eyes that want every edge sharp. Text clears 15:1 against the background,
+   lines and focus rings are solid, colors are the brightest of each hue, and nothing sits behind Claude's text. */
+
+:root {
+  --scheme: dark;
+  --bg: #000;
+  --raised: #111;
+  --hover: #262626;
+  --line: #8a8a8a;
+  --ink-1: #fff;
+  --ink-2: #e6e6e6;
+  --ink-3: #bdbdbd;
+  --accent: #ffd60a;
+  --shadow: 0 0 0 1px #fff;
+  --icon-folder: #ffd60a;
+  --icon-doc: #fff;
+
+  --session-working: #ffd60a;
+  --session-waiting: #ff7ad9;
+  --session-done: #5cff7a;
+
+  --term-bg: #000;
+  --term-fg: #fff;
+  --cursor: #ffd60a;
+  --selection: #1f4fff;
+
+  --ansi-black: #3a3a3a;
+  --ansi-red: #ff5c5c;
+  --ansi-green: #5cff7a;
+  --ansi-yellow: #ffd60a;
+  --ansi-blue: #6ea8ff;
+  --ansi-magenta: #ff7ad9;
+  --ansi-cyan: #4ff0ff;
+  --ansi-white: #e6e6e6;
+  --ansi-bright-black: #a6a6a6;
+  --ansi-bright-red: #ff8a8a;
+  --ansi-bright-green: #9dffad;
+  --ansi-bright-yellow: #ffe866;
+  --ansi-bright-blue: #9cc4ff;
+  --ansi-bright-magenta: #ffa8e8;
+  --ansi-bright-cyan: #8ff6ff;
+  --ansi-bright-white: #fff;
+
+  --claude-claudeShimmer: #fff;
+  --claude-promptBorder: #fff;
+  --claude-promptBorderShimmer: #ffd60a;
+  --claude-userMessageBackground: #1a1a1a;
+  --claude-userMessageBackgroundHover: #262626;
+  --claude-diffAdded: #003d12;
+  --claude-diffRemoved: #4d0000;
+  --claude-diffAddedDimmed: #002108;
+  --claude-diffRemovedDimmed: #2b0000;
+}
+
+/* Focus shows as a thick ring wherever it lands. */
+:where(button, [role="button"], .theme, summary, input, select, a):focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
