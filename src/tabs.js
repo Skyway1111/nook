@@ -73,6 +73,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     else file = tab
     catchUp(tab)
     retitle()
+    tellClaude()
     onShow(tab)
     focus()
     save()
@@ -176,6 +177,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     if (tab.type === 'claude' && tabs.length) save() // the window closes with its last tab: its sessions reopen
     if (claude === tab) claude = tabs.findLast(t => !t.viewer) ?? null
     if (file === tab) file = null
+    tellClaude()
     if (!tabs.length) win.close()
     else if (active === tab) show(tabs[Math.min(i, tabs.length - 1)])
   }
@@ -205,6 +207,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
       onExit: () => close(tab),
     }).then(terminal => {
       tab.terminal = terminal
+      tellClaude()
       if (!tabs.includes(tab)) terminal.close() // closed while its shell started
       else if (active === tab) focus()
       save()
@@ -250,6 +253,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
       openFile,
       onDirty: dirty => tab.el.classList.toggle('dirty', dirty),
       mention: lines => claude && paste(paths.mention(path, claude.cwd, lines) + ' '),
+      onPick: () => file === tab && tellClaude(),
     }))
     if (line) tab.viewer.reveal?.({ line, col })
   }
@@ -292,6 +296,23 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
 
   // An open file follows edits on disk, Claude's included.
   setInterval(() => document.hidden || active?.viewer?.refresh(), 2000)
+
+  // Claude Code hears from nook as from its editor extensions: the Claude tab shown last learns which file was
+  // shown last and the lines picked in it, shows "3 lines selected" by its prompt, and sends those lines with
+  // the next message. A Claude tab that stops being the one shown last is told nothing is picked.
+  let told = { id: null, what: '' }
+  function tellClaude() {
+    const id = claude?.terminal?.id ?? null
+    const pick = file?.viewer.pick?.()
+    const path = file?.viewer.pick ? file.path : null
+    // A pick past this is too much to send with a message, so Claude hears only the file.
+    const some = pick && pick.text.length <= 100_000 ? pick : null
+    const what = JSON.stringify({ path, start: some?.start ?? [0, 0], end: some?.end ?? [0, 0], text: some?.text ?? null })
+    if (id === told.id && what === told.what) return
+    if (told.id !== null && told.id !== id) invoke('ide_selection', { id: told.id, path: null, start: [0, 0], end: [0, 0], text: null })
+    told = { id, what }
+    if (id !== null) invoke('ide_selection', { id, ...JSON.parse(what) })
+  }
 
   /** Pastes `text` into the Claude tab shown last, and with `submit`, sends it. */
   function paste(text, submit = false) {
