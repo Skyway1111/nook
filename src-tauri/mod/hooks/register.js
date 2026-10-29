@@ -1,5 +1,5 @@
 // Tells nook's composer what to show beside Claude's prompt, runs the two commands its menus send, and
-// draws pictures in the transcript: ones Claude read, an SVG it wrote, ones a shell command wrote, ones a reply links, and a reply's diagrams and formulas. Every hook passes its event on unchanged, and the render hooks add
+// draws pictures in the transcript: ones Claude read, an SVG it wrote, ones a shell command wrote, ones a reply links, and a reply's diagrams and formulas, with its inline math written in plain symbols. Every hook passes its event on unchanged, and the render hooks add
 // pictures under Claude's own drawing, and under a shell command's result the line that says how it went. The mod writes the session's model, effort, effort levels, context
 // fill, pasted images' folder, and what the session is doing as JSON to NOOK_STATE, and reads requests from
 // the .cmd file beside it: { command, args, at }.
@@ -18,6 +18,27 @@ const made = new Map() // a Bash call's tool_use_id -> the pictures it wrote, as
 const MERMAID = /^```mermaid[^\n]*\n([\s\S]*?)\n```[ \t]*$/gm // a reply's mermaid blocks, each closed
 const MATH = /^[ \t]*(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])[ \t]*$/gm // a reply's display formulas, $$ … $$ or \[ … \], on lines of their own
 const MATH_ROWS = 20 // the tallest formula, in rows
+// An inline formula's TeX commands, and what each writes in plain text
+const SYMBOLS = {
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε', zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ',
+  iota: 'ι', kappa: 'κ', lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ', upsilon: 'υ',
+  phi: 'φ', varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω', Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
+  Sigma: 'Σ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+  neq: '≠', ne: '≠', leq: '≤', le: '≤', geq: '≥', ge: '≥', approx: '≈', equiv: '≡', sim: '∼', simeq: '≃', propto: '∝',
+  times: '×', cdot: '·', div: '÷', pm: '±', mp: '∓', infty: '∞', partial: '∂', nabla: '∇', sum: '∑', prod: '∏', int: '∫',
+  to: '→', rightarrow: '→', leftarrow: '←', Rightarrow: '⇒', Leftarrow: '⇐', iff: '⇔', implies: '⇒', mapsto: '↦',
+  in: '∈', notin: '∉', subset: '⊂', subseteq: '⊆', supset: '⊃', cup: '∪', cap: '∩', emptyset: '∅', forall: '∀', exists: '∃',
+  neg: '¬', land: '∧', lor: '∨', wedge: '∧', vee: '∨', oplus: '⊕', otimes: '⊗', circ: '∘', ldots: '…', cdots: '⋯', dots: '…',
+  mid: '∣', ell: 'ℓ', hbar: 'ħ', langle: '⟨', rangle: '⟩', lfloor: '⌊', rfloor: '⌋', lceil: '⌈', rceil: '⌉', prime: '′',
+  log: 'log', ln: 'ln', exp: 'exp', sin: 'sin', cos: 'cos', tan: 'tan', max: 'max', min: 'min', lim: 'lim', det: 'det',
+  mathbb: '', mathrm: '', text: '', mathbf: '', mathit: '', operatorname: '', left: '', right: '', quad: ' ', qquad: '  ',
+}
+const BLACKBOARD = { R: 'ℝ', N: 'ℕ', Z: 'ℤ', Q: 'ℚ', C: 'ℂ', P: 'ℙ', E: '𝔼' }
+const SUP = Object.fromEntries([...'0123456789+-=()ni'].map((c, i) => [c, '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ'[i]]).concat([['k', 'ᵏ'], ['T', 'ᵀ'], ['x', 'ˣ'], ['m', 'ᵐ'], ['t', 'ᵗ']]))
+const SUB = Object.fromEntries([...'0123456789+-=()aeoxijklmnpst'].map((c, i) => [c, '₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓᵢⱼₖₗₘₙₚₛₜ'[i]]))
+// $…$ in a sentence: opened before a non-space, closed after one and not before a digit, so $5 and $10 stay
+const INLINE = /(?<![\\$\w])\$(?=[^\s$])((?:\\.|[^$\n\\])+?)(?<=[^\s\\])\$(?![\d$])/g
+
 const DIAGRAM_ROWS = 40 // the tallest diagram, in rows
 const REPLY_INDENT = 2 // to the text after a reply's `● `
 const saved = new Set() // the diagram files written this session
@@ -279,6 +300,33 @@ export function splitPictures(text, shown) {
   if (!pieces.length) return [text]
   pieces.push(words.join('\n').trim())
   return pieces // text, targets, text, … , text
+}
+
+/** One inline formula as Unicode, or null when part of it has no plain form. */
+export function plainMath(tex) {
+  let s = tex
+  s = s.replace(/\\mathbb\{([A-Z])\}/g, (m, c) => BLACKBOARD[c] ?? m)
+  s = s.replace(/\\(?:frac|dfrac|tfrac)\{([^{}]*)\}\{([^{}]*)\}/g, (_, a, b) => `${/^\w+$/.test(a) ? a : `(${a})`}/${/^\w+$/.test(b) ? b : `(${b})`}`)
+  s = s.replace(/\\sqrt\{([^{}]*)\}/g, (_, a) => `√${a.length > 1 ? `(${a})` : a}`)
+  s = s.replace(/\\(?:mathrm|text|mathbf|mathit|operatorname)\{([^{}]*)\}/g, '$1')
+  s = s.replace(/\\([a-zA-Z]+)(?=([a-zA-Z0-9]?))/g, (m, name, after) => (name in SYMBOLS ? SYMBOLS[name] + (after && /\w$/.test(SYMBOLS[name]) ? ' ' : '') : m))
+  s = s.replace(/\\([,;:! ])/g, (_, c) => (c === '!' ? '' : ' ')).replace(/\\([{}%$&#_])/g, '$1')
+  const script = table => (m, braced, one) => {
+    const text = braced ?? one
+    const out = [...text].map(c => table[c])
+    return out.every(Boolean) ? out.join('') : m
+  }
+  s = s.replace(/\^(?:\{([^{}]*)\}|(\\?\w|[+\-]))/g, script(SUP))
+  s = s.replace(/_(?:\{([^{}]*)\}|(\w))/g, script(SUB))
+  if (/[\\{}^_]/.test(s)) return null
+  return s.replace(/ {2,}/g, ' ').replace(/ ([,.)])/g, '$1').trim()
+}
+
+/** A reply's text with each inline $…$ formula that has a plain form written out in Unicode, as x² or
+ * a ≠ 0. Code, fenced or in backticks and unclosed while it streams, stays as written. */
+export function plainInline(text) {
+  return text.split(/(^[ \t]*(?:```|~~~)[\s\S]*?(?:^[ \t]*(?:```|~~~)[ \t]*$|(?![\s\S]))|`[^`\n]*`)/m)
+    .map((part, i) => (i % 2 ? part : part.replace(INLINE, (m, tex) => plainMath(tex) ?? m))).join('')
 }
 
 /** A reply's text cut at its mermaid blocks and display formulas: [text, [kind, source], text, …], where
@@ -708,11 +756,13 @@ export function register(on) {
   // .tex file. Other terminals can't draw either, so they get the source.
   // A picture file the reply links with ![alt](path) draws after the paragraph that links it.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
-    const { text, isSummary } = e.props
+    const { isSummary } = e.props
     if (e.surface !== 'terminal' || isSummary) return next(e)
+    const text = e.props.text.includes('$') ? plainInline(e.props.text) : e.props.text
     const diagrams = file && (text.includes('```mermaid') || text.includes('$$') || text.includes('\\['))
     const shown = text.includes('![') ? await linkedPictures($, text) : new Map()
-    if (!diagrams && !shown.size) return next(e)
+    const plain = text === e.props.text ? e : { ...e, props: { ...e.props, text } }
+    if (!diagrams && !shown.size) return next(plain)
     const { Box, Image, Markdown } = $.ui.resolve(e)
     const dir = file?.replace(/[\\/][^\\/]*$/, '')
     const room = Math.min(255, (e.viewport?.columns ?? 80) - REPLY_INDENT - 1)
@@ -736,13 +786,13 @@ export function register(on) {
         else blocks.push(Box({ flexDirection: 'column', marginY: 1, children: part.map(t => picture(Box, Image, ...shown.get(t), room, REPLY_INDENT)) }))
       }
     }
-    if (blocks.length < 3) return next(e)
+    if (blocks.length < 3) return next(plain)
     const draw = piece => Box({ paddingLeft: REPLY_INDENT, children: [Markdown({ text: piece })] })
     // The reply's bullet comes with its first text. A reply that opens on a diagram or picture has its text
     // drawn first and the rest after. One with no text at all names its pictures, or keeps its diagrams' blocks.
     if (!blocks[0]) {
       const words = blocks.filter(b => typeof b === 'string' && b).join('\n\n') || [...shown.keys()].map(t => t.split(/[\\/]/).pop()).join(', ')
-      if (!words) return next(e)
+      if (!words) return next(plain)
       return Box({ flexDirection: 'column', children: [await next({ ...e, props: { ...e.props, text: words } }), ...blocks.filter(b => typeof b !== 'string')] })
     }
     const rest = blocks.slice(1).filter(Boolean).map(b => (typeof b === 'string' ? draw(b) : b))
