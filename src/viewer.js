@@ -1,4 +1,5 @@
-// A file tab: an image, or text in an editor. Markdown opens rendered and toggles to its source.
+// A file tab: a picture, audio or video, a PDF, or text in an editor. Markdown, CSV and TSV, and SVG open
+// rendered and toggle to their source. previews.js draws all but Markdown, and loads when one first opens.
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { IMAGE, basename } from './files.js'
 import { el } from './ui.js'
@@ -17,6 +18,13 @@ const resolve = (href, from) => paths.fromUrl(new URL(href, paths.toUrl(from)).p
 
 // Loaded on first use, so a Claude tab never waits on CodeMirror.
 const editing = () => import('./editor.js')
+const previews = () => import('./previews.js')
+
+/** Text files that open rendered, by how they're drawn. */
+const RENDERED = [[/\.(md|markdown)$/i, 'markdown'], [/\.(csv|tsv)$/i, 'sheet'], [/\.svg$/i, 'svg']]
+// Shown without reading them as text. Kept here, beside IMAGE, so a Claude tab's code loads no more.
+const MEDIA = /\.(mp4|webm|mov|m4v|ogv|mp3|wav|ogg|oga|flac|m4a|aac|opus)$/i
+const PDF = /\.pdf$/i
 
 async function markdown(text, path) {
   const [{ marked }, { highlight }] = await Promise.all([import('marked'), editing()])
@@ -63,8 +71,11 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
   let dirty = false
   let target // { line, col } to show once the text has loaded
   const bar = el('p', { className: 'bar', hidden: true })
-  // Markdown's rendered page, and the button that swaps it for the source.
-  const page = /\.(md|markdown)$/i.test(path) && el('div', { className: 'markdown', tabIndex: -1 })
+  // The rendered page, and the button that swaps it for the source.
+  const drawn = RENDERED.find(([test]) => test.test(path))?.[1]
+  const page = drawn && el('div', { className: drawn === 'markdown' ? 'markdown' : 'rendered', tabIndex: -1 })
+  let drawing // previews.js's view of a sheet or SVG, once it has drawn one
+  let player // previews.js's view of audio, video, or a PDF
   const toggle = page && Object.assign(button('', () => { preview(!previewing); focus() }), { className: 'mode' })
   let previewing = !!page
 
@@ -100,6 +111,14 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
 
   async function render() {
     if (!previewing) return
+    if (drawn !== 'markdown') {
+      const text = editor.state.doc.toString()
+      if (!drawing) {
+        drawing = (await previews())[drawn]()
+        page.replaceChildren(drawing.el)
+      }
+      return drawing.update(text, name)
+    }
     const article = await markdown(editor.state.doc.toString(), path)
     const top = page.scrollTop
     page.replaceChildren(article)
@@ -146,9 +165,13 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
 
   /** Rereads the file. A buffer with unsaved edits stays as it is unless `discard`. */
   const refresh = (discard = false) => serial(async () => {
-    if (IMAGE.test(path)) {
-      if (!shown) paint('picture', [Object.assign(new Image(), { src: convertFileSrc(path) })])
+    if (MEDIA.test(path) || PDF.test(path) || (IMAGE.test(path) && drawn !== 'svg')) {
+      if (shown) return
       shown = path
+      const p = await previews()
+      player = MEDIA.test(path) ? p.media(path) : PDF.test(path) ? p.pdf(path) : p.picture(convertFileSrc(path))
+      paint(MEDIA.test(path) ? 'media' : PDF.test(path) ? 'pdf' : 'picture', [player.el])
+      if (document.activeElement === view) player.el.focus()
       return
     }
     const now = await invoke('file_stamp', { path })
@@ -185,7 +208,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
     return true
   })
 
-  const focus = () => (!editor ? view : previewing ? page : editor).focus()
+  const focus = () => (!editor ? player?.el ?? view : previewing ? page : editor).focus()
 
   view.addEventListener('keydown', e => {
     if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 's') save()
@@ -213,6 +236,6 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
       if (editor) editor.dispatch({ changes: change(text, f(text)) })
     }),
     focus,
-    close: () => editor?.destroy(),
+    close: () => { editor?.destroy(); drawing?.close?.(); player?.close?.() },
   }
 }
