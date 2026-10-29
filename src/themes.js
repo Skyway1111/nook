@@ -18,6 +18,7 @@ export function startThemes({ configDir, home, settings, save, reread }) {
   const note = $('settings-theme-note')
   const say = (text = '') => Object.assign(note, { hidden: !text, textContent: text })
   const picker = el('input', { type: 'file', accept: '.zip' })
+  const pictures = el('input', { type: 'file', accept: 'image/*' })
   let active = null
   // A reinstalled theme's screenshot keeps its path, so its URL changes with each install, and with each
   // launch, which may follow an install in another window. Reopening the drawer reuses the loaded ones.
@@ -44,8 +45,10 @@ export function startThemes({ configDir, home, settings, save, reread }) {
     const names = listed.filter(e => e.dir && !e.name.startsWith('.')).map(e => e.name).sort((a, b) => a.localeCompare(b))
     const add = el('button', { className: 'theme add', title: 'Install a theme from a .zip', onclick: () => picker.click() })
     add.innerHTML = '<i class="icon">&#xE710;</i><span>Install…</span>'
+    const paint = el('button', { className: 'theme add', title: "Make a theme from a picture, in the picture's own colors", onclick: () => pictures.click() })
+    paint.innerHTML = '<i class="icon">&#xEB9F;</i><span>From a picture…</span>'
     const shot = name => `${convertFileSrc(paths.join(dir, name, 'screenshot.png'))}?v=${launched}.${installs.get(name) ?? 0}`
-    gallery.replaceChildren(card(null, preview), ...names.map(n => card(n, shot(n))), add)
+    gallery.replaceChildren(card(null, preview), ...names.map(n => card(n, shot(n))), add, paint)
     mark(active)
     follow.checked = (await claudeTheme()) === NOOK
   }
@@ -85,6 +88,26 @@ export function startThemes({ configDir, home, settings, save, reread }) {
     body.set(head)
     body.set(new Uint8Array(await file.arrayBuffer()), head.length)
     await invoke('install_theme_zip', body).then(installed).catch(e => say(`nook can't install ${file.name}: ${e}.`))
+  }
+
+  // A theme from a picture: its palette, the picture, a soft copy and a card, packed as a .zip in the webview.
+  pictures.onchange = async () => {
+    const file = pictures.files[0]
+    pictures.value = ''
+    if (!file) return
+    say(`Reading the colors of ${file.name}…`)
+    try {
+      const { fromPicture } = await import('./themer.js')
+      const { name, zip } = await fromPicture(file)
+      const head = new TextEncoder().encode(`${name}\0`)
+      const body = new Uint8Array(head.length + zip.length)
+      body.set(head)
+      body.set(zip, head.length)
+      await installed(await invoke('install_theme_zip', body))
+      say(`Made the ${label(name)} theme from ${file.name}. Its theme.css is yours to edit, in the themes folder.`)
+    } catch (e) {
+      say(`nook can't make a theme from ${file.name}: ${e.message ?? e}.`)
+    }
   }
 
   // Claude reads its theme from the `theme` key of ~/.claude/settings.json, which its /theme writes.

@@ -4,6 +4,8 @@ A theme is a folder with a `theme.css` and the pictures and fonts it names. nook
 
 [`themes/twilight`](../themes/twilight/theme.css) in this repository is a finished theme. Read it beside each step.
 
+For a quick start, click **From a picture…** under **Theme** and pick a photo or painting. nook reads the picture's palette and makes a theme around it: the picture behind the window, a soft copy of it under the terminal, and every color, from the accent to the 16 terminal colors, taken from the picture. The theme lands in the themes folder like any other, so you can open its `theme.css` and carry on from step 3.
+
 ## 1. Create the folder
 
 1. Click the gear, then **Folder**. The file browser opens nook's settings folder. Press Esc to close the Settings drawer, so it lists your theme when it opens again.
