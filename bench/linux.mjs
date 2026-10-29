@@ -253,7 +253,8 @@ async function tuiSession(app) {
   // before WebKit hands it to the window, and how long that takes is part of what the composer costs.
   const from = app.lines.length
   xdotool('key', 'F8')
-  const [x, y, w, h] = (await app.next('draft', 5000, from)).event.slice(6).split(',').map(Number)
+  // A build from before F8 never answers, and its echo goes untimed.
+  const [x, y, w, h] = await app.next('draft', 2000, from).then(l => l.event.slice(6).split(',').map(Number), () => [])
   const at = Object.fromEntries(xdotool('getwindowgeometry', '--shell', win).split('\n').map(l => l.split('=')))
   let keys = []
   const typing = await load(app.child.pid, 10000, async () => {
