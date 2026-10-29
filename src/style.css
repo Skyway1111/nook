@@ -275,6 +275,11 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .row:is(.claude-file, .claude-dir)::after { content: ''; flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: 50%; }
 .row.claude-file::after { background: var(--claude-touched); }
 .row.claude-dir::after { box-shadow: inset 0 0 0 1.5px var(--claude-touched); }
+/* Git's colors on a changed file's name, and a fainter one on a folder that holds a change. */
+#list .row[data-git="m"] span, #list .row[data-git="r"] span { color: var(--ansi-yellow); }
+#list .row[data-git="a"] span, #list .row[data-git="new"] span { color: var(--ansi-green); }
+#list .row[data-git="u"] span { color: var(--ansi-red); }
+#list .row[data-git="dir"] span { color: color-mix(in srgb, var(--ansi-yellow) 55%, var(--ink-2)); }
 
 #status, #banner, #git-error { margin: 6px 4px 0; padding: 6px 8px; border-radius: 6px; font-size: .9rem; background: var(--raised); color: var(--ink-1); }
 #banner { margin: 6px 0 4px; box-shadow: inset 2px 0 0 var(--ansi-red); user-select: text; }
