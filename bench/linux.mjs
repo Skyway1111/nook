@@ -260,8 +260,8 @@ async function tuiSession(app) {
   // a frame as shown before WebKit hands it to the window, and how long that takes depends on the page.
   // Watching the screen costs nook CPU of its own, so the typing above runs without it.
   const from = app.lines.length
-  xdotool('key', 'F8')
-  // A build from before F8 never answers, and its echo goes untimed.
+  xdotool('key', 'F7')
+  // A build from before F7 never answers, and its echo goes untimed.
   const [x, y, w, h] = await app.next('draft', 2000, from).then(l => l.event.slice(6).split(',').map(Number), () => [])
   let keys = []
   if (w > 0 && h > 0) {
