@@ -8,7 +8,6 @@ import { startComposer } from './composer.js'
 import { startPictures } from './pictures.js'
 import { imageStart, FOUND, NONE } from './sequences.js'
 import { startLinks } from './links.js'
-import { startSearch } from './search.js'
 import { fileUrl } from './linkify.js'
 import { ANSI, CLAUDE_SLOTS, slotVar, bytes } from './palette.js'
 import { WINDOWS } from './paths.js'
@@ -257,11 +256,12 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   })
   new ResizeObserver(refit).observe(host)
 
-  const search = startSearch(term, host)
+  let search // the find bar, loaded with its addon the first time it opens
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true
     if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyF') {
-      search.open()
+      search ??= import('./search.js').then(m => m.startSearch(term, host))
+      search.then(s => s.open())
       e.preventDefault()
       return false
     }
@@ -341,7 +341,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
       clearTimeout(hold?.timer)
       composer.close()
       links.dispose()
-      search.dispose()
+      search?.then(s => s.dispose())
       output.onmessage = () => {}
       invoke('pty_close', { id })
       term.dispose()

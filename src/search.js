@@ -1,6 +1,6 @@
 // Ctrl+Shift+F finds text in a Claude tab: everything Claude wrote, scrollback included, with each match
 // marked and the current one ringed. Enter and Shift+Enter step through them, Esc puts the bar away. The
-// search addon loads the first time the bar opens, so a tab that never searches pays nothing for it.
+// bar and its search addon load the first time it opens, so a tab that never searches pays nothing for it.
 import { el } from './ui.js'
 import { bytes } from './palette.js'
 
