@@ -681,11 +681,38 @@ export function outcome(output, isErrored, ms) {
   return parts.length ? parts : null
 }
 
+/** Claude's plan, its task list, after a call that changes it: TodoWrite replaces the whole list, TaskCreate
+ * adds a task under the id its result gives, and TaskUpdate changes one or deletes it. A task is
+ * `{ id, subject, status, doing }`, `doing` the words Claude shows while it's under way. */
+export function replan(tasks, e, result) {
+  if (e.tool === 'TodoWrite') return (e.todos ?? []).map((t, i) => ({ id: `todo-${i}`, subject: t.content, status: t.status, doing: t.activeForm ?? '' }))
+  if (e.tool === 'TaskCreate') {
+    const id = result?.result?.task?.id ?? result?.task?.id
+    return id == null ? tasks : [...tasks, { id: String(id), subject: e.subject, status: 'pending', doing: e.activeForm ?? '' }]
+  }
+  if (e.tool === 'TaskUpdate') {
+    const id = String(e.taskId)
+    if (e.status === 'deleted') return tasks.filter(t => t.id !== id)
+    return tasks.map(t => t.id !== id ? t
+      : { ...t, ...(e.subject && { subject: e.subject }), ...(e.status && { status: e.status }), ...(e.activeForm && { doing: e.activeForm }) })
+  }
+  return tasks
+}
+const PLANS = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate'])
+
+/** The plan as nook's card shows it, `{ done, total, now }` with `now` the task under way, or null with none. */
+export function planned(tasks) {
+  if (!tasks.length) return null
+  const now = tasks.find(t => t.status === 'in_progress')
+  return { done: tasks.filter(t => t.status === 'completed').length, total: tasks.length, now: now ? now.doing || now.subject : '' }
+}
+
 // What the session is doing: `status` is working, waiting (on the person), or idle, since `since`;
 // `activity` the tool running, `prompt` the main turn's first line, `agents` the subagents running,
 // `turns` the main turns finished, `touched` the files Claude wrote, newest last, and `answer` and `took` the
-// last main turn's reply as one plain line and its length in ms.
+// last main turn's reply as one plain line and its length in ms, and `plan` how far Claude's task list has got.
 const agents = new Set()
+let tasks = [] // the main agent's task list, for `plan`
 const running = new Map() // tool_use_id -> activity, of the calls under way
 
 async function setStatus($, file, status, patch = {}) {
@@ -757,6 +784,16 @@ export function register(on) {
       await setStatus($, file, state.status === 'idle' ? 'idle' : 'working', { touched }).catch(() => {})
     }
   })
+  // Claude's task list, the main agent's: how far it has got, for the card.
+  for (const tool of PLANS) on('tool.call', { tool }, async ($, e, next) => {
+    if (!file || e.agentId) return next(e)
+    const result = await next(e)
+    if (!result?.deny && !result?.isError) {
+      tasks = replan(tasks, e, result)
+      await report($, file, { plan: planned(tasks) }).catch(() => {})
+    }
+    return result
+  })
   // How long each shell command ran, for the line under its result.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     if (!e.tool_use_id) return next(e)
@@ -782,7 +819,8 @@ export function register(on) {
   })
   on('session.end', async ($, e, next) => {
     // After a /clear the process goes on as a new session, with nothing yet said.
-    if (file) await setStatus($, file, 'idle', { ended: e.reason, prompt: '', answer: '', took: 0 }).catch(() => {})
+    tasks = []
+    if (file) await setStatus($, file, 'idle', { ended: e.reason, prompt: '', answer: '', took: 0, plan: null }).catch(() => {})
     return next(e)
   })
   // The effort each request goes out with, the main agent's only.

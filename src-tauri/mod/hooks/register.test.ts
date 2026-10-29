@@ -33,6 +33,7 @@ function nook(on, reports: Record<string, unknown>[], surfaces = ['terminal'], w
   on('turn.complete', () => ({ text: '' }))
   on('tool.call', () => ({ result: {} }))
   on('classic.PermissionRequest', () => ({}))
+  on('session.end', () => ({ sessionId: 'abc' }))
 }
 
 const last = (reports: Record<string, unknown>[]) => reports[reports.length - 1]
@@ -68,6 +69,41 @@ test('a host with no cost ledger or limits reports none', () => {
   expect(spent({ context: { window: 200000 } } as any)).toEqual({ context: { window: 200000 }, cost: 0, limits: [] })
 })
 
+test('the plan follows TodoWrite, and TaskCreate and TaskUpdate by id', () => {
+  const todos = replan([], { tool: 'TodoWrite', todos: [
+    { content: 'Read the code', status: 'completed', activeForm: 'Reading the code' },
+    { content: 'Fix the bug', status: 'in_progress', activeForm: 'Fixing the bug' },
+    { content: 'Run the tests', status: 'pending', activeForm: 'Running the tests' },
+  ] } as any, {})
+  expect(planned(todos)).toEqual({ done: 1, total: 3, now: 'Fixing the bug' })
+
+  let tasks = replan([], { tool: 'TaskCreate', subject: 'Port the parser', activeForm: 'Porting the parser' } as any, { result: { task: { id: '1', subject: 'Port the parser' } } })
+  tasks = replan(tasks, { tool: 'TaskCreate', subject: 'Write tests' } as any, { result: { task: { id: '2', subject: 'Write tests' } } })
+  expect(planned(tasks)).toEqual({ done: 0, total: 2, now: '' })
+  tasks = replan(tasks, { tool: 'TaskUpdate', taskId: '1', status: 'in_progress' } as any, {})
+  expect(planned(tasks)).toEqual({ done: 0, total: 2, now: 'Porting the parser' })
+  tasks = replan(tasks, { tool: 'TaskUpdate', taskId: '1', status: 'completed' } as any, {})
+  tasks = replan(tasks, { tool: 'TaskUpdate', taskId: '2', status: 'in_progress', activeForm: 'Writing tests' } as any, {})
+  expect(planned(tasks)).toEqual({ done: 1, total: 2, now: 'Writing tests' })
+  tasks = replan(tasks, { tool: 'TaskUpdate', taskId: '2', status: 'deleted' } as any, {})
+  expect(planned(tasks)).toEqual({ done: 1, total: 1, now: '' })
+  expect(planned([])).toBe(null)
+})
+
+test('a session reports its plan as Claude writes it, and a /clear drops it', async ($, on) => {
+  const reports: Record<string, unknown>[] = []
+  nook(on, reports)
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'Fix it', turnId: 't1' })
+  await $.tool.call({ tool: 'TodoWrite', todos: [{ content: 'Fix', status: 'in_progress', activeForm: 'Fixing' }, { content: 'Test', status: 'pending', activeForm: 'Testing' }] })
+  expect(last(reports)).toMatchObject({ plan: { done: 0, total: 2, now: 'Fixing' } })
+  // A subagent's own list isn't the session's plan.
+  await $.tool.call({ tool: 'TodoWrite', agentId: 'a1', todos: [] })
+  expect(last(reports)).toMatchObject({ plan: { done: 0, total: 2 } })
+  await $.session.end({ reason: 'clear' })
+  expect(last(reports)).toMatchObject({ plan: null })
+})
+
 test('a reply reads as one plain line: no code, no Markdown marks, cut at a word', () => {
   expect(gist('## Fixed\n\n- **Tabs** now keep `order`\n- See [the PR](https://x/1)\n\n```js\nlet a = 1\n```\nAll green.'))
     .toBe('Fixed Tabs now keep order See the PR All green.')
@@ -101,7 +137,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, svgSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, spent, splitBlocks, splitPictures, summary, testCounts } from './register.js'
+import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, svgSize, linkTarget, outcome, pictureLinks, readPaths, planned, replan, searchParts, shellSearch, spent, splitBlocks, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })

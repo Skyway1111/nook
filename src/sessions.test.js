@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { follow, wanting, ago, modelName, summary, answeredReport, notice, cannotSend, pickedAtFirst, asking, fill, money, limits, ANSWERS } from './sessions.js'
+import { follow, wanting, ago, modelName, summary, answeredReport, notice, cannotSend, pickedAtFirst, asking, planLine, fill, money, limits, ANSWERS } from './sessions.js'
 
 const run = (steps, view) => steps.map(([report, watched]) => (view = follow(view, report, watched)))
 
@@ -126,4 +126,12 @@ test('a card offers to answer a permission prompt only while its session waits o
   assert.equal(asking({ mark: 'working' }, answeredReport({ status: 'waiting', since: 5, asks }, 5)), null) // answered in the tab
   assert.equal(asking({ mark: 'working' }, { status: 'working', asks: null }), null)
   assert.equal(asking(undefined, {}), null)
+})
+
+test('a card reads Claude\'s plan as how far it has got and what it is on', () => {
+  assert.equal(planLine(null), '')
+  assert.equal(planLine({ done: 0, total: 0, now: '' }), '')
+  assert.equal(planLine({ done: 2, total: 5, now: 'Fixing the parser' }), '2 of 5 · Fixing the parser')
+  assert.equal(planLine({ done: 2, total: 5, now: '' }), '2 of 5')
+  assert.equal(planLine({ done: 5, total: 5, now: '' }), 'All 5 done')
 })
