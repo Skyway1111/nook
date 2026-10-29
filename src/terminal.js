@@ -6,7 +6,7 @@ import { invoke, Channel } from '@tauri-apps/api/core'
 import { showPreview, hidePreview } from './ui.js'
 import { startComposer } from './composer.js'
 import { startPictures } from './pictures.js'
-import { imageStart, FOUND, NONE } from './sequences.js'
+import { imageStart, FOUND, NONE, clipboardText } from './sequences.js'
 import { startLinks } from './links.js'
 import { startTurns } from './turns.js'
 import { fileUrl } from './linkify.js'
@@ -132,6 +132,13 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   let here = cwd
   term.parser.registerOscHandler(7, data => {
     try { here = fileUrl(data).path } catch {}
+    return true
+  })
+  // OSC 52 writes the clipboard: Claude copies its fullscreen selection this way as well as with the system's
+  // tool, which a Linux desktop may lack and a session over ssh can't reach. Reads are refused.
+  term.parser.registerOscHandler(52, data => {
+    const text = clipboardText(data)
+    if (text !== null) navigator.clipboard.writeText(text).catch(() => {})
     return true
   })
   term.loadAddon(new Unicode11Addon())
