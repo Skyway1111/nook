@@ -25,7 +25,7 @@ pub struct Saved {
 }
 
 /// Claude Code's folder for its own data: `CLAUDE_CONFIG_DIR`, or `.claude` in the home folder.
-fn claude_dir() -> PathBuf {
+pub(crate) fn claude_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
         return dir.into();
     }

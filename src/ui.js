@@ -55,7 +55,11 @@ export function openPicker(event, placeholder, items) {
     menu.style.translate = `${x}px ${up ? Math.max(4, event.clientY - height - 10) : event.clientY + 10}px`
   }
   input.oninput = render
-  input.onkeydown = e => { if (e.key === 'Enter') list.querySelector('button')?.click() }
+  input.onkeydown = e => {
+    if (e.key !== 'Enter') return
+    e.preventDefault() // the pick may focus a terminal, which would take this Enter too
+    list.querySelector('button')?.click()
+  }
   menu.replaceChildren(input, list)
   menu.hidden = false
   render()
