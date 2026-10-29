@@ -207,6 +207,11 @@ function claudeFiles() {
   touched = all.join('\n')
   files.claude(all)
 }
+// A Claude tab's Review over its prompt: the files its last turn edited, in a tab of their changes.
+addEventListener('nook-review', ({ detail: { root, files: edited } }) => {
+  const tab = tabs.active()
+  git.review(root || tab?.path || cwd, edited, `${tab?.name ?? 'Claude'} · last turn`)
+})
 dashboard = startDashboard($('pane'), {
   button: $('toggle-sessions'),
   list: () => tabs.sessions(),

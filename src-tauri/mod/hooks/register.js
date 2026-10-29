@@ -692,6 +692,76 @@ async function undoRow($, e, root) {
   })
 }
 
+const lastTurn = atom({ plugin: 'nook', key: 'lastTurn' }, null) // the main agent's last finished turn, when it edited files
+const patches = new Map() // an edit's tool_use_id -> { path, hunks }, or { path, made } for a file it wrote new
+let turnEdits = [] // the edits made in the turn under way, by tool_use_id
+
+/** A turn's edits as the band says them: each file with the lines added and removed, and the new files. */
+export function turnFiles(edits) {
+  const files = new Map()
+  for (const { path, hunks = [], made } of edits) {
+    const [added, removed, isNew] = files.get(path) ?? [0, 0, false]
+    const lines = hunks.flatMap(h => h.lines)
+    files.set(path, [added + lines.filter(l => l[0] === '+').length, removed + lines.filter(l => l[0] === '-').length, isNew || !!made])
+  }
+  return files
+}
+
+/** The band over the prompt after a turn that edited files: what changed, a Review that opens the changes in
+ * nook, and an Undo that takes all the turn's edits back out (a new file stays: a mod can't delete one). */
+async function turnBand($, e, file, turn) {
+  const edits = turn.ids.map(id => [id, patches.get(id)]).filter(([, p]) => p)
+  if (!edits.length) return null
+  const root = await $.session.root().catch(() => '')
+  const files = turnFiles(edits.map(([, p]) => p))
+  const undoable = edits.filter(([, p]) => p.hunks)
+  const gone = await read($, undone)
+  const isUndone = undoable.length > 0 && undoable.every(([id]) => gone.includes(id))
+  let added = 0
+  let removed = 0
+  for (const [a, r] of files.values()) (added += a), (removed += r)
+  const made = [...files.values()].filter(f => f[2]).length
+  const names = [...files.keys()].map(p => relative(p, root))
+  const what = names.length === 1 ? names[0] : plural(names.length, 'file')
+  const { Box, Button, Text } = $.ui.resolve(e)
+  const undo = async () => {
+    const gone = await read($, undone)
+    const back = !undoable.every(([id]) => gone.includes(id))
+    const todo = back ? undoable.filter(([id]) => !gone.includes(id)).reverse() : undoable.filter(([id]) => gone.includes(id))
+    const texts = new Map()
+    for (const [, { path, hunks }] of todo) {
+      if (!texts.has(path)) {
+        const text = await $.fs.read(path).catch(() => null)
+        if (text === null) return $.ui.toast(`${relative(path, root)} can't be read now`)
+        texts.set(path, text)
+      }
+      const changed = applyHunks(texts.get(path), hunks, back)
+      if (changed === null) return $.ui.toast(`${relative(path, root)} has changed where Claude edited it, so the turn can't be ${back ? 'undone' : 'put back'}`)
+      texts.set(path, changed)
+    }
+    for (const [path, text] of texts) await $.fs.write(path, text)
+    const ids = todo.map(([id]) => id)
+    await update($, undone, (list = []) => (back ? [...list, ...ids].slice(-UNDONE) : list.filter(i => !ids.includes(i))))
+    const stays = made ? `; ${made === 1 ? 'the new file it made stays' : 'the new files it made stay'}` : ''
+    $.ui.toast(back ? `Undid the turn's edits${stays}` : 'Put the turn\'s edits back')
+  }
+  const buttons = []
+  if (file) {
+    buttons.push(Button({
+      key: 'turn:review', label: '± Review', plain: true,
+      onPress: () => report($, file, { review: { files: [...files.keys()], at: Date.now() } }),
+    }))
+  }
+  if (undoable.length) buttons.push(Button({ key: 'turn:undo', label: isUndone ? '↷ Redo turn' : '↶ Undo turn', plain: true, onPress: undo }))
+  buttons.push(Button({ key: 'turn:hide', label: '✕', plain: true, dimColor: true, onPress: () => update($, lastTurn, () => null) }))
+  const counts = [`+${added}`, `−${removed}`, ...(made ? [`${made} new`] : [])].join(' ')
+  return Box({
+    flexDirection: 'row',
+    gap: 3,
+    children: [Text({ dimColor: true, wrap: 'truncate-end', children: `✎ Claude changed ${what} · ${counts}${isUndone ? ' · undone' : ''}` }), ...buttons],
+  })
+}
+
 const SITES = 3 // the most sites a web search's row names
 
 /** What a finished web search found, as row parts: how many results, and the sites they came from. */
@@ -842,6 +912,10 @@ export function register(on) {
     return { sections: [...composed.sections, { id: 'nook:draws', text: DRAWS, scope: 'session' }] }
   })
   on('turn.start', async ($, e, next) => {
+    if (!e.agentId) {
+      turnEdits = []
+      await update($, lastTurn, () => null).catch(() => {})
+    }
     if (file && e.agentId) agents.add(e.agentId)
     if (file) {
       const patch = e.agentId ? {} : { prompt: e.text.trim().split('\n')[0].slice(0, 200), answer: '', took: 0 }
@@ -851,6 +925,7 @@ export function register(on) {
   })
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
+    if (!e.agentId && turnEdits.length) await update($, lastTurn, () => ({ ids: [...turnEdits] })).catch(() => {})
     if (!file) return result
     if (e.agentId) {
       agents.delete(e.agentId)
@@ -885,6 +960,21 @@ export function register(on) {
     if (!result?.deny && !result?.isError) {
       tasks = replan(tasks, e, result)
       await report($, file, { plan: planned(tasks) }).catch(() => {})
+    }
+    return result
+  })
+  // Each edit, kept by its call, so the band can take a whole turn's edits back out.
+  for (const tool of EDITS) on('tool.call', { tool }, async ($, e, next) => {
+    const result = await next(e)
+    const out = result?.result
+    if (e.tool_use_id && !result?.deny && !result?.isError && out?.filePath && !out.staged) {
+      const kept = out.structuredPatch?.length ? { path: out.filePath, hunks: out.structuredPatch }
+        : out.type === 'create' ? { path: out.filePath, made: true } : null
+      if (kept) {
+        patches.set(e.tool_use_id, kept)
+        if (patches.size > TIMES) patches.delete(patches.keys().next().value)
+        turnEdits.push(e.tool_use_id)
+      }
     }
     return result
   })
@@ -1090,6 +1180,15 @@ export function register(on) {
     }
     const rest = blocks.slice(1).filter(Boolean).map(b => (typeof b === 'string' ? draw(b) : b))
     return Box({ flexDirection: 'column', children: [await next({ ...e, props: { ...e.props, text: blocks[0] } }), ...rest] })
+  })
+  // After a turn that edited files, the band over the prompt says so, until the next prompt or ✕.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.surface !== 'terminal' || e.props.hasSurvey || e.props.isWorking || e.props.view?.agentId) return next(e)
+    const turn = await read($, lastTurn)
+    const band = turn && (await turnBand($, e, file, turn))
+    if (!band) return next(e)
+    const theirs = await next(e)
+    return theirs ? $.ui.resolve(e).Box({ flexDirection: 'column', children: [band, theirs] }) : band
   })
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     const pictures = e.props.text.includes('[Image #') ? await pasted($, e.props.text) : []
