@@ -252,6 +252,10 @@ addEventListener('keydown', e => {
     e.preventDefault()
     quickPrompts()
   }
+  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyE') {
+    e.preventDefault()
+    files.focus()
+  }
 })
 $('toggle-git').onclick = () => { document.body.classList.toggle('git-hidden'); git.refresh(); tabs.focus() }
 
