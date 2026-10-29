@@ -304,6 +304,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 #git-list li:hover:not(.empty) { background: var(--hover); }
 #git-list .group { font-size: .82rem; font-weight: 600; color: var(--ink-3); }
 #git-list .group span { flex: 1; }
+#git-list .group .count { flex: none; }
 #git-list .change { padding-left: 22px; }
 #git-list .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-1); }
 #git-list .dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: .9rem; color: var(--ink-3); }
@@ -324,6 +325,8 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .st.renamed::after { content: '›'; }
 .st.conflict { color: var(--ansi-red); }
 .st.conflict::after { content: '!'; }
+.st.stashed { border-style: dashed; color: var(--ink-3); }
+.st.stashed::after { content: ''; }
 
 .check {
   flex: none; display: grid; place-items: center; width: 14px; height: 14px;
@@ -342,7 +345,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
   font: .93rem/1.4 var(--font-term); color: var(--ink-1); user-select: text;
 }
 #git-message::placeholder { color: var(--ink-3); }
-#git #git-commit { align-self: flex-end; }
+#git #git-commit { margin-left: auto; }
 #git-last { padding-left: 8px; font-size: .9rem; color: var(--ink-3); }
 #git-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 #git-subject:hover { color: var(--ink-1); }

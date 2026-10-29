@@ -61,3 +61,6 @@
 .view.diff .commit-head button.hash { height: 22px; padding: 0 7px; font: .86rem var(--font-term); color: var(--ink-1); background: var(--raised); }
 .view.diff .commit-head button.hash:hover { color: var(--accent); }
 .commit-head .ref { margin: 0; }
+/* A stash tab shows what a stash command said in its head. */
+.view.diff .commit-head .error { margin: 0; color: var(--ansi-red); white-space: pre-wrap; }
+.view.diff .commit-head .meta { margin: 0; }
