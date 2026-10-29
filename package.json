@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "tauri build",
+    "test": "node --test \"src/**/*.test.js\""
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

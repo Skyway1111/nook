@@ -159,6 +159,15 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
       : [row('Not signed in', 'Sign in', () => github(['login']))]))
   }
 
+  /** Sets variable `name` to `value` in the user's theme.css: through the editor once it holds the file, and
+   * otherwise straight to disk, only over the text just read, so an edit made meanwhile stands. */
+  async function setVariable(name, value) {
+    if (box) return box.edit(text => setVar(text, name, value))
+    const text = await invoke('read_text', { path }).catch(() => '') // none yet
+    if (!(await invoke('write_text', { path, text: setVar(text, name, value), base: text }))) throw new Error('theme.css changed meanwhile. Try again.')
+    await reread()
+  }
+
   function open() {
     drawer.hidden = false
     box ??= startViewer($('settings-css'), path, { openFile: () => {}, onDirty: () => {}, onText: css => apply({ ...theme, css }), autosave: true })
@@ -179,5 +188,6 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
     toggle: () => (drawer.hidden ? open() : close()),
     /** Installs the theme in a folder or .zip, uses it, and shows it in the drawer. */
     installTheme: path => { if (drawer.hidden) open(); return themes.install(path) },
+    setVariable,
   }
 }

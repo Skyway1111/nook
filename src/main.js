@@ -11,6 +11,7 @@ import { startGit } from './git.js'
 import { startSettings } from './settings.js'
 import { bytes } from './palette.js'
 import { holdBackdrops } from './backdrops.js'
+import { startWallpaper } from './wallpaper.js'
 import { $ } from './ui.js'
 
 const win = getCurrentWindow()
@@ -22,7 +23,7 @@ addEventListener('unhandledrejection', e => banner(String(e.reason)))
 
 const { settings, error, configDir, home } = await invoke('boot')
 
-let tabs, files
+let tabs, files, wallpaper
 const rebake = holdBackdrops([document.body, ...['pane', 'files', 'git'].map($)])
 const drawer = await startSettings({
   configDir,
@@ -30,6 +31,7 @@ const drawer = await startSettings({
   home: home || cwd,
   onRestyle: () => {
     tabs?.restyle()
+    wallpaper?.restyle()
     rebake()
     // A growing window shows its own background until the page catches up, so that takes the theme's.
     const [r, g, b] = bytes(getComputedStyle(document.documentElement).getPropertyValue('--bg'))
@@ -38,6 +40,13 @@ const drawer = await startSettings({
   onClose: () => tabs.focus(),
   showFolder: () => files.go(configDir),
 })
+
+wallpaper = startWallpaper($('pane'), {
+  button: $('toggle-wallpaper'),
+  save: id => drawer.setVariable('--wallpaper', id),
+  onClose: () => tabs.focus(),
+})
+wallpaper.restyle()
 
 // Drag a panel's inner edge to resize it. A double-click returns it to the theme's width.
 const widths = { files: settings.filesWidth, git: settings.gitWidth }
@@ -79,6 +88,7 @@ tabs = startTabs({
   settings,
   onShow: tab => {
     files.mark(tab.viewer ? tab.path : '')
+    wallpaper.show(!tab.viewer)
     git.show(tab.path)
   },
 })
