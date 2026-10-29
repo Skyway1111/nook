@@ -306,6 +306,34 @@ fn path_kinds(paths: Vec<String>) -> Vec<u8> {
         .collect()
 }
 
+/// Up to `count` lines of a text file from line `from` (1-based), each cut at 400 characters: what a
+/// Claude tab shows when the mouse rests on a path. Reads no further than the last line it returns.
+#[tauri::command(async)]
+fn peek_lines(path: String, from: usize, count: usize) -> Result<Vec<String>, String> {
+    use std::io::{BufRead, BufReader};
+    let mut reader = BufReader::new(fs::File::open(&path).map_err(err)?);
+    let (from, count) = (from.max(1), count.min(200));
+    let mut lines = Vec::with_capacity(count);
+    let mut buf = Vec::new();
+    for n in 1..from + count {
+        buf.clear();
+        if reader.read_until(b'\n', &mut buf).map_err(err)? == 0 {
+            break;
+        }
+        if buf.contains(&0) {
+            return Err("it isn't text".into());
+        }
+        if n < from {
+            continue;
+        }
+        let bytes = if n == 1 { buf.strip_prefix(BOM).unwrap_or(&buf) } else { &buf[..] };
+        let text = String::from_utf8_lossy(bytes);
+        let text = text.trim_end_matches(['\n', '\r']);
+        lines.push(text.chars().take(400).collect());
+    }
+    Ok(lines)
+}
+
 /// Saves a file tab and keeps the file's BOM. Writes nothing and returns false when the file no
 /// longer holds `base`, the text the tab last read; with no `base` it overwrites.
 #[tauri::command(async)]
@@ -483,6 +511,7 @@ fn main() {
             search::search_text,
             file_stamp,
             path_kinds,
+            peek_lines,
             read_text,
             write_text,
             create_path,
@@ -516,7 +545,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{dir_arg, merge, read_text, write_text, Settings};
+    use super::{dir_arg, merge, peek_lines, read_text, write_text, Settings};
     use serde_json::json;
     use std::fs;
 
@@ -554,6 +583,19 @@ mod tests {
     fn rejects_a_missing_folder() {
         assert_eq!(dir_arg(r"C:\does\not\exist"), None);
         assert_eq!(dir_arg("/does/not/exist"), None);
+    }
+
+    #[test]
+    fn peeks_at_lines_and_refuses_binary() {
+        let file = std::env::temp_dir().join(format!("nook-peek-{}.txt", std::process::id()));
+        let path = file.to_string_lossy().into_owned();
+        fs::write(&file, b"\xEF\xBB\xBFone\r\ntwo\nthree\n").unwrap();
+        assert_eq!(peek_lines(path.clone(), 1, 2).unwrap(), ["one", "two"]);
+        assert_eq!(peek_lines(path.clone(), 3, 10).unwrap(), ["three"]);
+        assert!(peek_lines(path.clone(), 9, 3).unwrap().is_empty());
+        fs::remove_file(&file).unwrap();
+        let here = env!("CARGO_MANIFEST_DIR");
+        assert!(peek_lines(format!("{here}/icons/icon.ico"), 1, 5).is_err());
     }
 
     #[test]

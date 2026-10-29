@@ -740,3 +740,19 @@ svg.defs { position: absolute; width: 0; height: 0; }
 /* The prompt a jump lands on flashes once. */
 .turn-flash { pointer-events: none; animation: turn-flash 900ms ease-out forwards; }
 @keyframes turn-flash { from { background: var(--selection); } to { background: transparent; } }
+
+/* The lines a file's path in a Claude tab points at, when the mouse rests on it. */
+.peek {
+  position: fixed; left: 0; top: 0; z-index: 30; pointer-events: none; display: flex; flex-direction: column;
+  max-width: min(640px, 90vw); border-radius: 8px; overflow: hidden;
+  background: linear-gradient(var(--raised) 0 0), var(--bg); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.peek .name { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; font: .8rem var(--font-ui); color: var(--ink-3); white-space: nowrap; overflow: hidden; }
+.peek .name b { font-weight: 600; color: var(--ink-1); }
+.peek .name span { overflow: hidden; text-overflow: ellipsis; }
+.peek .lines { padding: 4px 0; font: calc(var(--term-font-size) * .9)/1.45 var(--font-term); color: var(--term-fg); background: var(--term-bg); }
+.peek .row { display: flex; padding-right: 12px; white-space: pre; }
+.peek .row.at { background: var(--selection); }
+.peek .n { flex: none; width: 4.5ch; padding-right: 1ch; text-align: right; color: var(--ink-3); }
+.peek code { font: inherit; overflow: hidden; text-overflow: ellipsis; }
+.peek .hint { padding: 4px 10px; font: .75rem var(--font-ui); color: var(--ink-3); border-top: 1px solid var(--line); }
