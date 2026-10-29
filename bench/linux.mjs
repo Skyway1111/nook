@@ -299,8 +299,10 @@ const METRICS = [
   ['keyP95', 'key echo p95 ms', 1, 4],
   ['scroll', 'scroll ms', 1, 2],
   ['flood', 'flood ms', 0, 100],
-  ['floodFrameP95', 'flood frame p95 ms', 1, 4],
-  ['floodFrameMax', 'flood frame max ms', 0, 20],
+  // A flood paints in a handful of frames, so one slow frame moves these by tens of ms: 12 floods of one
+  // build spread from 57 to 203 ms.
+  ['floodFrameP95', 'flood frame p95 ms', 1, 50],
+  ['floodFrameMax', 'flood frame max ms', 0, 50],
   ['idle', 'idle CPU %', 1, 0.5],
   ['typing', 'typing CPU %', 1, 1.5],
   ['memory', 'memory MB', 0, 5],
