@@ -5,12 +5,21 @@
 /** The roles a cell can take. wallpaper.js colors each from its `--wallpaper-<role>` variable in theme.css. */
 export const ROLES = ['faint', 'ink', 'bright', 'accent', 'claude', 'water', 'sea', 'leaf', 'warm', 'light', 'glow']
 
-/** A cols x rows grid of blank cells. A cell's role is null while it's blank. */
-export function grid(cols, rows) {
+/** A cols x rows grid of blank cells. A cell's role is null while it's blank. Given `reuse`, a grid of the same
+ * size, it blanks that grid's cells instead of making new ones, so a frame makes no garbage. */
+export function grid(cols, rows, reuse) {
   cols = Math.max(0, Math.floor(cols) || 0)
   rows = Math.max(0, Math.floor(rows) || 0)
+  if (reuse?.cols === cols && reuse.rows === rows) {
+    reuse.chars.fill(' ')
+    reuse.roles.fill(null)
+    return reuse
+  }
   return { cols, rows, chars: new Array(cols * rows).fill(' '), roles: new Array(cols * rows).fill(null) }
 }
+
+/** Whether cell `i` differs between grids `a` and `b` of one size. */
+export const differs = (a, b, i) => a.chars[i] !== b.chars[i] || a.roles[i] !== b.roles[i]
 
 /** Sets the cell nearest (x, y) when it's on the grid. A space leaves the cell as it was. */
 export function put(g, x, y, ch, role) {
@@ -275,22 +284,52 @@ export const SCENES = [
 /** The scene named `id`, or undefined for none. */
 export const scene = id => SCENES.find(s => s.id === id)
 
-/** Scene `id` painted on a cols x rows grid at `t` seconds. An unknown id paints nothing. */
-export function render(id, cols, rows, t) {
-  const g = grid(cols, rows)
+/** Scene `id` painted on a cols x rows grid at `t` seconds. An unknown id paints nothing. `reuse` is a grid to
+ * paint over, as `grid` takes it. */
+export function render(id, cols, rows, t, reuse) {
+  const g = grid(cols, rows, reuse)
   scene(id)?.draw(g, t)
   return g
 }
 
-/** Clears canvas context `ctx` and draws grid `g` in cells `w` x `h`, one fill color per role, from `colors`.
- * The context's font and a top baseline are the caller's to set. */
-export function paint(ctx, g, w, h, colors) {
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
-  const cells = new Map(ROLES.map(r => [r, []]))
-  g.roles.forEach((role, i) => role && cells.get(role).push(i))
-  for (const [role, list] of cells) {
-    if (!list.length) continue
-    ctx.fillStyle = colors[role]
-    for (const i of list) ctx.fillText(g.chars[i], (i % g.cols) * w, Math.floor(i / g.cols) * h)
+/** Draws grid `g` on canvas context `ctx`, whose transform is the identity, in cells `w` x `h` pixels. `tiles` is a
+ * glyph atlas: `tiles.canvas` holds a tile for each character in each role's color, `tiles.at(ch, role)` gives a
+ * tile's top-left, drawing it on first use, and a tile is `h + tiles.spill` high, since a glyph such as _ can reach
+ * below its cell, as text does. A copy is far cheaper than drawing text, above all in software.
+ * Given `last`, the grid the canvas shows now, at the same size, only the cells that changed are cleared and
+ * drawn, with the cell under each, which the changed one may have reached into. A cell redrawn alone gets its
+ * own glyph and what the glyph above reaches into it, so no pixel is drawn twice. Returns how many cells it
+ * redrew. */
+export function paint(ctx, g, w, h, tiles, last) {
+  const spill = tiles.spill ?? 0
+  const at = i => [(i % g.cols) * w, Math.floor(i / g.cols) * h]
+  if (last?.cols !== g.cols || last.rows !== g.rows) {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
+    let n = 0
+    for (let i = 0; i < g.chars.length; i++) {
+      if (!g.roles[i]) continue
+      const [x, y] = at(i)
+      const [sx, sy] = tiles.at(g.chars[i], g.roles[i])
+      ctx.drawImage(tiles.canvas, sx, sy, w, h + spill, x, y, w, h + spill)
+      n++
+    }
+    return n
   }
+  let n = 0
+  for (let i = 0; i < g.chars.length; i++) {
+    const above = i - g.cols
+    if (!differs(g, last, i) && !(spill && above >= 0 && differs(g, last, above))) continue
+    const [x, y] = at(i)
+    ctx.clearRect(x, y, w, h)
+    if (g.roles[i]) {
+      const [sx, sy] = tiles.at(g.chars[i], g.roles[i])
+      ctx.drawImage(tiles.canvas, sx, sy, w, h, x, y, w, h)
+    }
+    if (spill && above >= 0 && g.roles[above]) {
+      const [sx, sy] = tiles.at(g.chars[above], g.roles[above])
+      ctx.drawImage(tiles.canvas, sx, sy + h, w, spill, x, y, w, spill)
+    }
+    n++
+  }
+  return n
 }

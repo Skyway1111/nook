@@ -1,7 +1,9 @@
 // The living wallpaper behind Claude tabs, and its picker. A canvas at the bottom of #pane draws a scene from
 // wallpapers.js under the terminal, whose background is transparent. theme.css names the scene in
 // `--wallpaper`, so a theme can ship one, the user's theme.css overrides it, and every window follows a pick
-// within a second. Each role's color, the opacity, and the cell size are theme variables too.
+// within a second. Each role's color, the opacity, and the cell size are theme variables too. A frame copies
+// glyphs from an atlas into only the cells that changed since the last one, so a frame costs a few hundred
+// small copies, not a full redraw of text.
 import { ROLES, SCENES, paint, render, scene } from './wallpapers.js'
 import { bytes } from './palette.js'
 import { el } from './ui.js'
@@ -12,16 +14,67 @@ const THUMB_PX = 4 // the picker's thumbnails draw their cells this many pixels 
 const SETTLE_MS = 100 // while the pane resizes, the last bitmap stretches; it redraws at the new size once this long passes without one, as backdrops.js does
 const still = matchMedia('(prefers-reduced-motion: reduce)')
 
-/** Sizes `canvas` to its CSS box at the screen's pixel density. Returns its context, set to draw in CSS pixels. */
-function fit(canvas, width, height, font) {
+/** Sizes `canvas` to a CSS box of `width` x `height` at the screen's pixel density, and fits cells to it: `size`
+ * pixels high in font `family`, each a whole number of device pixels, so a cell's copy never blurs or leaves a
+ * seam. Returns `{ ctx, w, h, cols, rows }` in device pixels, the context drawing in them, and `tiles`, a fresh
+ * glyph atlas in `colors`. The last column and row may run past the canvas's edge. */
+function fit(canvas, width, height, size, family, colors) {
   const dpr = devicePixelRatio || 1
   canvas.width = Math.max(1, Math.round(width * dpr))
   canvas.height = Math.max(1, Math.round(height * dpr))
   const ctx = canvas.getContext('2d')
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  const font = `${size * dpr}px ${family}`
   ctx.font = font
-  ctx.textBaseline = 'top'
-  return ctx
+  const w = Math.max(1, Math.round(ctx.measureText('M').width || size * dpr * 0.6))
+  const h = Math.max(1, Math.ceil(size * dpr))
+  return { ctx, w, h, cols: Math.ceil(canvas.width / w), rows: Math.ceil(canvas.height / h), tiles: atlas(w, h, font, colors) }
+}
+
+const ATLAS_COLS = 32 // tiles a row of the atlas holds
+/** A glyph atlas: each character in each role's color, drawn once into its own tile, `w` wide and as high as the
+ * font's glyphs reach, at least `h`. `spill` is how far a tile runs below its cell. */
+function atlas(w, h, font, colors) {
+  let ctx = null
+  const where = new Map()
+  const probe = el('canvas').getContext('2d')
+  probe.font = font
+  probe.textBaseline = 'top'
+  const reach = probe.measureText('█_gjy|()[]{}')
+  const spill = Math.max(0, Math.min(h, Math.ceil(reach.fontBoundingBoxDescent ?? reach.actualBoundingBoxDescent ?? h) - h))
+  const tall = h + spill
+  const tiles = {
+    canvas: el('canvas', { width: w * ATLAS_COLS, height: tall * 4 }),
+    spill,
+    at(ch, role) {
+      const key = role + '\0' + ch
+      let at = where.get(key)
+      if (at) return at
+      const n = where.size
+      at = [(n % ATLAS_COLS) * w, Math.floor(n / ATLAS_COLS) * tall]
+      if (at[1] + tall > tiles.canvas.height) {
+        // Twice the rows, keeping the tiles drawn so far.
+        const grown = el('canvas', { width: tiles.canvas.width, height: tiles.canvas.height * 2 })
+        grown.getContext('2d').drawImage(tiles.canvas, 0, 0)
+        tiles.canvas = grown
+        ctx = null
+      }
+      if (!ctx) {
+        ctx = tiles.canvas.getContext('2d')
+        ctx.font = font
+        ctx.textBaseline = 'top'
+      }
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(at[0], at[1], w, tall)
+      ctx.clip()
+      ctx.fillStyle = colors[role]
+      ctx.fillText(ch, at[0], at[1])
+      ctx.restore()
+      where.set(key, at)
+      return at
+    },
+  }
+  return tiles
 }
 
 /** Draws the wallpaper in `pane`. `button` opens the picker, `save(id)` keeps a pick by setting
@@ -33,7 +86,8 @@ export function startWallpaper(pane, { button, save, onClose }) {
   let previewing = null // a scene the picker shows before it's kept
   let showing = true // false while a file tab is in front
   let focused = document.hasFocus() // the wallpaper moves only while nook's window has focus
-  let ctx, cell, cols = 0, rows = 0
+  let cells = null // the canvas's context, cells, and glyph atlas, from fit, while a scene shows
+  let onCanvas = null, spare = null // the grid on the canvas, and one to draw the next frame into
   let lastInput = -Infinity, lastFrame = -Infinity, raf = 0
   let picker = null // the open picker's { focus, restyle, tick, close }
 
@@ -42,42 +96,57 @@ export function startWallpaper(pane, { button, save, onClose }) {
   const live = () => shown() && focused && !document.hidden
 
   function measure() {
+    onCanvas = spare = null // a new bitmap starts blank
     if (!shown()) {
       // A hidden canvas keeps no bitmap the size of the pane.
       canvas.width = canvas.height = 1
-      ctx = null
+      cells = null
       return
     }
     const { width, height } = pane.getBoundingClientRect()
-    ctx = fit(canvas, width, height, `${look.size}px ${look.family}`)
-    cell = { w: ctx.measureText('M').width || look.size * 0.6, h: Math.ceil(look.size) }
-    cols = Math.ceil(width / cell.w)
-    rows = Math.ceil(height / cell.h)
+    cells = fit(canvas, width, height, look.size, look.family, look.colors)
   }
 
+  /** Draws the frame at `now`, touching only the cells that changed since the last one. */
   function draw(now = performance.now()) {
     lastFrame = now
-    paint(ctx, render(id(), cols, rows, (now - started) / 1000), cell.w, cell.h, look.colors)
+    const { ctx, w, h, cols, rows, tiles } = cells
+    const g = render(id(), cols, rows, (now - started) / 1000, spare)
+    paint(ctx, g, w, h, tiles, onCanvas)
+    spare = onCanvas
+    onCanvas = g
   }
 
   // One loop serves the pane and the picker's thumbnails. It stops while nothing moves, and rests after a key.
+  // A timer wakes it once a frame, and the frame draws in the next animation frame, so the page isn't asked
+  // for an animation frame sixty times a second to draw ten.
+  let timer = 0
+  function schedule() {
+    if (timer || raf || (!live() && !picker) || still.matches) return
+    const now = performance.now()
+    const wait = Math.max(0, FRAME_MS - (now - lastFrame), REST_MS - (now - lastInput))
+    timer = setTimeout(() => {
+      timer = 0
+      if (!raf) raf = requestAnimationFrame(frame)
+    }, wait)
+  }
   function frame(now) {
     raf = 0
     if (!live() && !picker) return
-    if (now - lastFrame >= FRAME_MS && now - lastInput >= REST_MS) {
+    if (now - lastFrame >= FRAME_MS - 4 && now - lastInput >= REST_MS) {
+      lastFrame = now
       if (live()) draw(now)
-      else lastFrame = now
       picker?.tick(now - started)
     }
-    if (!still.matches) raf = requestAnimationFrame(frame)
+    schedule()
   }
 
   /** Shows or hides the canvas for what's in front, and runs the loop while anything moves. */
   function update() {
     canvas.hidden = !shown()
-    if (shown() !== !!ctx) measure()
+    if (shown() !== !!cells) measure()
     if (shown()) draw()
-    if ((live() || picker) && !raf) raf = requestAnimationFrame(frame)
+    schedule()
   }
 
   /** Reads the scene, colors, and cell size from theme.css. */
@@ -102,7 +171,7 @@ export function startWallpaper(pane, { button, save, onClose }) {
 
   let settle = 0
   new ResizeObserver(() => {
-    if (!ctx) return
+    if (!cells) return
     lastInput = performance.now() // and holds still, as after a key
     clearTimeout(settle)
     settle = setTimeout(() => { measure(); if (shown()) draw() }, SETTLE_MS)
@@ -185,16 +254,17 @@ export function startWallpaper(pane, { button, save, onClose }) {
       restyle() {
         thumbs = cards.map(({ thumb }) => {
           const { width, height } = thumb.getBoundingClientRect()
-          const ctx = fit(thumb, width, height, `${THUMB_PX}px ${look.family}`)
-          const w = ctx.measureText('M').width || THUMB_PX * 0.6
-          return { ctx, w, cols: Math.ceil(width / w), rows: Math.ceil(height / THUMB_PX) }
+          return { ...fit(thumb, width, height, THUMB_PX, look.family, look.colors), last: null, spare: null }
         })
         api.tick(performance.now() - started)
       },
       tick(ms) {
         cards.forEach(({ sid }, i) => {
-          const { ctx, w, cols, rows } = thumbs[i]
-          paint(ctx, render(sid, cols, rows, ms / 1000), w, THUMB_PX, look.colors)
+          const th = thumbs[i]
+          const g = render(sid, th.cols, th.rows, ms / 1000, th.spare)
+          paint(th.ctx, g, th.w, th.h, th.tiles, th.last)
+          th.spare = th.last
+          th.last = g
         })
       },
       close,

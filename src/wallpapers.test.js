@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { ROLES, SCENES, grid, hash, mirror, paint, put, render, stamp } from './wallpapers.js'
+import { ROLES, SCENES, differs, grid, hash, mirror, paint, put, render, stamp } from './wallpapers.js'
 
 const SIZES = [[0, 0], [1, 1], [3, 2], [9, 4], [40, 12], [100, 30], [320, 90]]
 const TIMES = [0, 0.1, 1.7, 33.3, 600, 86400.25]
@@ -101,13 +101,102 @@ test('hash is fixed, in [0, 1), and spread out', () => {
   assert.notEqual(hash(1, 2), hash(2, 1))
 })
 
-test('paint draws each painted cell once, at its cell, in its role color', () => {
+/** A canvas context that logs its calls, and an atlas that hands out a tile per character and role, 10 pixels
+ * apart, with `spill` pixels below each cell. */
+function recorder(spill = 0) {
   const calls = []
-  const ctx = { canvas: { width: 50, height: 20 }, clearRect: (...a) => calls.push(['clear', ...a]), fillText: (ch, x, y) => calls.push([ctx.fillStyle, ch, x, y]) }
+  const ctx = {
+    canvas: { width: 50, height: 20 },
+    clearRect: (...a) => calls.push(['clear', ...a]),
+    drawImage: (_, sx, sy, sw, sh, x, y) => calls.push([tiles.names[Math.floor(sy / 100)] + (sy % 100 ? '↓' : ''), x, y, sh]),
+  }
+  const tiles = {
+    canvas: {},
+    names: [],
+    spill,
+    at(ch, role) {
+      const name = `${role}:${ch}`
+      if (!tiles.names.includes(name)) tiles.names.push(name)
+      return [0, tiles.names.indexOf(name) * 100]
+    },
+  }
+  return { calls, ctx, tiles }
+}
+
+test('paint draws each painted cell once, at its cell, from its tile', () => {
+  const { calls, ctx, tiles } = recorder(3)
   const g = grid(5, 2)
   put(g, 0, 0, 'a', 'ink')
   put(g, 4, 1, 'b', 'warm')
   put(g, 2, 1, 'c', 'ink')
-  paint(ctx, g, 10, 10, { ink: 'gray', warm: 'red' })
-  assert.deepEqual(calls, [['clear', 0, 0, 50, 20], ['gray', 'a', 0, 0], ['gray', 'c', 20, 10], ['red', 'b', 40, 10]])
+  assert.equal(paint(ctx, g, 10, 10, tiles), 3)
+  assert.deepEqual(calls, [['clear', 0, 0, 50, 20], ['ink:a', 0, 0, 13], ['ink:c', 20, 10, 13], ['warm:b', 40, 10, 13]])
+})
+
+test('given the last frame, paint touches only the cells that changed', () => {
+  const { calls, ctx, tiles } = recorder()
+  const last = grid(5, 2)
+  put(last, 0, 0, 'a', 'ink')
+  put(last, 1, 0, 'b', 'ink')
+  put(last, 2, 0, 'c', 'ink')
+  const g = grid(5, 2)
+  put(g, 0, 0, 'a', 'ink') // the same
+  put(g, 1, 0, 'b', 'warm') // a new color
+  put(g, 3, 1, 'd', 'ink') // new; and c is gone
+  assert.equal(paint(ctx, g, 10, 10, tiles, last), 3)
+  assert.deepEqual(calls, [['clear', 10, 0, 10, 10], ['warm:b', 10, 0, 10], ['clear', 20, 0, 10, 10], ['clear', 30, 10, 10, 10], ['ink:d', 30, 10, 10]])
+  calls.length = 0
+  assert.equal(paint(ctx, g, 10, 10, tiles, g), 0)
+  assert.deepEqual(calls, [])
+  // A grid of another size is drawn whole.
+  assert.equal(paint(ctx, grid(4, 2), 10, 10, tiles, g), 0)
+  assert.deepEqual(calls, [['clear', 0, 0, 50, 20]])
+})
+
+test('a glyph that reaches into the cell below is redrawn there without drawing a pixel twice', () => {
+  const { calls, ctx, tiles } = recorder(3)
+  const last = grid(2, 2)
+  put(last, 0, 0, '_', 'ink')
+  put(last, 0, 1, 'x', 'ink')
+  put(last, 1, 0, 'y', 'ink')
+  const g = grid(2, 2)
+  put(g, 0, 0, '-', 'ink') // changed: the cell under it is redrawn too, for what _ left there
+  put(g, 0, 1, 'x', 'ink')
+  put(g, 1, 0, 'y', 'ink')
+  put(g, 1, 1, 'z', 'ink') // changed alone: what y reaches into it comes back
+  assert.equal(paint(ctx, g, 10, 10, tiles, last), 3)
+  assert.deepEqual(calls, [
+    ['clear', 0, 0, 10, 10], ['ink:-', 0, 0, 10],
+    ['clear', 0, 10, 10, 10], ['ink:x', 0, 10, 10], ['ink:-↓', 0, 10, 3],
+    ['clear', 10, 10, 10, 10], ['ink:z', 10, 10, 10], ['ink:y↓', 10, 10, 3],
+  ])
+})
+
+test('a reused grid comes back blank, and a frame drawn into one matches a fresh one', () => {
+  for (const { id } of SCENES) {
+    const reuse = render(id, 80, 30, 2)
+    const again = render(id, 80, 30, 5.5, reuse)
+    assert.equal(again, reuse)
+    assert.deepEqual(again, render(id, 80, 30, 5.5))
+  }
+  const g = grid(3, 1)
+  put(g, 1, 0, 'x', 'ink')
+  assert.equal(differs(g, grid(3, 1), 1), true)
+  assert.equal(differs(g, grid(3, 1), 0), false)
+  assert.notEqual(grid(4, 1, g), g)
+})
+
+test('from one frame to the next, a scene changes few of its cells', () => {
+  // The wallpaper redraws only changed cells, so a scene that churned every cell would cost what it used to.
+  for (const { id } of SCENES) {
+    let changed = 0, frames = 0
+    let last = render(id, 160, 50, 10)
+    for (let t = 10.1; t < 16; t += 0.1, frames++) {
+      const g = render(id, 160, 50, t)
+      for (let i = 0; i < g.chars.length; i++) if (differs(g, last, i)) changed++
+      last = g
+    }
+    const share = changed / frames / (160 * 50)
+    assert.ok(share < 0.06, `${id} changes ${(share * 100).toFixed(1)}% of its cells a frame`)
+  }
 })
