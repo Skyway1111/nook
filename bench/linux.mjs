@@ -249,29 +249,30 @@ async function tuiSession(app) {
   xdotool('windowfocus', '--sync', win)
   xdotool('mousemove', '--window', win, String(W / 2), String(H / 2))
   await sleep(300)
-  // Keys echo into the composer's draft, timed on the screen: the page's own clock reads a frame as shown
-  // before WebKit hands it to the window, and how long that takes is part of what the composer costs.
+  const typing = await load(app.child.pid, 10000, async () => {
+    for (let k = 0; k < 100; k++) {
+      xdotool('key', k % 10 === 9 ? 'Return' : 'a')
+      await sleep(100)
+    }
+  })
+  await sleep(300)
+  // Then 100 more keys, each timed on the screen until the composer's draft changes: the page's own clock reads
+  // a frame as shown before WebKit hands it to the window, and how long that takes depends on the page.
+  // Watching the screen costs nook CPU of its own, so the typing above runs without it.
   const from = app.lines.length
   xdotool('key', 'F8')
   // A build from before F8 never answers, and its echo goes untimed.
   const [x, y, w, h] = await app.next('draft', 2000, from).then(l => l.event.slice(6).split(',').map(Number), () => [])
-  const at = Object.fromEntries(xdotool('getwindowgeometry', '--shell', win).split('\n').map(l => l.split('=')))
   let keys = []
-  const typing = await load(app.child.pid, 10000, async () => {
-    if (!(w > 0 && h > 0)) { // no composer: type all the same, untimed
-      for (let k = 0; k < 100; k++) {
-        xdotool('key', k % 10 === 9 ? 'Return' : 'a')
-        await sleep(100)
-      }
-      return
-    }
+  if (w > 0 && h > 0) {
+    const at = Object.fromEntries(xdotool('getwindowgeometry', '--shell', win).split('\n').map(l => l.split('=')))
     const args = [new URL('pixels.py', import.meta.url).pathname, x + Number(at.X), y + Number(at.Y), w, h, 100]
     const helper = spawn('python3', args.map(String), { env, stdio: ['ignore', 'pipe', 'inherit'] })
     let out = ''
     helper.stdout.on('data', d => (out += d))
     await new Promise(r => helper.on('exit', r))
     keys = out.trim() ? JSON.parse(out) : []
-  })
+  }
   await sleep(300)
   const { resize, resizeP95 } = await resizes(app, win, 40, 'resize')
   return { tuiKey: median(keys), tuiKeyP95: quantile(keys, 0.95), tuiTyping: typing, tuiResize: resize, tuiResizeP95: resizeP95 }
