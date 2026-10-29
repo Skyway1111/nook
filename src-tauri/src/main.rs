@@ -420,6 +420,7 @@ fn main() {
             shell::rename_path,
             shell::copy_files,
             shell::can_paste,
+            shell::copied_paths,
             shell::paste_files,
             git::git,
             git::git_status,

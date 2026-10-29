@@ -51,7 +51,7 @@ The mod also ships a Claude theme, `themes/nook.json`, which `/theme` lists as n
 ## Data flow
 A keystroke goes from xterm's `onData` through its tab's ordered queue into ConPTY, then to the shell or `claude`. Output comes back through the reader thread and the `Channel`, past `pictures.js`, into `term.write`.
 
-Ctrl+V with an image and no text on the clipboard sends Alt+V (`ESC v`), and Claude Code reads the clipboard itself. Claude saves the image to its temp folder, which nook's mod reports. Hovering `[Image #N]` asks `session_image` for that file and shows it through Tauri's asset protocol.
+Ctrl+V with no text on the clipboard pastes the paths of copied files: those Explorer's Copy or Cut put there, which `copied_paths` reads, on Linux those nook's file browser copied, or a file manager's `text/uri-list`. Claude attaches any picture among them. With no files, an image on the clipboard sends Alt+V (`ESC v`), and Claude Code reads the clipboard itself. Claude saves the image to its temp folder, which nook's mod reports. Hovering `[Image #N]` asks `session_image` for that file and shows it through Tauri's asset protocol.
 
 GitHub sign-in belongs to Git Credential Manager, which ships with Git for Windows. The settings drawer runs `git credential-manager github login`. GCM keeps the token and hands it to git for push and fetch, and nook sees only the account name.
 
