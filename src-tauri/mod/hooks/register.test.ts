@@ -450,3 +450,16 @@ test('an HTML page Claude writes shows as a preview under the call, in a tab noo
     await ui.unmount()
   }
 })
+
+test('a picture Claude read shows under its folded line too, and a file of text does not', async ($, on) => {
+  on('session.root', () => ({ value: '/work' }))
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'Read 3 files' }))
+  const read = (id: string, file_path: string, output: object, more = {}) => ({ tool_use_id: id, tool: 'Read', input: { file_path }, output, isRunning: false, isErrored: false, isInterrupted: false, ...more })
+  const image = { type: 'image', file: { dimensions: { originalWidth: 400, originalHeight: 200 } } }
+  const calls = [read('a', '/work/notes.md', { type: 'text', file: { content: 'hi' } }), read('b', '/work/plot.png', image), read('c', '/work/late.png', image, { isRunning: true })]
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'ToolGroup', requestId: 'pics', props: { calls, isActive: false, isExpanded: false } })
+  const images = await ui.findAll({ type: 'Image' })
+  expect(images.map(i => i.props.source.file)).toEqual(['/work/plot.png'])
+  expect(images[0].props).toMatchObject({ columns: 40, rows: 10 })
+  await ui.unmount()
+})
