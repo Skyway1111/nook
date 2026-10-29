@@ -6,6 +6,7 @@ import { invoke, Channel } from '@tauri-apps/api/core'
 import { showPreview, hidePreview } from './ui.js'
 import { startComposer } from './composer.js'
 import { startPictures } from './pictures.js'
+import { imageStart, FOUND, NONE } from './sequences.js'
 import { startLinks } from './links.js'
 import { fileUrl } from './linkify.js'
 import { ANSI, CLAUDE_SLOTS, slotVar, bytes } from './palette.js'
@@ -112,6 +113,8 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     // On Windows 11, ConPTY reflows on resize (build >= 21376). A Linux PTY leaves reflow to xterm.
     ...(WINDOWS && { windowsPty: { backend: 'conpty', buildNumber: 22000 } }),
     linkHandler: { activate: (_, uri) => link(uri) }, // OSC 8 hyperlinks
+    // Picture tools ask the cell and window size in pixels, CSI 16 t and CSI 14 t, to size what they draw.
+    windowOptions: { getCellSizePixels: true, getWinSizePixels: true },
   })
   /** An OSC 8 link: a file opens in nook, a web page in the browser, and nothing else goes anywhere. */
   function link(uri) {
@@ -145,7 +148,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   }
   const first = fits()
   if (first) term.resize(first.cols, first.rows)
-  const pictures = startPictures(term, host.querySelector('.xterm-screen'))
+  const pictures = startPictures(term, host.querySelector('.xterm-screen'), reply => send(reply))
   keepSameRows(host.querySelector('.xterm-rows'), pictures.hide)
 
   // Claude redraws its whole screen within a frame or two of each resize: ESC [ 2 J, then every row, and
@@ -159,10 +162,53 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   let hold = null // the resize waiting for Claude's redraw: { sent, until, redrawn, timer }
   let again = false // whether the host resized while a frame was held
   const output = new Channel()
+  // Sixel and iTerm2 pictures take xterm's image addon, loaded the first time output holds one. Output that
+  // arrives meanwhile waits behind it, in order.
+  let images = null // the addon's load
+  let waiting = null // chunks that arrived while it loads; null for the shell's exit
+  let closed = false
+  let carry = null // the end of the last chunk, where it may start a picture
   // An empty chunk means the shell exited.
   output.onmessage = buf => {
-    if (!buf.byteLength) return onExit()
-    const bytes = new Uint8Array(buf)
+    let bytes = buf.byteLength ? new Uint8Array(buf) : null
+    if (waiting) return void waiting.push(bytes)
+    if (!bytes) return onExit()
+    if (!images) {
+      if (carry) {
+        const joined = new Uint8Array(carry.length + bytes.length)
+        joined.set(carry)
+        joined.set(bytes, carry.length)
+        bytes = joined
+      }
+      carry = null
+      const at = imageStart(bytes)
+      if (at === FOUND) {
+        waiting = [bytes]
+        images = import('@xterm/addon-image')
+          .then(({ ImageAddon }) => closed || loadImages(new ImageAddon({ storageLimit: 32, showPlaceholder: false })))
+          .catch(reportError)
+          .finally(() => {
+            const chunks = waiting
+            waiting = null
+            for (const b of chunks) if (!closed) (b ? take(b) : onExit())
+          })
+        return
+      }
+      if (at !== NONE) {
+        carry = bytes.slice(at)
+        bytes = bytes.subarray(0, at)
+        if (!bytes.length) return
+      }
+    }
+    take(bytes)
+  }
+  /** Loads the image addon, once its sixel decoder, which compiles in the background, is ready. */
+  async function loadImages(addon) {
+    term.loadAddon(addon)
+    const sixel = addon._handlers?.get('sixel')
+    for (let i = 0; sixel && !sixel._dec && i < 50; i++) await new Promise(r => setTimeout(r, 10))
+  }
+  function take(bytes) {
     pictures.read(bytes)
     term.write(bytes)
     if (!hold?.sent || !(hold.redrawn ||= clears(bytes))) return
@@ -275,6 +321,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     submit: () => send('\r'),
     focus: () => term.focus(),
     close: () => {
+      closed = true
       clearTimeout(hold?.timer)
       composer.close()
       links.dispose()
