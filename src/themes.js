@@ -11,7 +11,7 @@ const NOOK = 'custom:nook:nook'
 const label = name => name.replace(/[-_]+/g, ' ').replace(/(^|\s)\p{L}/gu, c => c.toUpperCase())
 
 /** `save` patches settings.json, and `reread` applies the theme it names. */
-export function startThemes({ configDir, home, settings, save, reread }) {
+export function startThemes({ configDir, home, settings, save, reread, showTheme }) {
   const dir = paths.join(configDir, 'themes')
   const gallery = $('settings-themes')
   const follow = $('settings-follow')
@@ -25,8 +25,13 @@ export function startThemes({ configDir, home, settings, save, reread }) {
   const launched = Date.now()
   const installs = new Map() // name -> installs since launch
 
+  // Resting on a card for a moment previews its theme; passing over cards on the way elsewhere doesn't.
+  let hover
+  const peek = name => { clearTimeout(hover); hover = setTimeout(() => showTheme(name), 150) }
+  const unpeek = () => { clearTimeout(hover); showTheme(undefined) }
   function card(name, src) {
     const div = el('div', { className: 'theme', title: name ?? "nook's own", onclick: () => use(name).catch(say) })
+    div.onmouseenter = () => peek(name)
     div.dataset.name = name ?? ''
     const img = el('img', { src, alt: '' })
     img.onerror = () => img.replaceWith(el('div', { className: 'blank' }))
@@ -47,6 +52,8 @@ export function startThemes({ configDir, home, settings, save, reread }) {
     const paint = el('button', { className: 'theme add', title: "Make a theme from a picture, in the picture's own colors", onclick: () => pictures.click() })
     paint.innerHTML = '<i class="icon">&#xEB9F;</i><span>From a picture…</span>'
     gallery.replaceChildren(...themes.map(([name, src]) => card(name, src)), add, paint)
+    gallery.onmouseleave = unpeek
+    add.onmouseenter = paint.onmouseenter = unpeek
     mark(active)
     follow.checked = (await claudeTheme()) === NOOK
   }
@@ -184,5 +191,5 @@ export function startThemes({ configDir, home, settings, save, reread }) {
     return [[null, preview], ...names.map(n => [n, `${convertFileSrc(paths.join(dir, n, 'screenshot.png'))}?v=${launched}.${installs.get(n) ?? 0}`])]
   }
 
-  return { show, mark, install, list, use, label, active: () => active, fromPicture: () => pictures.click(), watch: f => watchers.add(f) }
+  return { show, mark, install, list, use, label, peek, unpeek, active: () => active, fromPicture: () => pictures.click(), watch: f => watchers.add(f) }
 }

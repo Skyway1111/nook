@@ -13,14 +13,15 @@ const TIPS = [
 /** Shows the welcome over `pane`. `themes` is the settings drawer's; `wallpapers` opens the wallpaper picker. */
 export async function showWelcome(pane, { themes, wallpapers, onClose }) {
   const box = el('div', { id: 'welcome', role: 'dialog', ariaLabel: 'Welcome to nook' })
-  const close = () => { box.remove(); removeEventListener('keydown', key, true); onClose() }
+  const close = () => { themes.unpeek(); box.remove(); removeEventListener('keydown', key, true); onClose() }
   const key = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() } }
 
-  const looks = el('div', { className: 'themes' })
+  const looks = el('div', { className: 'themes', onmouseleave: themes.unpeek })
   async function showLooks() {
     const cards = (await themes.list()).map(([name, src]) => {
       const card = el('button', { className: 'theme', title: name ?? "nook's own", onclick: () => themes.use(name).then(() => mark(name)) })
       card.dataset.name = name ?? ''
+      card.onmouseenter = () => themes.peek(name)
       const img = el('img', { src, alt: '' })
       img.onerror = () => img.replaceWith(el('div', { className: 'blank' }))
       card.append(img, el('span', { textContent: name ? themes.label(name) : 'nook' }))
@@ -28,6 +29,7 @@ export async function showWelcome(pane, { themes, wallpapers, onClose }) {
     })
     const paint = el('button', { className: 'theme add', title: "A theme in a picture's own colors", onclick: themes.fromPicture })
     paint.innerHTML = '<i class="icon">&#xEB9F;</i><span>From a picture…</span>'
+    paint.onmouseenter = themes.unpeek
     looks.replaceChildren(...cards, paint)
     mark(themes.active())
   }

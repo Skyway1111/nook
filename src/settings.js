@@ -107,6 +107,7 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
     const key = JSON.stringify(theme)
     if (key === shown) return
     shown = key
+    previewing = undefined
     pack.textContent = theme.pack == null ? '' : files(theme.pack, paths.join(configDir, 'themes', theme.name), theme.stamp)
     style.textContent = files(theme.css ?? '', configDir, theme.stamp)
     onRestyle()
@@ -122,7 +123,21 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
     apply({ ...read, css: (box ? null : read.css) ?? theme.css })
     box?.refresh()
   }
-  const themes = startThemes({ configDir, home, settings, save, reread })
+  // A theme under the pointer shows in place of the one in use, over the user's own CSS as a pick would,
+  // until the pointer leaves. undefined puts the theme in use back.
+  let previewing
+  async function preview(name) {
+    if (name === previewing) return
+    previewing = name
+    const dir = name && paths.join(configDir, 'themes', name)
+    const css = name ? await invoke('read_text', { path: paths.join(dir, 'theme.css') }).catch(() => null) : ''
+    if (previewing !== name || css == null) return
+    pack.textContent = name === undefined
+      ? (theme.pack == null ? '' : files(theme.pack, paths.join(configDir, 'themes', theme.name), theme.stamp))
+      : css && files(css, dir, theme.stamp)
+    onRestyle()
+  }
+  const themes = startThemes({ configDir, home, settings, save, reread, showTheme: preview })
   await reread()
   setInterval(reread, 1000)
 
@@ -180,6 +195,7 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
     showGithub()
   }
   function close() {
+    themes.unpeek()
     drawer.hidden = true
     onClose()
   }
