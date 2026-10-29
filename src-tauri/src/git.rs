@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap},
     ffi::OsStr,
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
     sync::Mutex,
     thread,
@@ -48,7 +48,18 @@ pub struct Status {
     subject: String,
     /// What git is in the middle of: merge, rebase, cherry-pick, revert, or am.
     operation: Option<&'static str>,
+    /// Stashed changes, newest first.
+    stashes: Vec<Stash>,
     changes: Vec<Change>,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+struct Stash {
+    oid: String,
+    /// As `git stash list` words it: "WIP on main: 1a2b3c4 Subject", or "On main: " and the name given.
+    message: String,
+    /// Seconds since 1970.
+    time: u64,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -101,22 +112,29 @@ pub async fn git_status(path: String) -> Result<Option<Status>, String> {
         if let Some(oid) = &s.oid {
             s.subject = subject(root, oid);
         }
-        s.operation = operation(root);
+        let dir = git_dir(root);
+        s.operation = operation(&dir);
+        // A worktree's git folder names the one it shares stashes with.
+        let common = std::fs::read_to_string(dir.join("commondir")).map_or(dir.clone(), |c| dir.join(c.trim()));
+        s.stashes = std::fs::read_to_string(common.join("logs/refs/stash")).map(|log| parse_stashes(&log)).unwrap_or_default();
         Ok(Some(s))
     })
     .await
     .map_err(err)?
 }
 
-/// What git is in the middle of in the repository at `root`, from the files it keeps in its git folder
-/// meanwhile: a few file checks, no process.
-fn operation(root: &Path) -> Option<&'static str> {
+/// The git folder of the repository at `root`. In a worktree or submodule, `.git` is a file that names it.
+fn git_dir(root: &Path) -> PathBuf {
     let dot = root.join(".git");
-    // In a worktree or submodule, `.git` is a file that names the git folder.
-    let dir = match std::fs::read_to_string(&dot) {
-        Ok(file) => root.join(file.strip_prefix("gitdir:")?.trim()),
+    match std::fs::read_to_string(&dot) {
+        Ok(file) => file.strip_prefix("gitdir:").map_or(dot, |dir| root.join(dir.trim())),
         Err(_) => dot,
-    };
+    }
+}
+
+/// What git is in the middle of, from the files it keeps in its git folder `dir` meanwhile: a few file
+/// checks, no process.
+fn operation(dir: &Path) -> Option<&'static str> {
     let has = |name: &str| dir.join(name).exists();
     if has("rebase-merge") {
         Some("rebase")
@@ -131,6 +149,21 @@ fn operation(root: &Path) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// The stash's reflog, oldest first, as stashes newest first. Each line is the old and new id, who and
+/// when, a tab, and the message.
+fn parse_stashes(log: &str) -> Vec<Stash> {
+    log.lines()
+        .rev()
+        .filter_map(|line| {
+            let (head, message) = line.split_once('\t')?;
+            let oid = head.split(' ').nth(1)?.to_string();
+            // `name <email> time zone`: the time is the next-to-last field.
+            let time = head.rsplit(' ').nth(1)?.parse().ok()?;
+            Some(Stash { oid, message: message.into(), time })
+        })
+        .collect()
 }
 
 /// Commit subjects by id. A commit never changes, so an entry never goes stale.
@@ -380,21 +413,35 @@ mod tests {
         assert!(git(&["commit", "-q", "-m", "x"], None).is_err()); // nothing staged
 
         // A merge that conflicts, then carries on once settled, with the message git wrote.
-        assert_eq!(operation(&dir), None);
+        assert_eq!(operation(&git_dir(&dir)), None);
         git(&[&id[..], &["commit", "-qam", "Spanish"]].concat(), None).unwrap();
         git(&["switch", "-qc", "french", "HEAD~1"], None).unwrap();
         std::fs::write(dir.join("a b.txt"), "un\n").unwrap();
         git(&[&id[..], &["commit", "-qam", "French"]].concat(), None).unwrap();
         git(&["switch", "-q", "main"], None).unwrap();
         assert!(git(&[&id[..], &["merge", "french"]].concat(), None).is_err());
-        assert_eq!(operation(&dir), Some("merge"));
+        assert_eq!(operation(&git_dir(&dir)), Some("merge"));
         let s = parse_status(&read(&["status", "--porcelain=v2", "-z", "--branch"]), "");
         assert_eq!(s.changes, [change("a b.txt", 'U', Staged::Off, 0, 0)]);
         std::fs::write(dir.join("a b.txt"), "uno, un\n").unwrap();
         git(&["add", "a b.txt"], None).unwrap();
         git(&[&id[..], &["commit", "--no-edit"]].concat(), None).unwrap();
-        assert_eq!(operation(&dir), None);
+        assert_eq!(operation(&git_dir(&dir)), None);
         assert_eq!(subject(&dir, read(&["rev-parse", "HEAD"]).trim()), "Merge branch 'french'");
+
+        // Stashes, newest first, as `git stash list` has them.
+        let stashes = || parse_stashes(&std::fs::read_to_string(git_dir(&dir).join("logs/refs/stash")).unwrap_or_default());
+        assert_eq!(stashes(), []);
+        std::fs::write(dir.join("a b.txt"), "dos\n").unwrap();
+        git(&[&id[..], &["stash", "push", "-q"]].concat(), None).unwrap();
+        std::fs::write(dir.join("a b.txt"), "tres\n").unwrap();
+        git(&[&id[..], &["stash", "push", "-q", "-m", "Three"]].concat(), None).unwrap();
+        let list = stashes();
+        let messages: Vec<&str> = list.iter().map(|s| s.message.as_str()).collect();
+        assert_eq!(messages[0], "On main: Three");
+        assert!(messages[1].starts_with("WIP on main: "), "{}", messages[1]);
+        assert_eq!(list[0].oid, read(&["rev-parse", "stash@{0}"]).trim());
+        assert!(list[0].time > 1_700_000_000);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

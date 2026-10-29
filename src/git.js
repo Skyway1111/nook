@@ -42,6 +42,18 @@ const abs = (root, rel) => paths.fromSlashes(root, rel)
 /** A path under `root` as a git path. */
 const relative = (root, path) => path.slice(root.length).replace(/^[\\/]/, '').replaceAll(paths.SEP, '/')
 
+/** A stash's branch, and its name or the commit it was made on: "WIP on main: 1a2b3c4 Fix" is main and Fix. */
+function stashText(stash) {
+  const m = /^(?:WIP on|On) ([^:]*): (?:[0-9a-f]{7,} )?(.*)$/.exec(stash.message)
+  return m ? [m[1], m[2]] : ['', stash.message]
+}
+
+/** How long ago `seconds` was, in a few letters. */
+function ago(seconds) {
+  const s = Date.now() / 1000 - seconds
+  return s < 60 ? 'now' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`
+}
+
 export function startGit({ openView, openFile, insertPath }) {
   let want = null // the active tab's path
   let s = null // the repository on screen, or null outside one
@@ -105,6 +117,7 @@ export function startGit({ openView, openFile, insertPath }) {
     const removed = changes.reduce((sum, c) => sum + c.removed, 0)
     $('git-diff').disabled = !n
     $('git-diff').lastChild.innerHTML = added || removed ? `<b class="add">+${added}</b> <b class="del">−${removed}</b>` : ''
+    $('git-stash').hidden = !n || !!s.operation // git can't stash in the middle of a merge or rebase
     Object.assign($('git-stage-all'), { hidden: !n, textContent: changes.some(c => c.staged !== 'on') ? 'Stage all' : 'Unstage all' })
 
     rows.clear()
@@ -114,6 +127,14 @@ export function startGit({ openView, openFile, insertPath }) {
       return [header(name, group), ...(collapsed.has(name) ? [] : group.map(row))]
     })
     if (!items.length) items.push(el('li', { className: 'empty', textContent: 'No changes' }))
+    if (s.stashes.length) {
+      const head = el('li', { className: collapsed.has('Stashes') ? 'group stashes collapsed' : 'group stashes' })
+      head.dataset.group = 'Stashes'
+      head.innerHTML = '<i class="icon chevron">\ue70d</i><span></span><span class="count"></span>'
+      head.children[1].textContent = 'Stashes'
+      head.children[2].textContent = s.stashes.length
+      items.push(head, ...(collapsed.has('Stashes') ? [] : s.stashes.map(stashRow)))
+    }
     list.replaceChildren(...items)
 
     const op = OPERATION[s.operation]
@@ -157,6 +178,17 @@ export function startGit({ openView, openFile, insertPath }) {
     const states = new Set(group.map(c => c.staged))
     li.innerHTML = `<i class="icon chevron"></i><span></span><i class="check" data-state="${states.size > 1 ? 'mixed' : [...states][0]}"></i>`
     li.children[1].textContent = name
+    return li
+  }
+
+  function stashRow(stash, n) {
+    const li = el('li', { className: 'change stash', title: `stash@{${n}} \u00b7 ${stash.message}` })
+    li.dataset.stash = n
+    const [where, what] = stashText(stash)
+    li.innerHTML = `<i class="st stashed"></i><span class="name"></span><span class="dir"></span><span class="count"></span>`
+    li.children[1].textContent = what
+    li.children[2].textContent = where === s.branch ? '' : where // only a stash made on another branch says which
+    li.children[3].textContent = ago(stash.time)
     return li
   }
 
@@ -225,6 +257,49 @@ export function startGit({ openView, openFile, insertPath }) {
     })
   }
 
+  /** The repository's stash tab, showing `stash`: what it holds, and buttons to apply, pop, or drop it. */
+  function openStash(status, n) {
+    const { root } = status
+    const stash = status.stashes[n]
+    const run = args => act(args, undefined, root).then(ok => ok || said)
+    const tab = openView('stash', `${basename(root)} stash`, root, view => {
+      // Its head is styled like a commit's in a history tab.
+      const diff = Promise.all([import('./diff.js'), import('./history.css')]).then(([m]) => m.startDiff(view, { root, rel: '', openFile, commit: null }))
+      return { refresh: () => diff.then(d => d.refresh()), show: next => diff.then(d => d.show(next)) }
+    })
+    const [where, what] = stashText(stash)
+    const head = el('header', { className: 'commit-head' })
+    const error = el('p', { className: 'error', hidden: true })
+    const tools = el('div', { className: 'ids' })
+    // Its place in the list may have moved since it was drawn: act on the stash by its id.
+    const use = async args => {
+      const now = (s?.root === root ? s : status).stashes.findIndex(x => x.oid === stash.oid)
+      if (now < 0) return Object.assign(error, { hidden: false, textContent: 'This stash is gone.' })
+      const r = await run([...args, `stash@{${now}}`])
+      Object.assign(error, { hidden: r === true, textContent: r === true ? '' : r })
+      if (r === true && args[1] !== 'apply') tools.replaceChildren(el('span', { className: 'meta', textContent: args[1] === 'pop' ? 'Applied and dropped' : 'Dropped' }))
+    }
+    tools.append(
+      el('button', { className: 'pill', textContent: 'Apply', title: 'Put these changes back, and keep the stash', onclick: () => use(['stash', 'apply']) }),
+      el('button', { className: 'pill', textContent: 'Pop', title: 'Put these changes back, and drop the stash', onclick: () => use(['stash', 'pop']) }),
+      el('button', { className: 'pill danger', textContent: 'Drop', onclick: e => openMenu(e, [['Drop this stash for good', ICON.delete, () => use(['stash', 'drop'])]]) }),
+    )
+    head.append(
+      el('h1', { textContent: what }),
+      el('div', { className: 'who', textContent: `Stashed on ${where || 'a detached HEAD'} \u00b7 ${new Date(stash.time * 1000).toLocaleString()}` }),
+      tools,
+      error,
+    )
+    tab.viewer.show({ oid: stash.oid, intro: [head] })
+    // Untracked files stashed with -u live in a third parent, which the diff doesn't show: name them.
+    invoke('git', { dir: root, args: ['ls-tree', '-r', '--name-only', `${stash.oid}^3`, '--'] }).then(out => {
+      const files = out.split('\n').filter(Boolean)
+      if (!files.length) return
+      const shown = files.slice(0, 5).join(', ') + (files.length > 5 ? `, and ${files.length - 5} more` : '')
+      head.insertBefore(el('p', { className: 'meta', textContent: `Also holds ${files.length} untracked file${files.length > 1 ? 's' : ''}: ${shown}` }), tools)
+    }, () => {}) // none stashed
+  }
+
   /** A history tab of `rel` in the repository `status` describes ('' is all of it), at the commit `oid` if given. */
   function openHistory(status, rel, oid) {
     const { root } = status
@@ -244,6 +319,11 @@ export function startGit({ openView, openFile, insertPath }) {
   list.addEventListener('click', e => {
     const li = e.target.closest('li')
     if (!s || !li || li.classList.contains('empty')) return
+    if (li.dataset.stash) return openStash(s, +li.dataset.stash)
+    if (li.dataset.group === 'Stashes') {
+      if (!collapsed.delete('Stashes')) collapsed.add('Stashes')
+      return render()
+    }
     const { group, path } = li.dataset
     const test = group ? GROUPS.find(([name]) => name === group)[1] : c => c.path === path
     const box = e.target.closest('.check')
@@ -260,6 +340,15 @@ export function startGit({ openView, openFile, insertPath }) {
   list.addEventListener('contextmenu', e => {
     const li = e.target.closest('li.change')
     if (!li) return
+    if (li.dataset.stash) {
+      const n = li.dataset.stash
+      return openMenu(e, [
+        ['Apply', ICON.paste, () => act(['stash', 'apply', `stash@{${n}}`])],
+        ['Pop', ICON.paste, () => act(['stash', 'pop', `stash@{${n}}`])],
+        null,
+        ['Drop', ICON.delete, () => act(['stash', 'drop', `stash@{${n}}`])],
+      ])
+    }
     const c = s.changes.find(c => c.path === li.dataset.path)
     const path = abs(s.root, c.path)
     const openable = c.kind !== 'D' && !c.path.endsWith('/')
@@ -271,7 +360,7 @@ export function startGit({ openView, openFile, insertPath }) {
   })
   list.addEventListener('pointerdown', e => {
     const li = e.target.closest('li.change')
-    if (!li || e.button !== 0 || e.target.closest('.check')) return
+    if (!li || li.dataset.stash || e.button !== 0 || e.target.closest('.check')) return
     const path = abs(s.root, li.dataset.path)
     dragPath(e, path, target => target?.closest('#pane') && insertPath(path))
   })
@@ -280,6 +369,19 @@ export function startGit({ openView, openFile, insertPath }) {
   $('git-continue').onclick = () => act(OPERATION[s.operation][1])
   $('git-abort').onclick = e =>
     openMenu(e, [[`Abort and undo the ${s.operation === 'am' ? 'patches' : s.operation}`, ICON.delete, () => act(OPERATION[s.operation][2])]])
+  // Named in the picker, or not: git names it after the last commit.
+  $('git-stash').onclick = e => {
+    const staged = s.changes.some(c => c.staged !== 'off')
+    const untracked = s.changes.some(c => c.kind === '?')
+    openPicker(e, 'Name the stash, or leave it blank', query => {
+      const name = query.trim() ? ['-m', query.trim()] : []
+      return [
+        [untracked ? 'Stash every change, untracked files too' : 'Stash every change', ICON.save, () => act(['stash', 'push', '-q', ...(untracked ? ['-u'] : []), ...name])],
+        ...(untracked ? [['Stash tracked changes', ICON.save, () => act(['stash', 'push', '-q', ...name])]] : []),
+        ...(staged ? [['Stash staged changes', ICON.save, () => act(['stash', 'push', '-q', '--staged', ...name])]] : []),
+      ]
+    })
+  }
   $('git-stage-all').onclick = () => stage(s.changes, s.changes.some(c => c.staged !== 'on'))
 
   $('git-branch').onclick = async e => {
