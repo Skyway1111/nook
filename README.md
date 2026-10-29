@@ -85,6 +85,8 @@ npm test         # the frontend's tests: the wallpapers' scenes and both systems
 cd src-tauri; cargo test
 ```
 
+On Linux, `node bench/linux.mjs --bin <nook> --wallpapers none,koi` measures a release build's open time, resize time, CPU, and memory. Run it on two builds to compare them. It needs Xvfb and xdotool.
+
 Before a build you publish, run `$env:RUSTFLAGS = "--remap-path-prefix=$env:USERPROFILE=~"`. Without it, `nook.exe` holds your home folder's path in each of its dependencies' source paths.
 
 If a debug nook is open, close it before you rebuild. The build copies `conpty.dll` and `OpenConsole.exe` over the files the running nook holds open, and fails with os error 32.

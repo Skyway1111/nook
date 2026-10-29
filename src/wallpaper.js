@@ -7,8 +7,9 @@ import { bytes } from './palette.js'
 import { el } from './ui.js'
 
 const FRAME_MS = 100 // ten frames a second. Characters step from cell to cell, so more frames would only cost.
-const REST_MS = 600 // after a key, the wallpaper holds still this long, so a keystroke's repaint never waits on a frame
+const REST_MS = 600 // after a key or a resize, the wallpaper holds still this long, so their repaints never wait on a frame
 const THUMB_PX = 4 // the picker's thumbnails draw their cells this many pixels high
+const SETTLE_MS = 100 // while the pane resizes, the last bitmap stretches; it redraws at the new size once this long passes without one, as backdrops.js does
 const still = matchMedia('(prefers-reduced-motion: reduce)')
 
 /** Sizes `canvas` to its CSS box at the screen's pixel density. Returns its context, set to draw in CSS pixels. */
@@ -33,7 +34,7 @@ export function startWallpaper(pane, { button, save, onClose }) {
   let showing = true // false while a file tab is in front
   let focused = document.hasFocus() // the wallpaper moves only while nook's window has focus
   let ctx, cell, cols = 0, rows = 0
-  let lastKey = -Infinity, lastFrame = -Infinity, raf = 0
+  let lastInput = -Infinity, lastFrame = -Infinity, raf = 0
   let picker = null // the open picker's { focus, restyle, tick, close }
 
   const id = () => previewing ?? look.id
@@ -41,6 +42,12 @@ export function startWallpaper(pane, { button, save, onClose }) {
   const live = () => shown() && focused && !document.hidden
 
   function measure() {
+    if (!shown()) {
+      // A hidden canvas keeps no bitmap the size of the pane.
+      canvas.width = canvas.height = 1
+      ctx = null
+      return
+    }
     const { width, height } = pane.getBoundingClientRect()
     ctx = fit(canvas, width, height, `${look.size}px ${look.family}`)
     cell = { w: ctx.measureText('M').width || look.size * 0.6, h: Math.ceil(look.size) }
@@ -57,7 +64,7 @@ export function startWallpaper(pane, { button, save, onClose }) {
   function frame(now) {
     raf = 0
     if (!live() && !picker) return
-    if (now - lastFrame >= FRAME_MS && now - lastKey >= REST_MS) {
+    if (now - lastFrame >= FRAME_MS && now - lastInput >= REST_MS) {
       if (live()) draw(now)
       else lastFrame = now
       picker?.tick(now - started)
@@ -68,6 +75,7 @@ export function startWallpaper(pane, { button, save, onClose }) {
   /** Shows or hides the canvas for what's in front, and runs the loop while anything moves. */
   function update() {
     canvas.hidden = !shown()
+    if (shown() !== !!ctx) measure()
     if (shown()) draw()
     if ((live() || picker) && !raf) raf = requestAnimationFrame(frame)
   }
@@ -92,8 +100,14 @@ export function startWallpaper(pane, { button, save, onClose }) {
     picker?.restyle()
   }
 
-  new ResizeObserver(() => { measure(); if (shown()) draw() }).observe(pane)
-  addEventListener('keydown', () => { if (!picker) lastKey = performance.now() }, true)
+  let settle = 0
+  new ResizeObserver(() => {
+    if (!ctx) return
+    lastInput = performance.now() // and holds still, as after a key
+    clearTimeout(settle)
+    settle = setTimeout(() => { measure(); if (shown()) draw() }, SETTLE_MS)
+  }).observe(pane)
+  addEventListener('keydown', () => { if (!picker) lastInput = performance.now() }, true)
   document.addEventListener('visibilitychange', update)
   addEventListener('focus', () => { focused = true; update() })
   addEventListener('blur', () => { focused = false; update() })
