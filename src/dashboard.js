@@ -4,7 +4,8 @@
 // permission for, and compact a session filling up.
 // The header names the account's rate limits. It draws only while open, and then redraws when a report changes
 // and once a second for the clocks, so a closed dashboard costs nothing. Its prompt box sends one prompt to
-// every ticked session at once, which starts ticked when it sits between turns.
+// every ticked session at once, which starts ticked when it sits between turns, or starts it in several new
+// sessions, each in a git worktree of its own.
 import { el } from './ui.js'
 import { ago, modelName, summary, cannotSend, pickedAtFirst, asking, planLine, fill, FULL, money, limits } from './sessions.js'
 
@@ -15,7 +16,7 @@ const WORDS = { working: 'Working', waiting: 'Waiting on you', done: 'Done', '':
 /** `list()` gives `[{ tab, view, report }]` for every Claude tab, `open(tab)` shows one, `newSession()`
  * starts another, `send(tab, text)` sends one a prompt, and `review(session)` opens all it changed. `button` toggles the dashboard; `onClose` hears
  * it close. */
-export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, answer, onClose }) {
+export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, answer, fanOut, onClose }) {
   let box = null
   let timer = 0
   let at = 0 // the card the arrow keys are on
@@ -129,6 +130,9 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     const go = box.querySelector('.send .go')
     go.textContent = n ? `Send to ${n}` : 'Send'
     go.disabled = !n || !box.querySelector('.send textarea').value.trim()
+    const start = box.querySelector('.send .start')
+    start.textContent = `Start ${fans()} new`
+    start.disabled = !box.querySelector('.send textarea').value.trim()
   }
 
   function tick(i) {
@@ -154,6 +158,19 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     say(`Compacting ${tab.name}`)
   }
 
+  /** How many new sessions the fan-out starts, 1 to 8. */
+  const fans = () => Math.min(8, Math.max(1, Math.round(Number(box.querySelector('.send .fan input').value) || 1)))
+
+  /** Starts new sessions on the prompt, each in a worktree of its own. */
+  function fan() {
+    const area = box.querySelector('.send textarea')
+    const text = area.value.trim()
+    if (!text) return
+    const n = fans()
+    close()
+    fanOut(text, n)
+  }
+
   function sendAll() {
     const area = box.querySelector('.send textarea')
     const text = area.value.trim()
@@ -169,7 +186,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
   function show() {
     box = pane.appendChild(el('div', { className: 'sessions', tabIndex: -1 }))
     box.innerHTML = '<header><b>Sessions</b><span class="count"></span><span class="limits"></span><button class="new"><i class="icon">&#xE710;</i>New session</button></header><div class="cards"></div>' +
-      '<div class="send"><textarea rows="1" spellcheck="false" placeholder="A prompt for every ticked session"></textarea><button class="go"></button></div>'
+      '<div class="send"><textarea rows="1" spellcheck="false" placeholder="A prompt for every ticked session"></textarea><span class="fan" title="Start new sessions on this prompt, each in a git worktree of its own (Ctrl+Enter)"><input type="number" min="1" max="8" value="3" aria-label="How many"><button class="start"></button></span><button class="go"></button></div>'
     box.querySelector('.new').onclick = () => { close(); newSession() }
     const area = box.querySelector('.send textarea')
     area.oninput = () => {
@@ -178,10 +195,13 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
       ready()
     }
     box.querySelector('.send .go').onclick = sendAll
+    box.querySelector('.send .start').onclick = fan
+    box.querySelector('.send .fan input').oninput = () => ready()
     box.onkeydown = e => {
       const n = list().length
       if (e.target === area) {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAll() }
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); fan() }
+        else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAll() }
         else if (e.key === 'Escape') close()
         return
       }

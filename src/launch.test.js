@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { claudeWith, worktreeName, since } from './launch.js'
+import { SAFE, claudeWith, worktreeName, fanNames, since } from './launch.js'
 
 test('claudeWith adds flags to the claude a command runs', () => {
   assert.deepEqual(claudeWith(['claude'], ['--resume', 'abc']), ['claude', '--resume', 'abc'])
@@ -27,4 +27,10 @@ test('worktreeName and since read the clock', () => {
   assert.equal(since(now - 5 * 60_000, now), '5m ago')
   assert.equal(since(now - 3 * 3600_000, now), '3h ago')
   assert.equal(since(now - 50 * 3600_000, now), '2d ago')
+})
+
+test('a fan-out names a worktree per session, with the seconds so two in a minute differ', () => {
+  const at = new Date(2026, 9, 29, 18, 50, 7)
+  assert.deepEqual(fanNames(3, at), ['nook-1029-185007-1', 'nook-1029-185007-2', 'nook-1029-185007-3'])
+  assert.ok(fanNames(1, at).every(n => SAFE.test(n)))
 })

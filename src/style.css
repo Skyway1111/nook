@@ -204,6 +204,11 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .sessions .send textarea:focus { border-color: var(--accent); }
 .sessions .send .go { flex: none; height: 32px; padding: 0 12px; border-radius: 8px; background: var(--accent); color: var(--bg); font-weight: 600; font-size: .86rem; }
 .sessions .send .go:disabled { background: var(--hover); color: var(--ink-3); }
+.sessions .send .fan { flex: none; display: flex; align-items: center; height: 32px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.sessions .send .fan input { width: 2.6em; height: 100%; border: 0; background: transparent; color: var(--ink-1); text-align: center; font: inherit; font-size: .86rem; }
+.sessions .send .fan .start { height: 100%; padding: 0 10px; border-left: 1px solid var(--line); color: var(--ink-1); font-size: .86rem; }
+.sessions .send .fan .start:hover:not(:disabled) { background: var(--hover); }
+.sessions .send .fan .start:disabled { color: var(--ink-3); }
 
 /* Pictures over Claude's transcript, laid out in percents of the screen by pictures.js. */
 .pictures { position: absolute; inset: 0; pointer-events: none; }
