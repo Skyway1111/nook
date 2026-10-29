@@ -10,7 +10,8 @@ const SCHEME = /^[a-z][\w+.-]*:/i
 const WEB = /^(https?|mailto):/i
 // This page can call pty_write, so Markdown from disk passes the browser's sanitizer, which removes
 // every script and event handler. The extra removals keep a file from restyling nook, navigating it,
-// or shadowing a `document` method with a named element.
+// or shadowing a `document` method with a named element. A browser without one, as WebKitGTK is,
+// gets sanitize.js's list of what Markdown writes, and nothing else.
 const SANITIZE = { sanitizer: { removeElements: ['style', 'meta', 'link', 'form'], removeAttributes: ['style', 'id', 'name'] } }
 
 /** `href` relative to the file at `from`, as a path. */
@@ -27,9 +28,10 @@ const MEDIA = /\.(mp4|webm|mov|m4v|ogv|mp3|wav|ogg|oga|flac|m4a|aac|opus)$/i
 const PDF = /\.pdf$/i
 
 async function markdown(text, path) {
-  const [{ marked }, { highlight }] = await Promise.all([import('marked'), editing()])
+  const [{ marked }, { highlight }, { clean }] = await Promise.all([import('marked'), editing(), import('./sanitize.js')])
   // An inert document: nothing loads until the relative image paths point at the disk.
-  const doc = Document.parseHTML(marked.parse(text), SANITIZE)
+  const doc = Document.parseHTML ? Document.parseHTML(marked.parse(text), SANITIZE)
+    : clean(new DOMParser().parseFromString(marked.parse(text), 'text/html'))
   for (const img of doc.querySelectorAll('img[src]')) {
     const src = img.getAttribute('src')
     if (!SCHEME.test(src)) img.src = convertFileSrc(resolve(src, path))
@@ -198,6 +200,51 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
     editor.focus()
   }
 
+  /**
+   * For quick open's `@`: `read`, the file's outline from editor.js; `look(item)` to show one while the box rests on
+   * it, without taking the keys; `back()` to put the caret and the scroll back as they were before the first look;
+   * and `go(item)` to go there. A heading of a rendered Markdown page shows on the page.
+   */
+  function outline() {
+    let items = []
+    let mod // editor.js, once loaded, so a look and a back run in the order they're asked for
+    let before = null
+    const heading = item => previewing && drawn === 'markdown' && item.kind === 'heading'
+      && page.querySelectorAll('h1, h2, h3, h4, h5, h6')[items.filter(i => i.kind === 'heading').indexOf(item)]
+    return {
+      read: editing().then(m => {
+        mod = m
+        const found = editor ? m.outline(editor) : { items: [], partial: false }
+        items = found.items
+        return found
+      }),
+      look(item) {
+        if (!editor || !mod) return
+        before ??= { selection: editor.state.selection, top: editor.scrollDOM.scrollTop, page: page?.scrollTop }
+        const h = heading(item)
+        if (h) h.scrollIntoView({ block: 'start' })
+        else if (!previewing && item.from <= editor.state.doc.length) mod.show(editor, item.from)
+      },
+      back() {
+        if (!before || !editor) return
+        const { selection, top, page: pageTop } = before
+        before = null
+        if (selection.main.to <= editor.state.doc.length) editor.dispatch({ selection })
+        editor.scrollDOM.scrollTop = top
+        if (page) page.scrollTop = pageTop
+      },
+      go(item) {
+        before = null
+        if (!editor) return
+        const h = heading(item)
+        if (h) return h.scrollIntoView({ block: 'start' }), page.focus()
+        const at = Math.min(item.from, editor.state.doc.length)
+        const line = editor.state.doc.lineAt(at)
+        reveal({ line: line.number, col: at - line.from + 1 })
+      },
+    }
+  }
+
   /** Rereads the file. A buffer with unsaved edits stays as it is unless `discard`. */
   const refresh = (discard = false) => serial(async () => {
     if (MEDIA.test(path) || PDF.test(path) || (IMAGE.test(path) && drawn !== 'svg')) {
@@ -271,6 +318,8 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
     save: () => save(),
     dirty: () => dirty,
     reveal,
+    /** Quick open's `@`, or null before the text has loaded. */
+    outline: () => (editor ? outline() : null),
     /** Replaces the text with `f(text)` as one edit, once the file has loaded. */
     edit: f => serial(() => {
       const text = editor?.state.doc.toString()

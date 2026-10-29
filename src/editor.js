@@ -7,7 +7,7 @@ import {
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import {
   syntaxHighlighting, indentOnInput, indentUnit, bracketMatching, LanguageDescription,
-  codeFolding, foldGutter, foldKeymap,
+  codeFolding, foldGutter, foldKeymap, ensureSyntaxTree, syntaxTree,
 } from '@codemirror/language'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { autocompletion, completionKeymap, completeAnyWord, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
@@ -16,6 +16,7 @@ import { classHighlighter, highlightCode } from '@lezer/highlight'
 import { el } from './ui.js'
 import { DOC } from './files.js'
 import { UNCOMMITTED, runs, ages, since } from './blame.js'
+import { outline as outlineOf } from './symbols.js'
 
 // Blame: a gutter, off until asked for, of who last changed each line. Its marks follow edits until the next blame.
 const blameGutter = new Compartment()
@@ -169,6 +170,24 @@ export function goto(editor, line, col = 1) {
   const doc = editor.state.doc
   const at = doc.line(Math.max(1, Math.min(line, doc.lines)))
   const pos = Math.min(at.to, at.from + Math.max(0, col - 1))
+  editor.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) })
+}
+
+/**
+ * The editor's outline for quick open's `@`, from symbols.js: `{ items, partial }`, each item with its 1-based
+ * `line`. It parses the rest of the file first, for a fifth of a second at most; past that it outlines what parsed.
+ */
+export function outline(editor) {
+  const { state } = editor
+  const doc = state.doc
+  const tree = ensureSyntaxTree(state, doc.length, 200) ?? syntaxTree(state)
+  const { items, partial } = outlineOf(tree, (from, to) => doc.sliceString(from, to))
+  for (const item of items) item.line = doc.lineAt(item.from).number
+  return { items, partial: partial || tree.length < doc.length }
+}
+
+/** Shows the line holding `pos` in the middle of the editor, with the caret there, without focusing it. */
+export function show(editor, pos) {
   editor.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) })
 }
 

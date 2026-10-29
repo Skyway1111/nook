@@ -1,6 +1,6 @@
 // Quick open (Ctrl+P) and the command palette (F1): one box over the top of the window.
 // Loaded on the first Ctrl+P, so it adds nothing to cold open or to an idle window. Typed text finds files in the active tab's repository, or its folder outside one. `>` finds commands,
-// `:` goes to a line in the open file, and `%` finds text inside the files. Nothing is indexed until the box first opens, and each later open shows the last index at once while a fresh one builds behind it.
+// `:` goes to a line in the open file, `@` to a symbol in it, and `%` finds text inside the files. Nothing is indexed until the box first opens, and each later open shows the last index at once while a fresh one builds behind it.
 import { invoke } from '@tauri-apps/api/core'
 import { $, el } from './ui.js'
 import { rank } from './fuzzy.js'
@@ -11,12 +11,21 @@ import { recentFiles, opened, RECENT_MAX } from './recent.js'
 /** An index older than this rebuilds in the background when the box opens. */
 const STALE_MS = 5000
 
+/** A symbol's kind as a letter in its own color, and as a word. */
+const KINDS = {
+  function: ['f', 'Function'], method: ['m', 'Method'], class: ['C', 'Class'], struct: ['S', 'Struct'],
+  interface: ['I', 'Interface'], trait: ['T', 'Trait'], impl: ['i', 'Implementation'], enum: ['E', 'Enum'],
+  type: ['T', 'Type'], module: ['N', 'Module'], constant: ['K', 'Constant'], variable: ['v', 'Variable'],
+  field: ['p', 'Field'], heading: ['#', 'Heading'], rule: ['{', 'Rule'], key: ['k', 'Key'],
+}
+
 /**
  * `dir()` is the folder to search: the active tab's. `commands()` lists `{ title, keys, run }`. `gotoLine(line,
- * col)` moves the open file's caret and returns false when no file is open. `openFile` and `insertPath` take an
- * absolute path; `reveal` shows one in the file browser. `onClose` returns focus to the tab.
+ * col)` moves the open file's caret and returns false when no file is open. `outline()` is the open file's
+ * symbols, from viewer.js, or null with no file open. `openFile` and `insertPath` take an absolute path; `reveal`
+ * shows one in the file browser. `onClose` returns focus to the tab.
  */
-export function startQuickOpen({ dir, commands, gotoLine, openFile, insertPath, reveal, onClose }) {
+export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, insertPath, reveal, onClose }) {
   const box = el('div', { id: 'quick', hidden: true })
   const input = el('input', { spellcheck: false, autocomplete: 'off' })
   const list = el('ul')
@@ -104,6 +113,28 @@ export function startQuickOpen({ dir, commands, gotoLine, openFile, insertPath, 
     }).finally(() => { if (!box.hidden && input.value.startsWith('%')) render() }), 150)
   }
 
+  // The open file's symbols, read when `@` is first typed in this opening of the box.
+  let symbols = null // { file: viewer.js's outline or null, items, partial, error }
+  function symbolsFor() {
+    if (symbols) return symbols
+    const file = outline()
+    symbols = { file, items: null, partial: false, error: '' }
+    const mine = symbols
+    file?.read.then(({ items, partial }) => Object.assign(mine, { items, partial }), e => { mine.error = String(e) })
+      .finally(() => { if (symbols === mine && !box.hidden && input.value.startsWith('@')) render() })
+    return symbols
+  }
+
+  function symbolRow(symbol, positions, indent) {
+    const [letter, word] = KINDS[symbol.kind] ?? ['·', symbol.kind]
+    const li = el('li', { className: 'row symbol' })
+    const badge = el('i', { className: `kind ${symbol.kind}`, textContent: letter, title: word })
+    if (indent) badge.style.marginLeft = `${Math.min(symbol.depth, 8) * 14}px`
+    li.append(badge, marked(symbol.name, positions),
+      el('small', { textContent: `${symbol.container && !indent ? `${symbol.container} · ` : ''}line ${symbol.line}` }))
+    return li
+  }
+
   function commandRow(command, positions) {
     const li = el('li', { className: 'row command' })
     li.append(el('i', { className: 'icon', textContent: command.icon ?? '' }), marked(command.title, positions))
@@ -142,6 +173,28 @@ export function startQuickOpen({ dir, commands, gotoLine, openFile, insertPath, 
           : `${n ? n.toLocaleString() : 'No'} line${n === 1 ? '' : 's'}${found?.partial ? ' (stopped there)' : ''} in ${found?.searched.toLocaleString()} files`,
         keys: n ? 'Enter open at the line · Shift+Enter add to prompt · Alt+Enter show in files' : '',
         count: n,
+      }
+    }
+    if (query.startsWith('@')) {
+      const { file, items, partial, error } = symbolsFor()
+      const text = query.slice(1)
+      const all = items ?? []
+      // In the file's order, nested under what holds them, until a letter is typed; then best first.
+      const found = text.trim()
+        ? rank(text, all, { text: s => s.name, limit: 100, boost: s => -s.line / 1e7 })
+        : all.slice(0, 2000).map(item => ({ item, positions: [] }))
+      const n = all.length
+      return {
+        rows: found.map(r => symbolRow(r.item, r.positions, !text.trim())),
+        act: i => file.go(found[i].item),
+        look: i => found[i] && file.look(found[i].item),
+        hint: !file ? 'Open a code or text file to go to its symbols'
+          : error ? `Can't read the outline: ${error}`
+          : !items ? 'Reading the outline…'
+          : !n ? 'No symbols in this file'
+          : `${n.toLocaleString()} symbol${n === 1 ? '' : 's'}${partial ? ' (stopped there)' : ''}${text.trim() ? `, ${found.length.toLocaleString()} match` : ''}`,
+        keys: found.length ? 'Enter go to it · Esc go back' : '',
+        count: found.length,
       }
     }
     if (query.startsWith(':')) {
@@ -189,18 +242,21 @@ export function startQuickOpen({ dir, commands, gotoLine, openFile, insertPath, 
 
   let current = null
   function render() {
+    if (!input.value.startsWith('@')) symbols?.file?.back() // the caret goes back where it was when `@` is erased
     current = offer(input.value)
     list.replaceChildren(...current.rows)
     at = Math.min(at, Math.max(0, current.rows.length - 1))
-    highlight()
+    highlight(/^@./.test(input.value.trim()))
     foot.replaceChildren(el('span', { textContent: current.hint }), ...(current.keys ? [el('span', { textContent: current.keys })] : []))
   }
 
-  function highlight() {
+  /** Marks the row at `at`; with `look`, the editor shows its symbol too. */
+  function highlight(look = false) {
     list.querySelector('.at')?.classList.remove('at')
     const row = list.children[at]
     row?.classList.add('at')
     row?.scrollIntoView({ block: 'nearest' })
+    if (look) current?.look?.(at)
   }
 
   // Typing repaints once a frame at most, so a fast typist never waits on a ranking per key.
@@ -216,12 +272,12 @@ export function startQuickOpen({ dir, commands, gotoLine, openFile, insertPath, 
     if (queued) { queued = false; render() }
     if (!current || (!current.count && !current.enter)) return
     const run = current.act
-    close(false)
+    close(false, true)
     run(at, how)
   }
 
   input.onkeydown = e => {
-    const move = d => { e.preventDefault(); at = Math.max(0, Math.min(list.children.length - 1, at + d)); highlight() }
+    const move = d => { e.preventDefault(); at = Math.max(0, Math.min(list.children.length - 1, at + d)); highlight(true) }
     if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) move(1)
     else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p' && !e.shiftKey)) move(-1)
     else if (e.key === 'PageDown') move(10)
@@ -250,14 +306,19 @@ export function startQuickOpen({ dir, commands, gotoLine, openFile, insertPath, 
     input.value = prefix
     input.placeholder = prefix.startsWith('>') ? 'Run a command'
       : prefix.startsWith('%') ? 'Find text inside the files'
-      : 'Find a file by name · > for commands · : for a line · % for text in files'
+      : prefix.startsWith('@') ? 'Go to a symbol in the file'
+      : 'Find a file by name · > for commands · : for a line · @ for a symbol · % for text in files'
     search = { query: null, found: null, error: '', running: false }
+    symbols = null
     at = 0
     render()
     input.focus()
   }
 
-  function close(refocus = true) {
+  /** Hides the box; unless a row was `acted` on, a symbol it showed gives way to where the caret was. */
+  function close(refocus = true, acted = false) {
+    if (!acted) symbols?.file?.back()
+    symbols = null
     box.hidden = true
     list.replaceChildren() // nothing to hold on to while hidden
     current = null
@@ -266,9 +327,10 @@ export function startQuickOpen({ dir, commands, gotoLine, openFile, insertPath, 
 
   return {
     open,
-    /** Ctrl+P's and F1's: closes the box when it shows that mode, and opens it otherwise. */
+    /** Ctrl+P's, F1's and Ctrl+Shift+O's: closes the box when it shows that mode, and opens it otherwise. */
     toggle(prefix, typed = '') {
-      if (!box.hidden && input.value.startsWith('>') === (prefix === '>')) close()
+      const mode = v => (v[0] === '>' || v[0] === '@' ? v[0] : '')
+      if (!box.hidden && mode(input.value) === prefix) close()
       else open(prefix + typed)
     },
   }
