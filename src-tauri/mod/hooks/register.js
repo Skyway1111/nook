@@ -70,6 +70,12 @@ async function report($, file, patch) {
   if (text !== wrote) await $.fs.write(file, (wrote = text))
 }
 
+/** The context window's fill, what the session has cost in US dollars, and the account's rate-limit windows,
+ * from `$.session.usage()`, for nook's dashboard. */
+export const spent = ({ context, cost, rateLimits = [] }) => ({
+  context, cost: cost?.usd ?? 0, limits: rateLimits.map(({ kind, percentUsed, resetsAt }) => ({ kind, used: percentUsed, resetsAt })),
+})
+
 /** The model, the menu's aliases that Claude offers, and the model's saved effort when it changes. */
 async function model($) {
   const id = await $.session.model()
@@ -673,7 +679,7 @@ export function register(on) {
       await setStatus($, file, 'idle', { turns: 0, touched: [], prompt: '' })
       // /clear starts a new session, with an empty context and a new images folder.
       const tick = async () => report($, file, {
-        ...(await take($, requests)), context: (await $.session.usage()).context, images: await imagesDir($), session: await $.session.id(), root: await $.session.root(), ...(await model($)),
+        ...(await take($, requests)), ...spent(await $.session.usage()), images: await imagesDir($), session: await $.session.id(), root: await $.session.root(), ...(await model($)),
       })
       await tick()
       $.clock.every(250, () => tick().catch(() => {})) // a failed tick leaves the last report standing

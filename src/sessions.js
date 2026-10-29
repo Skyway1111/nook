@@ -76,6 +76,32 @@ export function modelName(id = '') {
   return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ''}`
 }
 
+/** How full a session's context window is, 0 to 100, or null before Claude's first reply fills it. */
+export const fill = (report = {}) => report.context?.window && report.context.percent != null ? report.context.percent : null
+
+/** From this much context on, a card offers to compact the session. */
+export const FULL = 60
+
+/** What a session has cost, "$0.42", or '' under half a cent. */
+export const money = (usd = 0) => usd < 0.005 ? '' : usd < 10 ? `$${usd.toFixed(2)}` : `$${Math.round(usd)}`
+
+const WINDOWS = { five_hour: '5-hour', seven_day: 'weekly', spend_limit: 'spend' }
+
+/** The account's rate-limit windows, from every session's report: for each window the newest reading
+ * whose window hasn't reset by `now`, as `[{ name, used, resetsAt }]`, the fullest first. Every session
+ * reads the same account, so a session that answered last has the truest figure. */
+export function limits(reports, now = Date.now()) {
+  const best = new Map()
+  for (const { kind, used, resetsAt } of reports.flatMap(r => r.limits ?? [])) {
+    const at = resetsAt ? Date.parse(resetsAt) : Infinity
+    if (at <= now || !(used >= 0)) continue
+    const had = best.get(kind)
+    if (!had || at > had.at || (at === had.at && used > had.used)) best.set(kind, { kind, used, at })
+  }
+  return [...best.values()].sort((a, b) => b.used - a.used)
+    .map(({ kind, used, at }) => ({ name: WINDOWS[kind] ?? kind.replace(/_/g, ' '), used, resetsAt: Number.isFinite(at) ? at : null }))
+}
+
 /** One line on the counts, such as "2 working · 1 waiting on you". */
 export function summary(marks) {
   const n = mark => marks.filter(m => m === mark).length
