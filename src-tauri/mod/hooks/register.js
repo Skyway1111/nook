@@ -1,8 +1,10 @@
 // Tells nook's composer what to show beside Claude's prompt, runs the two commands its menus send, and
 // draws pictures in the transcript: ones Claude read, an SVG it wrote, ones a shell command wrote, ones a reply links, and a reply's diagrams and formulas, with its inline math written in plain symbols. Every hook passes its event on unchanged, and the render hooks add
-// pictures under Claude's own drawing, and under a shell command's result the line that says how it went. The mod writes the session's model, effort, effort levels, context
-// fill, pasted images' folder, and what the session is doing as JSON to NOOK_STATE, and reads requests from
+// pictures under Claude's own drawing, and under a shell command's result the line that says how it went, and under an edit's diff an Undo. The mod writes the session's model, effort, effort levels, context
+// fill, pasted images' folder, what the session is doing, and a command to type as JSON to NOOK_STATE, and reads requests from
 // the .cmd file beside it: { command, args, at }.
+import { atom, read, update } from 'claude-code'
+
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const MODELS = ['fable', 'opus', 'sonnet', 'haiku'] // the menu's aliases, each its family's latest model
 const ROWS = 20 // the tallest picture, in rows
@@ -408,21 +410,34 @@ export function splitBlocks(text) {
   return pieces // text, [kind, source], … , text
 }
 
-/** A reply's text cut after each closed fenced code block: text, code, text, … , text, where each text piece
- * keeps its blocks and each code piece is the block before it as one would paste it, its fence's indent
- * taken off. A block still streaming in, with no closing fence yet, isn't cut after. */
+/** A reply's text cut after each closed fenced code block: text, block, text, … , text, where each text piece
+ * keeps its blocks and each block piece is `{ code, lang }`: the block before it as one would paste it, its
+ * fence's indent taken off, and its info string's first word. A block still streaming in, with no closing
+ * fence yet, isn't cut after. */
 export function splitCode(text) {
   const pieces = []
   let at = 0
-  for (const m of text.matchAll(/^([ \t]*)(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n?^[ \t]*\2[ \t]*$/gm)) {
+  for (const m of text.matchAll(/^([ \t]*)(`{3,}|~{3,})([^\n]*)\n([\s\S]*?)\n?^[ \t]*\2[ \t]*$/gm)) {
     const indent = m[1].length
-    const code = m[3].split('\n').map(l => l.slice(Math.min(indent, l.length - l.trimStart().length))).join('\n')
+    const code = m[4].split('\n').map(l => l.slice(Math.min(indent, l.length - l.trimStart().length))).join('\n')
     if (!code.trim()) continue
-    pieces.push(text.slice(at, m.index + m[0].length).trim(), code)
+    pieces.push(text.slice(at, m.index + m[0].length).trim(), { code, lang: m[3].trim().split(/\s/)[0].toLowerCase() })
     at = m.index + m[0].length
   }
   pieces.push(at ? text.slice(at).trim() : text)
   return pieces
+}
+
+const SHELLS = new Set(['sh', 'bash', 'shell', 'zsh', 'console', 'terminal'])
+
+/** The one command a shell block holds, its `$ ` prompt taken off, or null: a block in another language, of
+ * more than one line, or of a comment alone. */
+export function runnable({ code, lang }) {
+  if (!SHELLS.has(lang)) return null
+  const line = code.trim()
+  if (!line || line.includes('\n')) return null
+  const command = line.replace(/^\$\s+/, '')
+  return command && !command.startsWith('#') ? command : null
 }
 
 /** About how many rows a display formula takes at the terminal's own text size, a row being about an em:
@@ -613,6 +628,68 @@ export function searchParts(call, root) {
   else if (files.length && files.length <= 3 && n === files.length) parts.push([files.map(f => relative(String(f), root)).join(', '), null])
   else parts.push([plural(n, 'file'), null])
   return parts
+}
+
+const UNDONE = 200 // the most edits kept as undone
+const undone = atom({ plugin: 'nook', key: 'undone' }, []) // the edits undone with their row's Undo, by tool_use_id
+
+/** The line where `want` stands in `lines` nearest to `at`, or -1 where it stands nowhere. */
+function nearest(lines, want, at) {
+  const fits = i => i >= 0 && i + want.length <= lines.length && want.every((l, k) => lines[i + k] === l)
+  for (let d = 0; d <= lines.length; d++) {
+    if (fits(at - d)) return at - d
+    if (d && fits(at + d)) return at + d
+  }
+  return -1
+}
+
+/** A file's text with an edit's hunks taken back out (`back`), or put in again, or null when a hunk's lines
+ * no longer stand in the file as the edit left them. A hunk is matched where it says, else at the nearest
+ * place its lines stand, so lines added or cut elsewhere since don't stop it. */
+export function applyHunks(text, hunks, back) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  const lines = text.split(/\r?\n/)
+  let shift = 0 // how far the file has moved from where the hunks say, at the next hunk
+  for (const hunk of hunks) {
+    const body = hunk.lines.filter(l => !l.startsWith('\\')) // `\ No newline at end of file`
+    const now = body.filter(l => l[0] !== (back ? '-' : '+')).map(l => l.slice(1))
+    const then = body.filter(l => l[0] !== (back ? '+' : '-')).map(l => l.slice(1))
+    if (!now.length) return null // nothing to find it by
+    const start = (back ? hunk.newStart : hunk.oldStart) - 1
+    const at = nearest(lines, now, start + shift)
+    if (at < 0) return null
+    lines.splice(at, now.length, ...then)
+    shift = at - start + then.length - now.length
+  }
+  return lines.join(eol)
+}
+
+/** The Undo under a finished edit's diff, which takes the edit back out of its file, and then puts it back. */
+async function undoRow($, e, root) {
+  const { tool_use_id: id, output } = e.props
+  const path = output.filePath
+  const name = relative(path, root)
+  const isUndone = (await read($, undone)).includes(id)
+  const { Box, Button } = $.ui.resolve(e)
+  return Box({
+    paddingLeft: INDENT,
+    children: [Button({
+      key: `undo:${id}`,
+      label: isUndone ? '↷ Redo' : '↶ Undo',
+      plain: true,
+      dimColor: true,
+      onPress: async () => {
+        const back = !(await read($, undone)).includes(id)
+        const text = await $.fs.read(path).catch(() => null)
+        if (text === null) return $.ui.toast(`${name} can't be read now`)
+        const changed = applyHunks(text, output.structuredPatch, back)
+        if (changed === null) return $.ui.toast(`${name} has changed where this edit was, so it can't be ${back ? 'undone' : 'put back'}`)
+        await $.fs.write(path, changed)
+        await update($, undone, (ids = []) => (back ? [...ids, id].slice(-UNDONE) : ids.filter(i => i !== id)))
+        $.ui.toast(back ? `Undid the edit to ${name}` : `Put the edit back in ${name}`)
+      },
+    })],
+  })
 }
 
 const SITES = 3 // the most sites a web search's row names
@@ -859,10 +936,19 @@ export function register(on) {
       : file && e.surface === 'terminal' && /\.html?$/i.test(wrote) ? PAGE : null
     return size ? withPictures($, e, await next(e), [[input.file_path, size]]) : next(e)
   })
-  // A shell command's or web search's result, drawn alone under its row.
+  // A shell command's or web search's result, drawn alone under its row, and an edit's diff.
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const { tool, tool_use_id, output, isErrored, isExpanded } = e.props
-    if ((tool !== 'Bash' && tool !== 'WebSearch') || isExpanded) return next(e)
+    if (isExpanded) return next(e)
+    // A finished edit, in a terminal: an Undo under its diff. A new file, one held for review, or one too big
+    // to diff has none.
+    if (EDITS.has(tool)) {
+      if (e.surface !== 'terminal' || isErrored || output?.staged || !output?.filePath || !output.structuredPatch?.length) return next(e)
+      const { Box } = $.ui.resolve(e)
+      const root = await $.session.root().catch(() => '')
+      return Box({ flexDirection: 'column', children: [await next(e), await undoRow($, e, root)] })
+    }
+    if (tool !== 'Bash' && tool !== 'WebSearch') return next(e)
     const parts = tool === 'Bash' ? outcome(output, isErrored, times.get(tool_use_id)) : webParts(e.props)
     const pictures = (await made.get(tool_use_id)) ?? []
     if (!parts && !pictures.length) return next(e)
@@ -920,23 +1006,43 @@ export function register(on) {
     const { Box, Button, Image, Markdown } = $.ui.resolve(e)
     // Under each code block, a Copy that puts the block's code, without its fences, on the clipboard.
     const copies = new Map() // keys taken in this reply, so a block that repeats gets its own
-    const copy = (source, more) => {
+    // In a tab nook started, a one-line shell block also has a Run. nook types it into Claude's empty prompt
+    // as a ! command, which Claude runs itself, for the person to send or change: nothing runs until they
+    // press Enter. A prompt typed into can't take it, as a ! only switches an empty one to a command.
+    const copy = (block, more) => {
+      const source = block.code
       const n = copies.get(source) ?? 0
       copies.set(source, n + 1)
       const lines = source.split('\n').length
+      const command = file && runnable(block)
+      const buttons = [Button({
+        key: `copy:${hash(source)}:${n}`,
+        label: '⧉ Copy',
+        plain: true,
+        dimColor: true,
+        onPress: async press => {
+          const { isCopied } = await $.ui.copy({ text: source, surface: press?.surface })
+          $.ui.toast(isCopied ? `Copied ${lines} line${lines === 1 ? '' : 's'}` : 'Nothing could take the copy here')
+        },
+      })]
+      if (command) {
+        buttons.push(Button({
+          key: `run:${hash(source)}:${n}`,
+          label: '▸ Run',
+          plain: true,
+          dimColor: true,
+          onPress: async () => {
+            if ((await $.prompt.read()).text.trim()) return $.ui.toast('Send or clear what you typed first, then Run')
+            await report($, file, { run: { command, at: Date.now() } })
+          },
+        }))
+      }
       return Box({
         paddingLeft: REPLY_INDENT,
         marginBottom: more ? 1 : 0, // the blank line Claude keeps after a block, when words follow
-        children: [Button({
-          key: `copy:${hash(source)}:${n}`,
-          label: '⧉ Copy',
-          plain: true,
-          dimColor: true,
-          onPress: async press => {
-            const { isCopied } = await $.ui.copy({ text: source, surface: press?.surface })
-            $.ui.toast(isCopied ? `Copied ${lines} line${lines === 1 ? '' : 's'}` : 'Nothing could take the copy here')
-          },
-        })],
+        flexDirection: 'row',
+        gap: 3,
+        children: buttons,
       })
     }
     const dir = file?.replace(/[\\/][^\\/]*$/, '')

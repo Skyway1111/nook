@@ -129,11 +129,44 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
   const onBlame = () => blame()
   addEventListener('nook-blame', onBlame)
 
+  // Change bars: the editor's lines against the copy of the file in git's index, so they show what the git
+  // panel's unstaged diff would, unsaved edits included. Read again when the index file changes.
+  let base = null // that copy's lines, or null outside a repository or for a file git doesn't track
+  let index // the index file, once known, and its stamp at the last read
+  let indexStamp
+  let basing = 0 // counts reads, so an old one's answer is dropped
+  let barring // the timer that redraws the bars a moment after an edit
+  async function rebase() {
+    const n = ++basing
+    const dir = paths.parent(path)
+    if (index === undefined) {
+      const gitDir = await invoke('git', { dir, args: ['rev-parse', '--absolute-git-dir'] }).catch(() => '')
+      index = gitDir.trim() ? paths.join(paths.normalize(gitDir.trim()), 'index') : null
+    }
+    if (!index) return
+    indexStamp = await invoke('file_stamp', { path: index }).catch(() => null)
+    const text = await invoke('git', { dir, args: ['show', `:./${name}`] }).catch(() => null)
+    if (n !== basing || !editor) return
+    base = text === null ? null : text.replace(/\r\n?/g, '\n').split('\n')
+    bars()
+  }
+  async function bars() {
+    clearTimeout(barring)
+    if (!editor) return
+    const { showChanges } = await editing()
+    if (editor) showChanges(editor, base)
+  }
+
   let pending // an autosave's timer
   function changed() {
     const now = !editor.state.doc.eq(saved)
     if (now !== dirty) onDirty((dirty = now))
     onText?.(editor.state.doc.toString())
+    if (base) {
+      // A pause in typing redraws them; in a long file, where that's tens of milliseconds, a longer one.
+      clearTimeout(barring)
+      barring = setTimeout(bars, editor.state.doc.lines > 20_000 ? 1500 : 250)
+    }
     if (blameOn) {
       clearTimeout(reblame)
       reblame = setTimeout(blame, 1500)
@@ -175,6 +208,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
       const tr = editor.state.update({ changes: change(editor.state.doc.toString(), text.replace(/\r\n?/g, '\n')) })
       saved = tr.newDoc
       editor.dispatch(tr)
+      rebase()
       return render()
     }
     const { createEditor } = await editing()
@@ -183,6 +217,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
     changed()
     paint('text', [editor.dom, ...(page ? [page, toggle] : []), bar])
     if (blameOn) blame()
+    rebase()
     // A page with a script opens on its source: drawn with scripts off, it would mostly be blank.
     if (page) preview(previewing && !target && !(drawn === 'html' && /<script\b/i.test(text)))
     if (document.activeElement === view) focus()
@@ -256,6 +291,8 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
       if (document.activeElement === view) player.el.focus()
       return
     }
+    // A commit, a stage or a checkout, from the panel or a terminal, writes the index: the bars follow it.
+    if (index && editor) invoke('file_stamp', { path: index }).then(s => s !== indexStamp && rebase(), () => {})
     const now = await invoke('file_stamp', { path })
     if (now && now === stamp && !discard) return
     stamp = now
@@ -329,6 +366,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
     close: () => {
       removeEventListener('nook-blame', onBlame)
       clearTimeout(reblame)
+      clearTimeout(barring)
       editor?.destroy(); drawing?.close?.(); player?.close?.()
     },
   }

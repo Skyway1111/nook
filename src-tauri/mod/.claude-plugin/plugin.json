@@ -2,5 +2,8 @@
   "name": "nook",
   "version": "0.1.0",
   "description": "Tells the nook tab running this session its model, effort, and context fill",
-  "author": { "name": "nook" }
+  "author": {
+    "name": "nook"
+  },
+  "types": "./types/index.d.ts"
 }

@@ -312,6 +312,14 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
         if (tab) tab.look = look
       }
     },
+    /** Resolves true once `tab`'s session has reported, so it can take a prompt, or false after `ms` or if
+     * the tab closes first. */
+    async ready(tab, ms = 90000) {
+      for (const end = Date.now() + ms; Date.now() < end && tabs.includes(tab); await new Promise(r => setTimeout(r, 300))) {
+        if (sessions.report(tab)?.status) return true
+      }
+      return false
+    },
     /** Sends `text` to a Claude tab as a prompt, leaving the tab in front where it is. */
     prompt: (tab, text) => tab.terminal?.prompt(text),
     /** Answers the permission prompt a Claude tab shows, with its first choice (allow once) or Escape (deny). */
