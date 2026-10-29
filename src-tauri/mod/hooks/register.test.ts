@@ -65,7 +65,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { errorLine, outcome, readPaths, searchParts, shellSearch, testCounts } from './register.js'
+import { errorLine, outcome, readPaths, searchParts, shellSearch, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -187,4 +187,31 @@ test('a search run through the shell says what it found, and a piped one says no
   expect(shellSearch('grep x a.js && echo ok', out('x\nok\n'), '/work')).toBeNull()
   expect(shellSearch('npm test', out('ok\n'), '/work')).toBeNull()
   expect(shellSearch('grep x a.js', 'Exit code 2', '/work')).toBeNull()
+})
+
+test('a build, install, linter, or git command says what it did', () => {
+  expect(summary('[rd/x a1b2c3d] Add the thing\n 3 files changed, 10 insertions(+), 2 deletions(-)\n create mode 100644 a.js\n'))
+    .toEqual([['committed a1b2c3d', 'success'], ['3 files'], ['+10', 'diffAdded', true], ['−2', 'diffRemoved', true]])
+  expect(summary('[main (root-commit) 0f0f0f0] first\n 1 file changed, 1 insertion(+)\n'))
+    .toEqual([['committed 0f0f0f0', 'success'], ['1 file'], ['+1', 'diffAdded', true]])
+  expect(summary('To github.com:me/nook.git\n   a1b2c3d..e4f5a6b  rd/x -> rd/x\n')).toEqual([['pushed rd/x', 'success']])
+  expect(summary('To github.com:me/nook.git\n * [new branch]      rd/y -> rd/y\n')).toEqual([['pushed rd/y', 'success']])
+  expect(summary('To github.com:me/nook.git\n ! [rejected]        main -> main (fetch first)\n')).toEqual([['rejected main', 'error']])
+  expect(summary('Already up to date.\n')).toEqual([['up to date', null]])
+  expect(summary('Updating a..b\nFast-forward\n src/a.js | 4 ++--\n 1 file changed, 2 insertions(+), 2 deletions(-)\n'))
+    .toEqual([['merged', 'merged'], ['1 file'], ['+2', 'diffAdded', true], ['−2', 'diffRemoved', true]])
+  expect(summary('   Compiling nook v0.1.0\nwarning: `nook` (bin "nook") generated 3 warnings\n    Finished `release` profile [optimized] target(s) in 41.2s\n'))
+    .toEqual([['3 warnings', 'warning']])
+  expect(summary('error[E0425]: cannot find value `x`\nerror: could not compile `nook` (bin "nook") due to 2 previous errors; 1 warning emitted\n'))
+    .toEqual([['2 errors', 'error']])
+  expect(summary('src/a.ts(3,1): error TS2304: Cannot find name x.\n\nFound 3 errors in 2 files.\n')).toEqual([['3 errors in 2 files', 'error']])
+  expect(summary('✖ 5 problems (3 errors, 2 warnings)\n')).toEqual([['3 errors', 'error'], ['2 warnings', 'warning']])
+  expect(summary('\nadded 120 packages, and audited 121 packages in 3s\n\n3 vulnerabilities (1 moderate, 2 high)\n'))
+    .toEqual([['added 120 packages', null], ['3 vulnerabilities', 'warning']])
+  expect(summary('added 1 package in 812ms\n\nfound 0 vulnerabilities\n')).toEqual([['added 1 package', null]])
+  expect(summary('Successfully installed numpy-2.1.0 pandas-2.2.3\n')).toEqual([['installed 2 packages', null]])
+  expect(summary('hello\n')).toBeNull()
+  // A failing build gets its count and the error line Claude doesn't already show.
+  const failed = 'Exit code 101\n   Compiling a\n   Compiling b\n   Compiling c\nerror[E0425]: cannot find value `x`\n --> src/main.rs:3:5\nerror: could not compile `a` due to 1 previous error\n'
+  expect(outcome(failed, true, 0)).toEqual([['1 error', 'error'], ['↳ error[E0425]: cannot find value `x` at src/main.rs:3:5', 'error']])
 })
