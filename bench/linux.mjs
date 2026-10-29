@@ -9,6 +9,8 @@
 //   typing    CPU over 10 s of typing a key every 100 ms
 //   memory    MB of PSS once idle, and again after the flood fills the scrollback
 //   resize full  resize again, once the flood has filled the scrollback, which xterm reflows each time
+//   diff      with --repo: ms from asking for the diff of every change to the frame that shows it, and the CPU
+//             seconds nook spends in the 5 s after, colors included
 //   tui       key echo, typing CPU, and resize again, in bench/tui.mjs, a stand-in for Claude's fullscreen
 //             view that redraws the whole screen for each key, as Claude does
 // Every launch times its open. The first --sessions launches of each build also run the rest, and each number
@@ -21,11 +23,12 @@
 // baseline as well as main catches a slow drift that no single merge shows.
 // CPU and memory count nook and its WebKit processes, not the shell in its tab. The tab runs a small bash loop
 // that echoes lines, in a folder outside any repository, so neither Claude nor the git panel's poll adds
-// noise. Xvfb has no GPU, so WebKit draws in software: compare numbers from the same machine, not with a
+// noise. With --repo it runs in that repository instead, so the git panel and its diff tab are measured too;
+// bench/diffrepo.mjs makes a repository with a large diff for it. Xvfb has no GPU, so WebKit draws in software: compare numbers from the same machine, not with a
 // desktop's.
 // Needs Xvfb and xdotool, and a build: `npx tauri build --no-bundle`.
 //   node bench/linux.mjs [--bin src-tauri/target/release/nook[,other...]] [--wallpapers none,koi] [--runs 7]
-//                        [--sessions 3] [--tui off] [--json out.json]
+//                        [--sessions 3] [--tui off] [--repo path] [--json out.json]
 import { spawn, execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -36,6 +39,7 @@ const bins = flag('bin', new URL('../src-tauri/target/release/nook', import.meta
 const wallpapers = flag('wallpapers', 'none').split(',')
 const runs = Number(flag('runs', 7))
 const sessions = Math.min(runs, Number(flag('sessions', 3)))
+const repo = flag('repo', null) && resolve(flag('repo'))
 const [W, H] = [1280, 820] // nook's own first size
 for (const bin of bins) if (!existsSync(bin)) throw new Error(`no build at ${bin}`)
 
@@ -69,7 +73,7 @@ function scratch(wallpaper, command = ['bash', '-c', SHELL]) {
   const home = join(dir, 'home')
   mkdirSync(config, { recursive: true })
   mkdirSync(home)
-  writeFileSync(join(config, 'settings.json'), JSON.stringify({ command, lastDir: home, pinned: [] }))
+  writeFileSync(join(config, 'settings.json'), JSON.stringify({ command, lastDir: repo ?? home, pinned: [] }))
   writeFileSync(join(config, 'theme.css'), `:root { --wallpaper: ${wallpaper}; }\n`)
   return { dir, env: { ...env, XDG_CONFIG_HOME: join(dir, 'config'), HOME: home } }
 }
@@ -214,6 +218,17 @@ async function session(app) {
   Object.assign(r, { scroll: median(scrolls), scrollP95: quantile(scrolls, 0.95) })
   // With the scrollback full, xterm reflows all of it on each resize.
   Object.assign(r, await resizes(app, win, 20, 'resizeFull'), { marks })
+  if (repo) {
+    xdotool('windowsize', '--sync', win, String(W), String(H))
+    await sleep(1000)
+    const pids = processes(app.child.pid)
+    const c0 = cpu(pids)
+    from = app.lines.length
+    xdotool('key', 'F9')
+    r.diff = (await app.next('diff', 30000, from)).ms
+    await sleep(5000)
+    r.diffCpu = cpu(pids) - c0
+  }
   return r
 }
 
@@ -266,6 +281,7 @@ const METRICS = [
   ['memory', 'memory MB', 0, 5],
   ['memoryFull', 'memory full MB', 0, 20], // when the webview collects the flood's garbage varies by tens of MB
   ['resizeFull', 'resize full ms', 1, 3],
+  ...(repo ? [['diff', 'diff ms', 0, 30], ['diffCpu', 'diff CPU s', 2, 0.1]] : []),
   ['tuiKey', 'tui key echo ms', 1, 2],
   ['tuiKeyP95', 'tui key p95 ms', 1, 4],
   ['tuiTyping', 'tui typing CPU %', 1, 1.5],
