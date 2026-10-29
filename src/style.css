@@ -581,6 +581,14 @@ svg.defs { position: absolute; width: 0; height: 0; }
   box-shadow: inset 2px 0 0 color-mix(in oklch, var(--accent) calc(12% + var(--age) * 88%), transparent);
 }
 .cm-editor .cm-blame .cm-gutterElement:hover .blame { color: var(--ink-1); }
+/* Change bars: a gutter of no width, its bars drawn in the line numbers' right padding, so showing them moves no text. */
+.cm-editor .cm-changes { width: 0; overflow: visible; } /* CodeMirror clips a gutter to its width */
+.cm-editor .cm-changes .cm-gutterElement { position: relative; overflow: visible; }
+.cm-editor .cm-changes .gitbar { position: absolute; top: 0; bottom: 0; left: -6px; width: 3px; border-radius: 1px; }
+.cm-editor .gitbar.add { background: var(--ansi-green); }
+.cm-editor .gitbar.change { background: var(--ansi-yellow); }
+.cm-editor .gitbar.delete { bottom: auto; top: -4px; left: -7px; width: 0; height: 0; border: 4px solid transparent; border-left: 5px solid var(--ansi-red); border-radius: 0; }
+.cm-editor .gitbar.delete.below { top: auto; bottom: -4px; }
 .cm-editor .cm-activeLineGutter { background: none; color: var(--ink-1); }
 .cm-editor .cm-cursor { border-left: 2px solid var(--cursor); }
 .cm-editor .cm-selectionBackground,

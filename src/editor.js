@@ -17,6 +17,7 @@ import { el } from './ui.js'
 import { DOC } from './files.js'
 import { UNCOMMITTED, runs, ages, since } from './blame.js'
 import { outline as outlineOf } from './symbols.js'
+import { lineChanges } from './linediff.js'
 
 // Blame: a gutter, off until asked for, of who last changed each line. Its marks follow edits until the next blame.
 const blameGutter = new Compartment()
@@ -39,6 +40,29 @@ class BlameMark extends GutterMarker {
   }
 }
 
+// Change bars: beside the line numbers, the lines that differ from git's copy of the file. Off outside a repository.
+const changeGutter = new Compartment()
+const barred = new WeakSet() // editors showing the bars
+const setChanges = StateEffect.define()
+const changeMarks = StateField.define({
+  create: () => RangeSet.empty,
+  update: (marks, tr) => tr.effects.find(e => e.is(setChanges))?.value ?? (tr.docChanged ? marks.map(tr.changes) : marks),
+})
+class ChangeMark extends GutterMarker {
+  constructor(kind, title) {
+    super()
+    Object.assign(this, { kind, title })
+  }
+  eq(o) { return o.kind === this.kind }
+  toDOM() { return el('div', { className: `gitbar ${this.kind}`, title: this.title }) }
+}
+const BARS = {
+  add: new ChangeMark('add', 'Added since git\'s copy'),
+  change: new ChangeMark('change', 'Changed since git\'s copy'),
+  delete: new ChangeMark('delete', 'Lines taken out above'),
+  below: new ChangeMark('delete below', 'Lines taken out below'),
+}
+
 /**
  * An editor holding `text`, in the language its file `name` implies. Calls `changed` after each edit. With
  * `status`, a line under the text shows the caret, the language, the indent, and `status.eol()`, the line ending.
@@ -57,7 +81,7 @@ export function createEditor(name, text, changed, { status } = {}) {
     doc: text,
     extensions: [
       gutters({ fixed: false }), // scrolls with the text, so no backdrop shows through behind it
-      blameMarks, blameGutter.of([]), lineNumbers(), foldGutter({ markerDOM: fold }), highlightActiveLineGutter(), highlightActiveLine(), highlightSpecialChars(),
+      blameMarks, blameGutter.of([]), lineNumbers(), changeMarks, changeGutter.of([]), foldGutter({ markerDOM: fold }), highlightActiveLineGutter(), highlightActiveLine(), highlightSpecialChars(),
       history(), drawSelection(), dropCursor(), rectangularSelection(), crosshairCursor(), EditorState.allowMultipleSelections.of(true),
       indentOnInput(), indentUnit.of(unit), bracketMatching(), highlightSelectionMatches(), codeFolding({ placeholderDOM: folded }),
       // Code closes its brackets and offers the words already in the file, as well as what its language knows.
@@ -161,6 +185,36 @@ export function showBlame(editor, blame, pick) {
           },
         },
       }))]),
+    ],
+  })
+}
+
+/**
+ * Marks the editor's lines that differ from `base`, git's copy of the file as an array of lines, or takes the bars
+ * away when it's null.
+ */
+export function showChanges(editor, base) {
+  if (!base) {
+    if (barred.delete(editor)) editor.dispatch({ effects: [setChanges.of(RangeSet.empty), changeGutter.reconfigure([])] })
+    return
+  }
+  const doc = editor.state.doc
+  const marks = new RangeSetBuilder()
+  for (const c of lineChanges(base, doc.toJSON())) {
+    if (c.kind === 'delete') {
+      const below = c.at > doc.lines
+      const line = doc.line(below ? doc.lines : c.at)
+      marks.add(line.from, line.from, below ? BARS.below : BARS.delete)
+    } else {
+      for (let n = c.from; n <= c.to; n++) marks.add(doc.line(n).from, doc.line(n).from, BARS[c.kind])
+    }
+  }
+  const on = barred.has(editor)
+  barred.add(editor)
+  editor.dispatch({
+    effects: [
+      setChanges.of(marks.finish()),
+      ...(on ? [] : [changeGutter.reconfigure(gutter({ class: 'cm-changes', markers: view => view.state.field(changeMarks) }))]),
     ],
   })
 }
