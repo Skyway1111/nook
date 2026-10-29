@@ -22,6 +22,20 @@ sash.onpointerdown = e => {
   sash.onlostpointercapture = () => { sash.onpointermove = null }
 }
 sash.ondblclick = () => pane.style.removeProperty('--split')
+// More tabs than fit scroll sideways: the wheel turns the strip, the shown tab scrolls into view, and a faded edge
+// says more lie past it.
+strip.addEventListener('wheel', e => {
+  if (e.deltaX || strip.scrollWidth <= strip.clientWidth) return
+  e.preventDefault()
+  strip.scrollLeft += e.deltaY
+}, { passive: false })
+function edges() {
+  const end = strip.scrollWidth - strip.clientWidth
+  strip.classList.toggle('more-left', strip.scrollLeft > 1)
+  strip.classList.toggle('more-right', strip.scrollLeft < end - 1)
+}
+strip.addEventListener('scroll', edges, { passive: true })
+new ResizeObserver(edges).observe(strip)
 
 /** `settings.command` is what each new Claude tab runs. */
 export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, openFolder }) {
@@ -47,6 +61,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     view.addEventListener('pointerdown', () => tab !== active && show(tab), true) // a click in a half focuses it
     strip.append(head)
     tabs.push(tab)
+    edges()
     return tab
   }
 
@@ -68,6 +83,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     }
     active = tab
     tab.el.classList.add('active')
+    tab.el.scrollIntoView({ block: 'nearest', inline: 'nearest' })
     tab.view.hidden = false
     if (!tab.viewer) claude = tab
     else file = tab
@@ -176,6 +192,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     tabs.splice(i, 1)
     tab.el.remove()
     tab.view.remove()
+    edges()
     tab.terminal?.close()
     tab.viewer?.close?.()
     if (tab.type === 'claude' && tabs.length) save() // the window closes with its last tab: its sessions reopen
