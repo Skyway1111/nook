@@ -173,6 +173,11 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .sessions .session .file { padding: 1px 7px; border-radius: 5px; font-size: .78rem; background: var(--hover); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
 .sessions .session .file:hover { background: var(--line); color: var(--ink-1); }
 .sessions .session .file:is(.review, .act) { flex: none; color: var(--accent); }
+.sessions .session .file.deny { flex: none; }
+.sessions .session .asks { display: flex; align-items: center; gap: 6px; }
+.sessions .session .asks:empty { display: none; }
+.sessions .session .doing[hidden] { display: none; }
+.sessions .session .asks .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-term); font-size: .8rem; color: var(--ink-1); }
 .sessions .mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .sessions [data-mark=working] .mark { background: var(--session-working); }
 .sessions [data-mark=waiting] .mark { background: var(--session-waiting); }

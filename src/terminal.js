@@ -347,6 +347,8 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     submit: () => send('\r'),
     /** Pastes `text` and sends it, without taking the keys: for a tab that isn't in front. */
     prompt: text => { term.paste(text); setTimeout(() => send('\r'), 50) },
+    /** Sends keys as typed, without taking them: to answer what Claude asks in a tab that isn't in front. */
+    key: data => send(data),
     focus: () => term.focus(),
     /** Hears every file the session wrote, newest last, so a page Claude wrote shows its new stylesheet. */
     wrote: paths => pictures.wrote(paths),

@@ -691,7 +691,9 @@ const running = new Map() // tool_use_id -> activity, of the calls under way
 async function setStatus($, file, status, patch = {}) {
   const since = status === state.status ? state.since : await $.clock.now()
   const last = [...running.values()].pop() ?? ''
-  await report($, file, { status, since, activity: status === 'idle' ? '' : last, agents: agents.size, ...patch })
+  // What a permission prompt asks holds only while the session waits on it.
+  const asks = status === 'waiting' ? state.asks ?? null : null
+  await report($, file, { status, since, activity: status === 'idle' ? '' : last, agents: agents.size, asks, ...patch })
 }
 
 export function register(on) {
@@ -773,7 +775,9 @@ export function register(on) {
   // A permission prompt: the session waits on the person until the call runs or the turn ends.
   on('classic.PermissionRequest', async ($, e, next) => {
     const result = await next(e)
-    if (file && !result?.decision) await setStatus($, file, 'waiting').catch(() => {})
+    // Claude shows its prompt: nook's dashboard can answer it, so it says what the call is.
+    const asks = { tool: e.tool_name, what: activity({ tool: e.tool_name, ...(e.tool_input ?? {}) }) }
+    if (file && !result?.decision) await setStatus($, file, 'waiting', { asks }).catch(() => {})
     return result
   })
   on('session.end', async ($, e, next) => {

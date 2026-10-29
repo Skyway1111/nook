@@ -57,6 +57,10 @@ export function cannotSend(view, report = {}) {
 /** Whether a session starts picked to get a prompt sent to several: free to take one, and not mid-turn. */
 export const pickedAtFirst = (view, report = {}) => !cannotSend(view, report) && report.status !== 'working'
 
+/** The permission prompt a session shows, `{ tool, what }`, while it waits on it and nobody has answered: what
+ * its dashboard card offers to allow or deny. A question Claude asks (AskUserQuestion) is answered in the tab. */
+export const asking = (view, report = {}) => (view?.mark === 'waiting' && report.status === 'waiting' && report.asks) || null
+
 /** How many sessions want the user: waiting on them, or done since they last looked. */
 export const wanting = views => views.filter(v => v.mark === 'waiting' || v.mark === 'done').length
 
