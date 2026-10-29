@@ -66,7 +66,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { diagramBox, errorLine, failingTests, outcome, readPaths, searchParts, shellSearch, splitDiagrams, summary, testCounts } from './register.js'
+import { diagramBox, errorLine, failingTests, headerSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, splitDiagrams, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -278,4 +278,62 @@ test('a reply with a diagram draws it in its place, in a tab nook started only',
   const desktop = await $.ui.mount({ plugin: 'nook', surface: 'desktop', component: 'AssistantMessage', requestId: 'r2', props: { text, isFirstOfReply: true } })
   expect(await desktop.find({ type: 'Image' })).toBeFalsy()
   await desktop.unmount()
+})
+
+test('a picture\'s size comes from its header: PNG, GIF, WebP, and a JPEG past its EXIF', () => {
+  const bytes = (...parts: (string | number[])[]) => parts.map(p => (typeof p === 'string' ? p : String.fromCharCode(...p))).join('')
+  expect(headerSize(bytes([137], 'PNG', [13, 10, 26, 10, 0, 0, 0, 13], 'IHDR', [0, 0, 2, 128, 0, 0, 1, 224]))).toEqual([640, 480])
+  expect(headerSize(bytes('GIF89a', [64, 1, 200, 0]))).toEqual([320, 200])
+  expect(headerSize(bytes('RIFF', [0, 0, 0, 0], 'WEBPVP8X', [10, 0, 0, 0, 0, 0, 0, 0, 127, 2, 0, 223, 1, 0]))).toEqual([640, 480])
+  // VP8L packs width-1 and height-1 in 14 bits each: 639 and 479.
+  const w = 639, h = 479, bits = w | (h << 14)
+  expect(headerSize(bytes('RIFF', [0, 0, 0, 0], 'WEBPVP8L', [0, 0, 0, 0, 0x2f, bits & 255, (bits >> 8) & 255, (bits >> 16) & 255, (bits >> 24) & 255]))).toEqual([640, 480])
+  expect(headerSize(bytes('RIFF', [0, 0, 0, 0], 'WEBPVP8 ', [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 2, 224, 1]))).toEqual([640, 480])
+  const exif = [0xff, 0xe1, 0, 8, ...'Exif'.split('').map(c => c.charCodeAt(0)), 0, 0]
+  expect(headerSize(bytes([0xff, 0xd8], exif, [0xff, 0xc4, 0, 4, 0, 0], [0xff, 0xc2, 0, 17, 8, 1, 224, 2, 128, 3]))).toEqual([640, 480])
+  expect(headerSize('plain text')).toBe(null)
+})
+
+test('a reply\'s Markdown pictures: local picture files only, outside code, cut after their paragraph', () => {
+  expect(linkTarget('out/plot.png')).toBe('out/plot.png')
+  expect(linkTarget('<my plot.png>')).toBe('my plot.png')
+  expect(linkTarget('my%20plot.png')).toBe('my plot.png')
+  expect(linkTarget('file:///C:/work/a.jpg')).toBe('C:/work/a.jpg')
+  expect(linkTarget('file:///work/a.webp')).toBe('/work/a.webp')
+  expect(linkTarget('https://example.com/a.png')).toBe(null)
+  expect(linkTarget('notes.md')).toBe(null)
+  const reply = 'The plot ![loss](out/loss.png) shows it.\nIt drops fast.\n\n```md\n![code](skip.png)\n```\n\n![](a.png) ![](<b c.gif> "two")\n\n![web](https://x.io/w.png)\n\nDone.'
+  expect(pictureLinks(reply)).toEqual(['out/loss.png', 'a.png', 'b c.gif'])
+  const shown = new Set(['out/loss.png', 'a.png', 'b c.gif'])
+  expect(splitPictures(reply, shown)).toEqual([
+    'The plot loss shows it.\nIt drops fast.', ['out/loss.png'],
+    '```md\n![code](skip.png)\n```', ['a.png', 'b c.gif'],
+    '![web](https://x.io/w.png)\n\nDone.',
+  ])
+  // A link to a file that isn't there stays as written.
+  expect(splitPictures('![gone](gone.png)', new Set())).toEqual(['![gone](gone.png)'])
+})
+
+test('a reply that links a picture file draws it after its paragraph, in any terminal', async ($, on) => {
+  const png = (w: number, h: number) => btoa(String.fromCharCode(137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, w >> 8, w & 255, 0, 0, h >> 8, h & 255))
+  on('session.root', () => ({ value: '/work' }))
+  on('fs.stat', (_, e) => (e.path === '/work/out/plot.png' ? { value: { kind: 'file', size: 9, mtimeMs: 1, isLink: false } } : { deny: 'ENOENT' }))
+  on('fs.read', () => ({ value: { base64: png(400, 200) } }))
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: `engine: ${e.props.text}` }))
+  const text = 'Here is the plot:\n\n![plot](./out/plot.png)\n\nThe peak is at 3. ![missing](gone.png)'
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AssistantMessage', requestId: 'r1', props: { text, isFirstOfReply: true }, viewport: { columns: 80, rows: 40 } })
+  expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine: Here is the plot:')
+  const image = await ui.find({ type: 'Image' })
+  expect(image?.props).toMatchObject({ source: { file: '/work/out/plot.png' }, columns: 40, rows: 10 })
+  expect((await ui.find({ type: 'Markdown' }))?.props.text).toBe('The peak is at 3. ![missing](gone.png)')
+  await ui.unmount()
+  // A reply of a picture alone names it beside the bullet.
+  const alone = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AssistantMessage', requestId: 'r2', props: { text: '![](out/plot.png)', isFirstOfReply: true } })
+  expect((await alone.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine: plot.png')
+  expect(await alone.findAll({ type: 'Image' })).toHaveLength(1)
+  await alone.unmount()
+  // A link to a file that isn't there leaves the reply to the engine.
+  const none = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AssistantMessage', requestId: 'r3', props: { text: 'See ![x](gone.png)', isFirstOfReply: true } })
+  expect((await none.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine: See ![x](gone.png)')
+  await none.unmount()
 })
