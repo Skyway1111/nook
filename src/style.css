@@ -406,10 +406,48 @@ svg.defs { position: absolute; width: 0; height: 0; }
 
 /* File views */
 .view:not(.claude) { overflow: auto; outline: none; user-select: text; cursor: auto; }
-.view.picture { display: flex; align-items: center; justify-content: center; padding: 24px; }
-.picture img {
-  max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px;
+.view.picture { overflow: hidden; }
+/* A picture that zooms and pans (previews.js): the image is placed by a transform from its top left. */
+.zoom { position: absolute; inset: 0; overflow: hidden; outline: none; cursor: grab; user-select: none; }
+.zoom:active { cursor: grabbing; }
+.zoom img {
+  position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; border-radius: 2px;
   background: repeating-conic-gradient(var(--hover) 0 25%, transparent 0 50%) 0 0 / 16px 16px;
+}
+.zoom img.pixels { image-rendering: pixelated; }
+.zoom .badge {
+  position: absolute; left: 12px; bottom: 10px; padding: 3px 9px; border-radius: 6px; pointer-events: none;
+  font-size: .8rem; background: var(--raised); color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+.view.media { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; }
+.media { display: contents; }
+.media video { max-width: 100%; max-height: 100%; border-radius: 6px; background: #000; }
+.media audio { width: min(560px, 100%); }
+.media .note { margin: 0; color: var(--ink-3); }
+.view.pdf { overflow: hidden; }
+.pdf-frame { position: absolute; inset: 0; outline: none; background: var(--bg); }
+.pdf-frame > iframe { width: 100%; height: 100%; border: 0; }
+
+/* CSV and TSV as a table (previews.js). Only the rows on screen exist; .rows moves to where they belong. */
+.sheet {
+  position: absolute; inset: 0; overflow: auto; outline: none;
+  font: calc(var(--term-font-size) * .93)/26px var(--font-term); color: var(--term-fg);
+}
+.sheet :is(.head, .row) { display: grid; grid-template-columns: var(--columns); width: max-content; min-width: 100%; }
+.sheet .head { position: sticky; top: 0; z-index: 1; background: linear-gradient(var(--raised) 0 0), var(--bg); box-shadow: 0 1px 0 var(--line); }
+.sheet .head button { height: 30px; padding: 0 8px; font: inherit; font-weight: 600; color: var(--ink-1); text-align: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sheet .head button:hover { background: var(--hover); }
+.sheet .head button[data-sort]::after { content: ' ' attr(data-sort); color: var(--accent); font-size: .8em; }
+.sheet .body { height: calc(var(--rows) * 26px); }
+.sheet .rows { will-change: transform; }
+.sheet .row { height: 26px; }
+.sheet .row:nth-child(even) { background: oklch(1 0 0 / .025); }
+.sheet .row:hover { background: var(--hover); }
+.sheet .row > span { padding: 0 8px; white-space: pre; overflow: hidden; text-overflow: ellipsis; border-right: 1px solid var(--line); }
+.sheet .n { color: var(--ink-3); text-align: right; user-select: none; }
+.sheet .foot {
+  position: sticky; left: 0; bottom: 0; width: max-content; margin: 8px 0 0 8px; padding: 3px 9px; border-radius: 6px;
+  font: .8rem var(--font-ui); background: var(--raised); color: var(--ink-3);
 }
 .view.note { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 24px; }
 .note button { padding: 6px 14px; border-radius: 6px; background: var(--raised); color: var(--ink-1); }
@@ -417,7 +455,8 @@ svg.defs { position: absolute; width: 0; height: 0; }
 
 /* A text file: the editor or Markdown's rendered page, the save bar under it, and the toggle between them. */
 .view.text { display: flex; flex-direction: column; overflow: hidden; }
-.text > :is(.cm-editor, .markdown) { flex: 1; min-height: 0; }
+.text > :is(.cm-editor, .markdown, .rendered) { flex: 1; min-height: 0; }
+.text > .rendered { position: relative; outline: none; }
 .text > .markdown { overflow: auto; outline: none; padding: 28px 40px 64px; }
 .text > .mode {
   position: absolute; top: 10px; right: 22px; z-index: 1; display: flex; align-items: center; gap: 8px;
