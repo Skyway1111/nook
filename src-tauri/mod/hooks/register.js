@@ -1,5 +1,5 @@
 // Tells nook's composer what to show beside Claude's prompt, runs the two commands its menus send, and
-// draws pictures in the transcript. Every hook passes its event on unchanged, and the render hooks add
+// draws pictures in the transcript: ones Claude read, an SVG it wrote, and ones a shell command wrote. Every hook passes its event on unchanged, and the render hooks add
 // pictures under Claude's own drawing, and under a shell command's result the line that says how it went. The mod writes the session's model, effort, effort levels, context
 // fill, pasted images' folder, and what the session is doing as JSON to NOOK_STATE, and reads requests from
 // the .cmd file beside it: { command, args, at }.
@@ -13,6 +13,9 @@ const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) // the too
 const ASKS = new Set(['AskUserQuestion', 'ExitPlanMode']) // the tools that wait on the person
 const TOUCHED = 200 // the most files a report lists
 const sizes = new Map() // a pasted image's path -> its size, as a promise
+const MADE = 3 // the most pictures shown under a command that wrote them
+const made = new Map() // a Bash call's tool_use_id -> the pictures it wrote, as a promise of [path, size]
+const PICTURE = /\.(?:png|jpe?g|gif|webp|svg)$/i
 const TAIL = 64 * 1024 // the end of a command's output that its outcome is read from
 const SLOW = 3000 // ms past which a command's outcome line says how long it took
 const TIMES = 500 // the most commands whose run time is kept
@@ -92,8 +95,7 @@ function readSize(path, output) {
     return [d.originalWidth ?? d.displayWidth, d.originalHeight ?? d.displayHeight]
   }
   if (output?.type !== 'text' || !/\.svg$/i.test(path)) return null
-  const box = /viewBox\s*=\s*["'][^"']*?([\d.]+)[\s,]+([\d.]+)\s*["']/.exec(output.file.content)
-  return box ? [Number(box[1]), Number(box[2])] : UNKNOWN
+  return svgSize(output.file.content) ?? UNKNOWN
 }
 
 /** A PNG's [width, height], from its header. */
@@ -123,6 +125,41 @@ async function pasted($, text) {
     if (!(await $.fs.exists(path))) continue
     if (!sizes.has(path)) sizes.set(path, pngSize($, path).catch(() => UNKNOWN)) // past 4 MiB, $.fs.read refuses
     pictures.push([path, await sizes.get(path)])
+  }
+  return pictures
+}
+
+/** A picture file's [width, height]: a PNG's header, an SVG's viewBox, or UNKNOWN for any other kind. */
+async function pictureSize($, path) {
+  if (/\.png$/i.test(path)) return pngSize($, path).catch(() => UNKNOWN)
+  if (!/\.svg$/i.test(path)) return UNKNOWN
+  return svgSize(await $.fs.read(path).catch(() => '')) ?? UNKNOWN
+}
+
+/** An SVG's [width, height] from its viewBox, or null without one. */
+function svgSize(text) {
+  const box = /viewBox\s*=\s*["'][^"']*?([\d.]+)[\s,]+([\d.]+)\s*["']/.exec(text)
+  return box ? [Number(box[1]), Number(box[2])] : null
+}
+
+const LOOKS = /^(?:cd|ls|cat|head|tail|less|wc|echo|git|rg|grep|egrep|find|fd|which|pwd|stat|file)\b/ // commands that write no files
+
+/** The pictures a shell command wrote while it ran, three at most, as [path, size]: picture files its
+ * command or output names, and new ones in the session's folder, such as a plot a script saved. A file
+ * counts when it changed since `start`, less two seconds for file systems that keep coarse times. */
+export async function picturesMade($, command, stdout, start, root) {
+  const s = sep(root)
+  const absolute = p => (/^(?:[a-zA-Z]:)?[\\/]/.test(p) ? p : `${root}${s}${p.replace(/^\.[\\/]/, '')}`)
+  const named = Array.from(`${command}\n${stdout.slice(-TAIL)}`.matchAll(/(?:[a-zA-Z]:)?[^\s'"`(),=:;|<>]+\.(?:png|jpe?g|gif|webp|svg)\b/gi), m => absolute(m[0]))
+  const fresh = LOOKS.test(command.trim()) ? [] : (await $.fs.list(root).catch(() => []))
+    .filter(f => f.kind === 'file' && PICTURE.test(f.name) && f.mtimeMs >= start - 2000)
+    .map(f => `${root}${s}${f.name}`)
+  const pictures = []
+  for (const path of new Set([...named, ...fresh])) {
+    if (pictures.length >= MADE) break
+    const stat = await $.fs.stat(path).catch(() => null)
+    if (stat?.kind !== 'file' || stat.mtimeMs < start - 2000) continue
+    pictures.push([path, await pictureSize($, path)])
   }
   return pictures
 }
@@ -394,6 +431,12 @@ export function register(on) {
     const result = await next(e)
     times.set(e.tool_use_id, (await $.clock.now()) - start)
     if (times.size > TIMES) times.delete(times.keys().next().value)
+    if (!result?.deny && !result?.isError) {
+      const root = await $.session.root().catch(() => '')
+      const stdout = String(result?.result?.stdout ?? result?.text ?? '')
+      if (root) made.set(e.tool_use_id, picturesMade($, String(e.command ?? ''), stdout, start, root).catch(() => []))
+      if (made.size > TIMES) made.delete(made.keys().next().value)
+    }
     return result
   })
   // A permission prompt: the session waits on the person until the call runs or the turn ends.
@@ -419,16 +462,20 @@ export function register(on) {
   })
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const { tool, input, output } = e.props
-    const size = tool === 'Read' ? readSize(input.file_path, output) : null
+    const size = tool === 'Read' ? readSize(input.file_path, output)
+      : tool === 'Write' && /\.svg$/i.test(input.file_path ?? '') && !e.props.isRunning && !e.props.isErrored ? svgSize(String(input.content ?? '')) ?? UNKNOWN : null
     return size ? withPictures($, e, await next(e), [[input.file_path, size]]) : next(e)
   })
   // A shell command's result, drawn alone under its row.
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const { tool, tool_use_id, output, isErrored, isExpanded } = e.props
-    const parts = tool === 'Bash' && !isExpanded ? outcome(output, isErrored, times.get(tool_use_id)) : null
-    if (!parts) return next(e)
+    if (tool !== 'Bash' || isExpanded) return next(e)
+    const parts = outcome(output, isErrored, times.get(tool_use_id))
+    const pictures = (await made.get(tool_use_id)) ?? []
+    if (!parts && !pictures.length) return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    return Box({ flexDirection: 'column', children: [await next(e), outcomeRow(Box, Text, parts)] })
+    const drawn = parts ? Box({ flexDirection: 'column', children: [await next(e), outcomeRow(Box, Text, parts)] }) : await next(e)
+    return pictures.length ? withPictures($, e, drawn, pictures) : drawn
   })
   // A run of calls Claude folds into one line, such as `Read 3 files, searched for 1 pattern`: under it,
   // the files it read, what each search found, and each finished command that has something to say.
@@ -445,7 +492,9 @@ export function register(on) {
       if (parts) rows.push([[cut(command, 40), null], ...parts])
     }
     const read = readPaths(e.props.calls, root)
-    if (!rows.length && !read.length) return next(e)
+    const pictures = []
+    for (const call of e.props.calls) pictures.push(...((await made.get(call.tool_use_id)) ?? []))
+    if (!rows.length && !read.length && !pictures.length) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const shown = rows.slice(0, GROUP_ROWS).map(parts => outcomeRow(Box, Text, parts))
     if (rows.length > GROUP_ROWS) shown.push(outcomeRow(Box, Text, [[`and ${rows.length - GROUP_ROWS} more`, null]]))
@@ -453,7 +502,8 @@ export function register(on) {
       const more = read.length > READ_NAMES ? `, and ${read.length - READ_NAMES} more` : ''
       shown.unshift(outcomeRow(Box, Text, [[`${read.slice(0, READ_NAMES).join(', ')}${more}`, null]]))
     }
-    return Box({ flexDirection: 'column', children: [await next(e), ...shown] })
+    const drawn = Box({ flexDirection: 'column', children: [await next(e), ...shown] })
+    return pictures.length ? withPictures($, e, drawn, pictures.slice(0, MADE)) : drawn
   })
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     const pictures = e.props.text.includes('[Image #') ? await pasted($, e.props.text) : []
