@@ -80,6 +80,14 @@ export function modelName(id = '') {
   return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ''}`
 }
 
+/** Claude's plan on a card: how far its task list has got and the task under way, "2 of 5 · Fixing the
+ * parser", or "All 5 done", or '' with no plan. */
+export function planLine(plan) {
+  if (!plan?.total) return ''
+  if (plan.done >= plan.total) return `All ${plan.total} done`
+  return `${plan.done} of ${plan.total}${plan.now ? ` · ${plan.now}` : ''}`
+}
+
 /** How full a session's context window is, 0 to 100, or null before Claude's first reply fills it. */
 export const fill = (report = {}) => report.context?.window && report.context.percent != null ? report.context.percent : null
 
