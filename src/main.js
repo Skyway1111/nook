@@ -119,6 +119,16 @@ const tabFolder = () => {
   if (!tab) return files.current() || cwd
   return tab.type === 'claude' || tab.type === 'diff' ? tab.path : paths.parent(tab.path) || files.current() || cwd
 }
+// nook's welcome: on the first run, and from the command palette after.
+function welcome() {
+  if ($('welcome')) return
+  import('./welcome.js').then(m => m.showWelcome($('pane'), {
+    themes: drawer.themes,
+    wallpapers: () => $('toggle-wallpaper').click(),
+    onClose: () => tabs.focus(),
+  })).catch(banner)
+}
+
 let quick
 const openQuick = () => {
   quick ??= Promise.all([import('./quickopen.js'), import('./commands.js')]).then(([{ startQuickOpen }, { appCommands }]) => startQuickOpen({
@@ -128,6 +138,7 @@ const openQuick = () => {
       newSession: () => tabs.openClaude(here()),
       openQuick: prefix => openQuick().then(q => q.open(prefix)),
       quickPrompts,
+      welcome,
     }),
     gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
     openFile,
@@ -269,10 +280,4 @@ mark('chrome')
 await tabs.openClaude(cwd)
 mark('spawned')
 // First run only: the welcome loads once Claude's tab is up, so it never delays an open.
-if (drawer.firstRun) {
-  import('./welcome.js').then(m => m.showWelcome($('pane'), {
-    themes: drawer.themes,
-    wallpapers: () => $('toggle-wallpaper').click(),
-    onClose: () => tabs.focus(),
-  }))
-}
+if (drawer.firstRun) welcome()

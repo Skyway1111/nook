@@ -1,11 +1,12 @@
-// nook's welcome, on its first run only: pick a look, a wallpaper, and four things worth knowing. Every
+// nook's welcome, on its first run and from F1 after: pick a look, a wallpaper, and the shortcuts worth knowing. Every
 // choice applies at once and stays changeable in Settings, so the welcome only ever closes.
 import { el } from './ui.js'
 
 const TIPS = [
   ['Ctrl+V', 'pastes a screenshot or copied files into Claude'],
+  ['Ctrl+P', 'goes to any file in the project'],
+  ['F1', 'runs any of nook\'s commands, this welcome among them'],
   ['Ctrl+Shift+P', 'sends a quick prompt, such as reviewing your changes'],
-  ['Drag', 'a file from the browser into Claude to hand it its path'],
   ['Ctrl+Shift+S', 'shows every session, across folders'],
 ]
 
