@@ -177,7 +177,7 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
     tab.view.classList.add('claude')
     const host = tab.view.appendChild(el('div', { className: 'xterm-host' }))
     // A key that answers Claude's question clears the tab's waiting mark at once, not when the tool ends.
-    host.addEventListener('keydown', e => ANSWERS.test(e.code) && sessions.answered(tab), true)
+    host.addEventListener('keydown', e => ANSWERS.test(e.code) && !e.target.closest('.find') && sessions.answered(tab), true)
     show(tab) // the terminal measures its size, so it starts visible
     tab.terminal = await startTerminal(host, {
       cwd,

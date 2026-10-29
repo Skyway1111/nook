@@ -8,6 +8,7 @@ import { startComposer } from './composer.js'
 import { startPictures } from './pictures.js'
 import { imageStart, FOUND, NONE } from './sequences.js'
 import { startLinks } from './links.js'
+import { startSearch } from './search.js'
 import { fileUrl } from './linkify.js'
 import { ANSI, CLAUDE_SLOTS, slotVar, bytes } from './palette.js'
 import { WINDOWS } from './paths.js'
@@ -256,8 +257,14 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   })
   new ResizeObserver(refit).observe(host)
 
+  const search = startSearch(term, host)
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true
+    if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyF') {
+      search.open()
+      e.preventDefault()
+      return false
+    }
     if (e.altKey && e.key === 'F4') return false // the system closes the window
     if (e.ctrlKey && e.key === 'Tab') return false // the tab strip cycles
     if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[PS]$/.test(e.code)) return false // quick prompts, sessions
@@ -334,6 +341,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
       clearTimeout(hold?.timer)
       composer.close()
       links.dispose()
+      search.dispose()
       output.onmessage = () => {}
       invoke('pty_close', { id })
       term.dispose()
