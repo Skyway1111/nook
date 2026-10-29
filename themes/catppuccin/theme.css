@@ -1,0 +1,40 @@
+/* Catppuccin: the Mocha flavor of the community's pastel palette (MIT), soft mauve and lavender over a deep base. */
+
+:root {
+  --h: 285;
+  --bg: #181825;
+  --raised: #313244;
+  --hover: color-mix(in oklch, #cdd6f4 7%, transparent);
+  --line: color-mix(in oklch, #cdd6f4 11%, transparent);
+  --ink-1: #cdd6f4;
+  --ink-2: #bac2de;
+  --ink-3: #7f849c;
+  --accent: #cba6f7;
+  --icon-image: #f5c2e7;
+  --icon-code: #94e2d5;
+
+  --term-bg: #1e1e2e;
+  --term-fg: #cdd6f4;
+  --cursor: #f5e0dc;
+  --selection: color-mix(in oklch, #585b70 85%, transparent);
+
+  --ansi-black: #45475a;
+  --ansi-red: #f38ba8;
+  --ansi-green: #a6e3a1;
+  --ansi-yellow: #f9e2af;
+  --ansi-blue: #89b4fa;
+  --ansi-magenta: #f5c2e7;
+  --ansi-cyan: #94e2d5;
+  --ansi-white: #bac2de;
+  --ansi-bright-black: #585b70;
+  --ansi-bright-red: #f38ba8;
+  --ansi-bright-green: #a6e3a1;
+  --ansi-bright-yellow: #f9e2af;
+  --ansi-bright-blue: #89b4fa;
+  --ansi-bright-magenta: #f5c2e7;
+  --ansi-bright-cyan: #94e2d5;
+  --ansi-bright-white: #a6adc8;
+
+  --claude-claude: #fab387;
+  --claude-permission: #b4befe;
+}

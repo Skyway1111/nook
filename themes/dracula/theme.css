@@ -1,0 +1,40 @@
+/* Dracula: the classic dark palette (MIT), purple and pink over night gray, with vivid green and cyan. */
+
+:root {
+  --h: 280;
+  --bg: #21222c;
+  --raised: #343746;
+  --hover: color-mix(in oklch, #f8f8f2 7%, transparent);
+  --line: color-mix(in oklch, #f8f8f2 11%, transparent);
+  --ink-1: #f8f8f2;
+  --ink-2: #d6d6e0;
+  --ink-3: #6272a4;
+  --accent: #bd93f9;
+  --icon-image: #ff79c6;
+  --icon-code: #8be9fd;
+
+  --term-bg: #282a36;
+  --term-fg: #f8f8f2;
+  --cursor: #f8f8f2;
+  --selection: color-mix(in oklch, #44475a 85%, transparent);
+
+  --ansi-black: #21222c;
+  --ansi-red: #ff5555;
+  --ansi-green: #50fa7b;
+  --ansi-yellow: #f1fa8c;
+  --ansi-blue: #bd93f9;
+  --ansi-magenta: #ff79c6;
+  --ansi-cyan: #8be9fd;
+  --ansi-white: #f8f8f2;
+  --ansi-bright-black: #6272a4;
+  --ansi-bright-red: #ff6e6e;
+  --ansi-bright-green: #69ff94;
+  --ansi-bright-yellow: #ffffa5;
+  --ansi-bright-blue: #d6acff;
+  --ansi-bright-magenta: #ff92df;
+  --ansi-bright-cyan: #a4ffff;
+  --ansi-bright-white: #ffffff;
+
+  --claude-claude: #ffb86c;
+  --claude-permission: #bd93f9;
+}
