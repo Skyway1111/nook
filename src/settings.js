@@ -65,6 +65,29 @@ function hue(set) {
   const input = el('input', { type: 'range', min: 0, max: 359, className: 'hue', oninput: () => set(input.value) })
   return [input, v => { input.value = v }]
 }
+// A color's value as #rrggbb for <input type="color">. Of a layered background, its last layer: the color under the rest.
+let pixel
+function hex(value) {
+  let depth = 0, at = 0
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === '(') depth++
+    else if (value[i] === ')') depth--
+    else if (value[i] === ',' && !depth) at = i + 1
+  }
+  pixel ??= el('canvas', { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true })
+  pixel.fillStyle = '#000'
+  pixel.fillStyle = value.slice(at).trim() // a value the canvas can't read leaves black
+  pixel.fillRect(0, 0, 1, 1)
+  return '#' + [...pixel.getImageData(0, 0, 1, 1).data.slice(0, 3)].map(c => c.toString(16).padStart(2, '0')).join('')
+}
+function color(set) {
+  const input = el('input', { type: 'color', className: 'swatch', oninput: () => set(input.value) })
+  return [input, v => { input.value = hex(v) }]
+}
+function strength(set) {
+  const input = el('input', { type: 'range', min: 0, max: 1, step: .05, className: 'strength', oninput: () => set(input.value) })
+  return [input, v => { input.value = v }]
+}
 const font = mono => set => {
   const button = el('button', { className: 'field', onclick: e => pickFont(e, mono, set) })
   return [button, v => { button.textContent = family(v); button.style.fontFamily = v }]
@@ -75,6 +98,9 @@ function size(set) {
 }
 const KNOBS = [
   ['--h', 'Hue', hue],
+  ['--accent', 'Accent', color],
+  ['--term-bg', 'Terminal', color],
+  ['--wallpaper-opacity', 'Wallpaper', strength],
   ['--font-ui', 'Interface font', font(false)],
   ['--ui-font-size', 'Interface size', size],
   ['--font-term', 'Terminal font', font(true)],
