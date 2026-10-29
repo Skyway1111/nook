@@ -311,6 +311,8 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
         if (tab) tab.look = look
       }
     },
+    /** Sends `text` to a Claude tab as a prompt, leaving the tab in front where it is. */
+    prompt: (tab, text) => tab.terminal?.prompt(text),
     /** Pastes `text` into the Claude tab shown last, and with `submit`, sends it. */
     paste(text, submit = false) {
       if (!claude?.terminal) return
