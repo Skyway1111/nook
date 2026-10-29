@@ -758,7 +758,7 @@ async function turnBand($, e, file, turn) {
   return Box({
     flexDirection: 'row',
     gap: 3,
-    children: [Text({ dimColor: true, wrap: 'truncate-end', children: `✎ Claude changed ${what} · ${counts}${isUndone ? ' · undone' : ''}` }), ...buttons],
+    children: [Text({ dimColor: true, wrap: 'truncate-end', children: `✎ Claude changed ${what} · ${counts}` }), ...buttons],
   })
 }
 
