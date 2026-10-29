@@ -255,6 +255,7 @@ export function startHistory(view, { root, rel, openFile, run }) {
 
   /** Picks a commit by its hash, reading older pages until it shows up. */
   async function goTo(oid) {
+    await poll() // the first page, if it's still being read
     let i
     while ((i = commits.findIndex(c => c.oid === oid)) < 0 && more) await load()
     if (i >= 0) pick(i)
@@ -314,7 +315,9 @@ export function startHistory(view, { root, rel, openFile, run }) {
   }
 
   /** Reloads when a branch, tag, or HEAD moved: a commit, a pull, a switch, here or in a terminal. */
-  async function poll() {
+  let checking = null
+  const poll = () => (checking ??= check().finally(() => (checking = null)))
+  async function check() {
     const now = await Promise.all([
       invoke('git', { dir: root, args: ['for-each-ref', '--format=%(HEAD)%(objectname) %(refname)', 'refs/heads', 'refs/remotes', 'refs/tags'] }),
       invoke('git', { dir: root, args: ['rev-parse', '-q', '--verify', 'HEAD'] }).catch(() => ''),
@@ -324,5 +327,5 @@ export function startHistory(view, { root, rel, openFile, run }) {
     return reload()
   }
 
-  return { refresh: poll }
+  return { refresh: poll, goTo }
 }

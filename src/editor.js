@@ -1,7 +1,7 @@
 // CodeMirror for a file tab, and its highlighter for Markdown's code blocks. style.css colors both from theme.css.
-import { EditorState, Compartment } from '@codemirror/state'
+import { EditorState, Compartment, StateField, StateEffect, RangeSet, RangeSetBuilder } from '@codemirror/state'
 import {
-  EditorView, keymap, gutters, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
+  EditorView, keymap, gutters, gutter, GutterMarker, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
   highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, showPanel,
 } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
@@ -15,6 +15,28 @@ import { languages } from '@codemirror/language-data'
 import { classHighlighter, highlightCode } from '@lezer/highlight'
 import { el } from './ui.js'
 import { DOC } from './files.js'
+import { UNCOMMITTED, runs, ages, since } from './blame.js'
+
+// Blame: a gutter, off until asked for, of who last changed each line. Its marks follow edits until the next blame.
+const blameGutter = new Compartment()
+const blamed = new WeakSet() // editors showing the gutter
+const setBlame = StateEffect.define()
+const blameMarks = StateField.define({
+  create: () => RangeSet.empty,
+  update: (marks, tr) => tr.effects.find(e => e.is(setBlame))?.value ?? (tr.docChanged ? marks.map(tr.changes) : marks),
+})
+class BlameMark extends GutterMarker {
+  constructor(oid, label, title, age) {
+    super()
+    Object.assign(this, { oid, label, title, age })
+  }
+  eq(o) { return o.oid === this.oid && o.label === this.label && o.age === this.age }
+  toDOM() {
+    const d = el('div', { className: this.label ? 'blame first' : 'blame', textContent: this.label, title: this.title })
+    d.style.setProperty('--age', this.age)
+    return d
+  }
+}
 
 /**
  * An editor holding `text`, in the language its file `name` implies. Calls `changed` after each edit. With
@@ -34,7 +56,7 @@ export function createEditor(name, text, changed, { status } = {}) {
     doc: text,
     extensions: [
       gutters({ fixed: false }), // scrolls with the text, so no backdrop shows through behind it
-      lineNumbers(), foldGutter({ markerDOM: fold }), highlightActiveLineGutter(), highlightActiveLine(), highlightSpecialChars(),
+      blameMarks, blameGutter.of([]), lineNumbers(), foldGutter({ markerDOM: fold }), highlightActiveLineGutter(), highlightActiveLine(), highlightSpecialChars(),
       history(), drawSelection(), dropCursor(), rectangularSelection(), crosshairCursor(), EditorState.allowMultipleSelections.of(true),
       indentOnInput(), indentUnit.of(unit), bracketMatching(), highlightSelectionMatches(), codeFolding({ placeholderDOM: folded }),
       // Code closes its brackets and offers the words already in the file, as well as what its language knows.
@@ -96,6 +118,50 @@ function statusLine(view, { language, unit, eol, toggleWrap }) {
   }
   paint()
   return { dom, update: paint }
+}
+
+/**
+ * Shows `blame`, from blame.js's parseBlame, in a gutter beside the line numbers, or takes the gutter away
+ * when it's null. A click on a commit's lines calls `pick(oid)`.
+ */
+export function showBlame(editor, blame, pick) {
+  if (!blame) {
+    if (blamed.delete(editor)) editor.dispatch({ effects: blameGutter.reconfigure([]) })
+    return
+  }
+  const { lines, commits } = blame
+  const age = ages(commits)
+  const doc = editor.state.doc
+  const marks = new RangeSetBuilder()
+  for (const run of runs(lines)) {
+    const c = commits.get(run.oid)
+    const mine = run.oid === UNCOMMITTED
+    const title = mine ? 'Not committed yet' : `${c.summary}\n${c.author}, ${new Date(c.time * 1000).toLocaleString()}\n${c.oid.slice(0, 10)}`
+    for (let n = run.from; n <= Math.min(run.to, doc.lines); n++) {
+      const label = n === run.from ? (mine ? 'Not committed' : `${since(c.time)}  ${c.author}`) : ''
+      marks.add(doc.line(n).from, doc.line(n).from, new BlameMark(run.oid, label, title, age.get(run.oid)))
+    }
+  }
+  const on = blamed.has(editor)
+  blamed.add(editor)
+  editor.dispatch({
+    effects: [
+      setBlame.of(marks.finish()),
+      ...(on ? [] : [blameGutter.reconfigure(gutter({
+        class: 'cm-blame',
+        markers: view => view.state.field(blameMarks),
+        initialSpacer: () => new BlameMark('', 'Not committed', '', 0),
+        domEventHandlers: {
+          mousedown(view, line) {
+            let oid = null
+            view.state.field(blameMarks).between(line.from, line.from, (from, to, mark) => { oid = mark.oid })
+            if (oid && oid !== UNCOMMITTED) pick(oid)
+            return !!oid
+          },
+        },
+      }))]),
+    ],
+  })
 }
 
 /** Puts the caret at 1-based `line` and `col` and scrolls that line to the middle. */

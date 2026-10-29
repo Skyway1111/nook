@@ -500,6 +500,14 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .cm-editor .cm-completionMatchedText { text-decoration: none; color: var(--accent); font-weight: 600; }
 .cm-editor .cm-completionDetail { margin-left: 1em; color: var(--ink-3); font-style: normal; }
 .cm-editor .cm-activeLine { background: var(--hover); }
+/* Blame: who last changed each run of lines, its bar brighter the more recent the commit. */
+.cm-editor .cm-blame .cm-gutterElement { padding-left: 12px; cursor: pointer; }
+.cm-editor .blame {
+  width: 26ch; height: 100%; padding: 0 12px 0 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font: .86em var(--font-ui); color: var(--ink-3);
+  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--accent) calc(12% + var(--age) * 88%), transparent);
+}
+.cm-editor .cm-blame .cm-gutterElement:hover .blame { color: var(--ink-1); }
 .cm-editor .cm-activeLineGutter { background: none; color: var(--ink-1); }
 .cm-editor .cm-cursor { border-left: 2px solid var(--cursor); }
 .cm-editor .cm-selectionBackground,
