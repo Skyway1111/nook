@@ -512,6 +512,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .view.text { display: flex; flex-direction: column; overflow: hidden; }
 .text > :is(.cm-editor, .markdown, .rendered) { flex: 1; min-height: 0; }
 .text > .rendered { position: relative; outline: none; }
+.text > .rendered > iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
 .text > .markdown { overflow: auto; outline: none; padding: 28px 40px 64px; }
 .text > .mode {
   position: absolute; top: 10px; right: 22px; z-index: 1; display: flex; align-items: center; gap: 8px;

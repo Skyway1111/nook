@@ -55,9 +55,11 @@ function showHint(text, x, y) {
 }
 const hideHint = () => { if (hint) hint.hidden = true }
 
-/** Links every path on disk in `term`'s rows. `where()` gives `{ cwd, home }`; `open(path, kind, line, col)`
- * opens one. */
-export function startLinks(term, where, open) {
+const PLACEHOLDER = '\u{10EEEE}' // a picture's cell, colored with its id; see pictures.js
+
+/** Links every path on disk in `term`'s rows, and each picture that names a file. `where()` gives
+ * `{ cwd, home }`; `open(path, kind, line, col)` opens one; `pathOf(id)` is the file of picture `id`. */
+export function startLinks(term, where, open, pathOf = () => undefined) {
   const cell = term.buffer.active.getNullCell()
   /** The file of the edit whose diff holds row `y`: the nearest `Update(...)` above, unless another of
    * Claude's messages starts between them. */
@@ -71,10 +73,44 @@ export function startLinks(term, where, open) {
     }
     return null
   }
+  /** A link over each picture's cells in `line`, row `y`, that opens the file it shows. */
+  function pictureLinks(line, y) {
+    const runs = new Map() // id -> [first x, last x]
+    for (let x = 0; x < term.cols; x++) {
+      if (!line.getCell(x, cell)?.getChars().startsWith(PLACEHOLDER)) continue
+      const id = cell.getFgColor()
+      const run = runs.get(id)
+      if (run) run[1] = x
+      else runs.set(id, [x, x])
+    }
+    const links = []
+    for (const [id, [first, last]] of runs) {
+      const path = pathOf(id)
+      if (!path) continue
+      links.push({
+        text: path,
+        range: { start: { x: first + 1, y }, end: { x: last + 1, y } },
+        decorations: { underline: false, pointerCursor: true },
+        hover: e => showHint('Ctrl+click to open in nook', e.clientX, e.clientY),
+        leave: hideHint,
+        activate(e) {
+          if (!e.ctrlKey && !e.metaKey) return
+          hideHint()
+          open(path, 'file')
+        },
+      })
+    }
+    return links
+  }
+
   const provider = term.registerLinkProvider({
     async provideLinks(y, callback) {
       const line = term.buffer.active.getLine(y - 1)
       if (!line) return callback(undefined)
+      if (line.translateToString(true).includes(PLACEHOLDER)) {
+        const links = pictureLinks(line, y)
+        return callback(links.length ? links : undefined)
+      }
       const { text, xs } = cells(line, term.cols, cell)
       const found = findPaths(text)
       const diff = !found.length && diffLine(text)

@@ -134,7 +134,6 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     try { here = fileUrl(data).path } catch {}
     return true
   })
-  const links = startLinks(term, () => ({ cwd: here, home }), openPath)
   term.loadAddon(new Unicode11Addon())
   term.unicode.activeVersion = '11'
   applyTheme(term)
@@ -152,6 +151,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   if (first) term.resize(first.cols, first.rows)
   const pictures = startPictures(term, host.querySelector('.xterm-screen'), reply => send(reply))
   keepSameRows(host.querySelector('.xterm-rows'), pictures.hide)
+  const links = startLinks(term, () => ({ cwd: here, home }), openPath, pictures.pathOf)
 
   // Claude redraws its whole screen within a frame or two of each resize: ESC [ 2 J, then every row, and
   // ConPTY ends the frame by showing the cursor. Until that redraw is in, a synchronized update (DEC 2026)

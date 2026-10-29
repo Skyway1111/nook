@@ -1,9 +1,10 @@
 // File tabs' richer views, loaded the first time one opens: a table for CSV and TSV, a picture that zooms and
-// pans, SVG drawn from the editor's text, audio and video, and PDF.
+// pans, SVG and HTML drawn from the editor's text, audio and video, and PDF.
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { el } from './ui.js'
 import { path as paths } from './paths.js'
 import { parse, separator, numeric, compareFields } from './delimited.js'
+import { pageUrl } from './pictures.js'
 
 const AUDIO = /\.(mp3|wav|ogg|oga|flac|m4a|aac|opus)$/i
 
@@ -109,6 +110,21 @@ export function svg() {
       if (was) setTimeout(() => URL.revokeObjectURL(was), 1000)
     },
     close: () => url && URL.revokeObjectURL(url),
+  }
+}
+
+/** An HTML page drawn from the editor's text, so unsaved edits show, in a frame that runs no script, sends no
+ * form, and opens nothing. A <base> put first points its relative links beside the file at `path`. */
+export function html(path) {
+  const frame = el('iframe', { title: paths.basename(path) })
+  frame.setAttribute('sandbox', '') // set before the page, so it loads sandboxed
+  const base = `<base href="${pageUrl(path)}">` // pageUrl encodes every quote and angle bracket
+  return {
+    el: frame,
+    update(text) {
+      const page = text.replace(/^(\s*<!doctype[^>]*>)?/i, (doctype = '') => doctype + base)
+      if (frame.srcdoc !== page) frame.srcdoc = page
+    },
   }
 }
 
