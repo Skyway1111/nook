@@ -84,8 +84,8 @@ function color(set) {
   const input = el('input', { type: 'color', className: 'swatch', oninput: () => set(input.value) })
   return [input, v => { input.value = hex(v) }]
 }
-function strength(set) {
-  const input = el('input', { type: 'range', min: 0, max: 1, step: .05, className: 'strength', oninput: () => set(input.value) })
+const slider = (min, max, step) => set => {
+  const input = el('input', { type: 'range', min, max, step, className: 'strength', oninput: () => set(input.value) })
   return [input, v => { input.value = v }]
 }
 const font = mono => set => {
@@ -100,7 +100,8 @@ const KNOBS = [
   ['--h', 'Hue', hue],
   ['--accent', 'Accent', color],
   ['--term-bg', 'Terminal', color],
-  ['--wallpaper-opacity', 'Wallpaper', strength],
+  ['--wallpaper-opacity', 'Wallpaper', slider(0, 1, .05)],
+  ['--wallpaper-speed', 'Wallpaper speed', slider(.25, 3, .25)],
   ['--font-ui', 'Interface font', font(false)],
   ['--ui-font-size', 'Interface size', size],
   ['--font-term', 'Terminal font', font(true)],
