@@ -430,3 +430,23 @@ test('in a tab nook started, Claude reads what nook draws in its replies; elsewh
   expect(sections[1]).toMatchObject({ scope: 'session', text: expect.stringContaining('```mermaid') })
   expect((await $.prompt.compose({ ...facts, surfaces: [] })).sections.map(s => s.id)).toEqual(['core'])
 })
+
+test('an HTML page Claude writes shows as a preview under the call, in a tab nook started only', async ($, on) => {
+  const reports: Record<string, unknown>[] = []
+  nook(on, reports)
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: `engine: ${e.props.tool}` }))
+  const write = (file_path: string, extra = {}) => $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'ToolUse', requestId: file_path,
+    props: { tool_use_id: 'w1', tool: 'Write', input: { file_path, content: '<h1>hi</h1>' }, output: { type: 'create' }, isRunning: false, isErrored: false, ...extra } })
+  const before = await write('/work/index.html')
+  expect(await before.find({ type: 'Image' })).toBeFalsy()
+  await before.unmount()
+  await $.session.start({ cwd: '/work' })
+  const page = await write('/work/site/index.html')
+  expect((await page.find({ type: 'Image' }))?.props).toMatchObject({ source: { file: '/work/site/index.html' }, columns: 64, rows: 20, alt: 'index.html' })
+  await page.unmount()
+  for (const [path, extra] of [['/work/notes.md', {}], ['/work/a.htm', { isErrored: true }], ['/work/b.html', { isRunning: true }]] as const) {
+    const ui = await write(path, extra)
+    expect(await ui.find({ type: 'Image' })).toBeFalsy()
+    await ui.unmount()
+  }
+})

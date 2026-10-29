@@ -348,6 +348,8 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     /** Pastes `text` and sends it, without taking the keys: for a tab that isn't in front. */
     prompt: text => { term.paste(text); setTimeout(() => send('\r'), 50) },
     focus: () => term.focus(),
+    /** Hears every file the session wrote, newest last, so a page Claude wrote shows its new stylesheet. */
+    wrote: paths => pictures.wrote(paths),
     find,
     /** Shows the prompt you sent before the view's top, or after it. */
     jump: up => turns.jump(up),
