@@ -275,7 +275,8 @@ export function startComposer(term, host, id) {
     held = null
     render(moved)
   })
-  // The screen's box as laid out, before the shift: its transform would feed back into the card's place.
+  // The screen's box as laid out, before the shift: its transform would feed back into the card's place. The
+  // card's own size moves the screen too, as when a font changes or a thumbnail loads.
   const measure = new ResizeObserver(() => {
     let left = 0
     let top = 0
@@ -285,6 +286,7 @@ export function startComposer(term, host, id) {
   })
   measure.observe(host)
   measure.observe(screen)
+  measure.observe(card)
 
   /** Sends xterm a left-button event at the middle of cell `at`, which reaches Claude's mouse tracking. */
   function send(type, at) {
