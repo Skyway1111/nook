@@ -248,6 +248,26 @@ export function summary(text) {
   return parts.length ? parts : null
 }
 
+const FAILING = [
+  /^test (\S+) \.\.\. FAILED$/, // cargo
+  /^\s*not ok \d+ - (.+?)(?: # .*)?$/, // node --test, TAP
+  /^\s*✖ (.+?) \([\d.]+m?s\)$/, // node --test, spec
+  /^\s*● (.+?)$/, // jest
+  /^\s*× (.+?)(?: \d+ms)?$/, // vitest
+  /^FAILED \S*?::(\S+)/, // pytest
+]
+const FAILING_NAMES = 3 // the most failing tests a row names
+
+/** The names of the tests a run failed, each once and in order, from the first runner's lines found. */
+export function failingTests(text) {
+  const lines = text.slice(-TAIL).split('\n').map(l => l.replace(/\x1b\[[\d;]*m/g, '').trimEnd())
+  for (const pattern of FAILING) {
+    const names = [...new Set(lines.map(l => pattern.exec(l)?.[1]).filter(Boolean))]
+    if (names.length) return names
+  }
+  return []
+}
+
 const ERROR = /^(?:error(?:\[E\d+\])?:|.*\berror TS\d+:|\w*Error:|\w+Exception:|npm ERR!|fatal:|FAIL\b|thread '.*' panicked|panic:)/
 
 /** The line of a failed command's output that says what went wrong, with a Rust error's `-->` place, or
@@ -345,6 +365,11 @@ export function outcome(output, isErrored, ms) {
   const parts = []
   const tests = text ? testCounts(text) : null
   if (tests?.failed) parts.push([`✗ ${tests.failed} failed, ${tests.passed} passed`, 'error'])
+  if (tests?.failed) {
+    const names = failingTests(text)
+    const more = names.length > FAILING_NAMES ? `, and ${names.length - FAILING_NAMES} more` : ''
+    if (names.length) parts.push([names.slice(0, FAILING_NAMES).map(n => cut(n, 40)).join(', ') + more, null])
+  }
   else if (tests) parts.push([`✓ ${tests.passed} passed`, 'success'])
   else if (text) parts.push(...(summary(text) ?? []))
   if (!tests && isErrored && text) {
