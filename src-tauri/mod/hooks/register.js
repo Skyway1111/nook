@@ -175,12 +175,66 @@ export function errorLine(text) {
 /** The files a folded run of calls read, each relative to `root` when inside it and once only, so nook
  * links each one in the row (Ctrl+click opens it, resting the mouse shows its lines). */
 export function readPaths(calls, root) {
-  const inside = root && root.replace(/[\\/]+$/, '') + sep(root)
   const paths = calls
     .filter(c => c.tool === 'Read' && !c.isRunning && !c.isErrored && !c.isInterrupted && c.input?.file_path)
-    .map(c => String(c.input.file_path))
-    .map(p => (inside && p.startsWith(inside) ? p.slice(inside.length) : p))
+    .map(c => relative(String(c.input.file_path), root))
   return [...new Set(paths)]
+}
+
+/** `path` relative to `root` when inside it, else as given. */
+function relative(path, root) {
+  const inside = root && root.replace(/[\\/]+$/, '') + sep(root)
+  return inside && path.startsWith(inside) ? path.slice(inside.length) : path
+}
+
+const cut = (text, n) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+
+/** What a finished Grep or Glob found, as row parts: its pattern, then the files when three or fewer
+ * (relative to `root`, so nook links them), else how many, or `no matches`. Null for any other call, or
+ * one that errored. */
+export function searchParts(call, root) {
+  const { tool, input = {}, output } = call
+  if ((tool !== 'Grep' && tool !== 'Glob') || call.isRunning || call.isErrored || call.isInterrupted) return null
+  if (!output || typeof output !== 'object') return null
+  const where = input.glob ?? input.type ?? (input.path ? relative(String(input.path), root) : '')
+  const label = tool === 'Grep' ? `"${cut(String(input.pattern ?? ''), 30)}"` : cut(String(input.pattern ?? ''), 40)
+  const parts = [[where ? `${label} in ${cut(String(where), 30)}` : label, null]]
+  const files = output.filenames ?? []
+  const n = output.totalMatches ?? output.numFiles ?? files.length
+  if (output.mode === 'content') parts.push([output.numLines ? plural(output.numLines, 'line') : 'no matches', null])
+  else if (output.mode === 'count') parts.push([output.numMatches ? `${plural(output.numMatches, 'match', 'matches')} in ${plural(n, 'file')}` : 'no matches', null])
+  else if (!n) parts.push(['no matches', null])
+  else if (files.length && files.length <= 3 && n === files.length) parts.push([files.map(f => relative(String(f), root)).join(', '), null])
+  else parts.push([plural(n, 'file'), null])
+  return parts
+}
+
+const SEARCH = /^(?:rg|grep|egrep|fgrep|ag|ack|find|fd|git\s+grep)\b/ // commands whose output lists what they found
+
+/** What a lone search command run through Bash found (`grep -rn x src`, `find . -name '*.rs'`), as row
+ * parts after the command: up to three files by name, else how many lines and files, or `no matches`.
+ * Null for any other command, or one that pipes or chains, whose output is no longer the search's. */
+export function shellSearch(command, output, root) {
+  const bare = command.replace(/'[^']*'|"[^"]*"/g, '')
+  if (!SEARCH.test(command.trim()) || /[|;&<>`$(]/.test(bare)) return null
+  if (!output || typeof output !== 'object') return null
+  const lines = String(output.stdout ?? '').split('\n').filter(l => l.trim())
+  if (!lines.length) return [['no matches', null]]
+  const listing = /^(?:find|fd)\b/.test(command.trim()) || /\s(?:-\w*l|--files(?:-with-matches)?)\b/.test(bare)
+  if (/\s(?:-\w*c|--count)\b/.test(bare) && !listing) {
+    // `grep -c`: a count per file, `file:N`, or one bare count when it searched one file
+    const counts = lines.map(l => /^(?:(.*):)?(\d+)$/.exec(l)).filter(Boolean).filter(m => +m[2])
+    const total = counts.reduce((n, m) => n + +m[2], 0)
+    if (!total) return [['no matches', null]]
+    const named = counts.filter(m => m[1]).length
+    return [[named > 1 ? `${plural(total, 'match', 'matches')} in ${plural(named, 'file')}` : plural(total, 'match', 'matches'), null]]
+  }
+  const files = listing ? lines : lines.map(l => /^([^:\s][^:]*\.[^:\s/]+|[^:\s]*\/[^:\s]*):/.exec(l)?.[1]).filter(Boolean)
+  const distinct = [...new Set(files.map(f => relative(f.replace(/^\.\//, ''), root)))]
+  if (distinct.length && distinct.length <= 3) return [[distinct.join(', '), null], ...(lines.length > distinct.length && !listing ? [[plural(lines.length, 'line'), null]] : [])]
+  if (listing) return [[plural(lines.length, 'file'), null]]
+  return [[distinct.length ? `${plural(lines.length, 'line')} in ${plural(distinct.length, 'file')}` : plural(lines.length, 'line'), null]]
 }
 
 /** One outcome row under Claude's own, its parts dim unless they carry a color. */
@@ -323,18 +377,21 @@ export function register(on) {
     const { Box, Text } = $.ui.resolve(e)
     return Box({ flexDirection: 'column', children: [await next(e), outcomeRow(Box, Text, parts)] })
   })
-  // A run of calls Claude folds into one line, such as `Read 3 files, ran 2 shell commands`: under it, the
-  // files it read, and each finished command that has something to say, by its own words.
+  // A run of calls Claude folds into one line, such as `Read 3 files, searched for 1 pattern`: under it,
+  // the files it read, what each search found, and each finished command that has something to say.
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
     if (e.props.isExpanded) return next(e)
+    const root = await $.session.root().catch(() => '')
     const rows = []
     for (const call of e.props.calls) {
+      const found = searchParts(call, root)
+      if (found) rows.push(found)
       if (call.tool !== 'Bash' || call.isRunning || call.isInterrupted) continue
-      const parts = outcome(call.output, call.isErrored, times.get(call.tool_use_id))
       const command = String(call.input?.command ?? '').split('\n')[0]
-      if (parts) rows.push([[command.length > 40 ? `${command.slice(0, 39)}…` : command, null], ...parts])
+      const parts = (!call.isErrored && shellSearch(command, call.output, root)) || outcome(call.output, call.isErrored, times.get(call.tool_use_id))
+      if (parts) rows.push([[cut(command, 40), null], ...parts])
     }
-    const read = readPaths(e.props.calls, await $.session.root().catch(() => ''))
+    const read = readPaths(e.props.calls, root)
     if (!rows.length && !read.length) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const shown = rows.slice(0, GROUP_ROWS).map(parts => outcomeRow(Box, Text, parts))

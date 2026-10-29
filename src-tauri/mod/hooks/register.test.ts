@@ -65,7 +65,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { errorLine, outcome, readPaths, testCounts } from './register.js'
+import { errorLine, outcome, readPaths, searchParts, shellSearch, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -150,4 +150,41 @@ test('a folded run of reads names its files, relative to the session, once each'
   const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'ToolGroup', requestId: 'reads', props: { calls: many, isActive: false, isExpanded: false } })
   expect((await ui.find({ type: 'Text', text: /f0\.js/ }))?.text).toBe('f0.js, f1.js, f2.js, f3.js, f4.js, f5.js, f6.js, f7.js, and 2 more')
   await ui.unmount()
+})
+
+test('a search says what it found: up to three files by name, else how many, or no matches', () => {
+  const grep = (input: object, output: object, more = {}) => ({ tool: 'Grep', input, output, isRunning: false, isErrored: false, isInterrupted: false, ...more })
+  expect(searchParts(grep({ pattern: 'startLinks' }, { mode: 'files_with_matches', numFiles: 2, filenames: ['/work/src/links.js', '/work/src/terminal.js'] }), '/work'))
+    .toEqual([['"startLinks"', null], ['src/links.js, src/terminal.js', null]])
+  expect(searchParts(grep({ pattern: 'TODO', glob: '*.rs' }, { mode: 'files_with_matches', numFiles: 14, filenames: Array(14).fill('/work/a.rs') }), '/work'))
+    .toEqual([['"TODO" in *.rs', null], ['14 files', null]])
+  expect(searchParts(grep({ pattern: 'nothing', path: '/work/src' }, { mode: 'files_with_matches', numFiles: 0, filenames: [] }), '/work'))
+    .toEqual([['"nothing" in src', null], ['no matches', null]])
+  expect(searchParts(grep({ pattern: 'fn main' }, { mode: 'content', numFiles: 1, filenames: [], numLines: 1 }), '/work'))
+    .toEqual([['"fn main"', null], ['1 line', null]])
+  expect(searchParts(grep({ pattern: 'x' }, { mode: 'count', numFiles: 3, filenames: [], numMatches: 40 }), '/work'))
+    .toEqual([['"x"', null], ['40 matches in 3 files', null]])
+  expect(searchParts({ tool: 'Glob', input: { pattern: 'src/**/*.test.js' }, output: { numFiles: 100, filenames: Array(100).fill('a'), truncated: true, totalMatches: 240, durationMs: 3 }, isRunning: false, isErrored: false, isInterrupted: false }, '/work'))
+    .toEqual([['src/**/*.test.js', null], ['240 files', null]])
+  expect(searchParts(grep({ pattern: 'x' }, 'error: bad regex', { isErrored: true }), '/work')).toBeNull()
+  expect(searchParts({ tool: 'Read', input: {}, output: {}, isRunning: false, isErrored: false, isInterrupted: false }, '/work')).toBeNull()
+})
+
+test('a search run through the shell says what it found, and a piped one says nothing', () => {
+  const out = (stdout: string) => ({ stdout, stderr: '', interrupted: false })
+  expect(shellSearch('grep -rn "assert" .', out('./math.test.js:3:assert(1)\n./math.test.js:9:assert(2)\n./b.test.js:1:assert(3)\n'), '/work'))
+    .toEqual([['math.test.js, b.test.js', null], ['3 lines', null]])
+  expect(shellSearch('rg TODO src', out('src/a.rs:1:// TODO\nsrc/b.rs:2:// TODO\nsrc/c.rs:3:// TODO\nsrc/d.rs:4:// TODO\nsrc/d.rs:5:// TODO\n'), '/work'))
+    .toEqual([['5 lines in 4 files', null]])
+  expect(shellSearch("find . -name '*.json'", out('./package.json\n./a/b.json\n./c.json\n./d.json\n'), '/work')).toEqual([['4 files', null]])
+  expect(shellSearch('find /work/src -name "*.rs"', out('/work/src/main.rs\n'), '/work')).toEqual([['src/main.rs', null]])
+  expect(shellSearch('grep -rl startLinks src', out('src/links.js\nsrc/terminal.js\n'), '/work')).toEqual([['src/links.js, src/terminal.js', null]])
+  expect(shellSearch('grep -rc assert .', out('./a.js:4\n./b.js:0\n./c.js:2\n'), '/work')).toEqual([['6 matches in 2 files', null]])
+  expect(shellSearch('grep -c assert a.js', out('4\n'), '/work')).toEqual([['4 matches', null]])
+  expect(shellSearch('grep -rn nothing_here .', out(''), '/work')).toEqual([['no matches', null]])
+  expect(shellSearch('grep -rn "a|b" .', out('x.js:1:a\n'), '/work')).toEqual([['x.js', null]])
+  expect(shellSearch('grep -rc assert . | grep -v ":0$"', out('a.js:4\n'), '/work')).toBeNull()
+  expect(shellSearch('grep x a.js && echo ok', out('x\nok\n'), '/work')).toBeNull()
+  expect(shellSearch('npm test', out('ok\n'), '/work')).toBeNull()
+  expect(shellSearch('grep x a.js', 'Exit code 2', '/work')).toBeNull()
 })
