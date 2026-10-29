@@ -36,12 +36,12 @@ pub struct Hit {
     file: String,
     line: u32,
     /// 1-based, in characters.
-    col: u32,
+    pub(crate) col: u32,
     /// The line, trimmed and cut to about SHOWN characters.
-    text: String,
+    pub(crate) text: String,
     /// Where the match starts in `text`, and how long it is, in characters.
-    at: u32,
-    len: u32,
+    pub(crate) at: u32,
+    pub(crate) len: u32,
 }
 
 #[derive(Serialize)]
@@ -110,7 +110,7 @@ pub fn search_text(dir: String, query: String) -> Result<Found, String> {
 }
 
 /// Quick open's file list for `dir`, reused while it's fresh.
-fn list(dir: &str) -> Result<(String, Arc<Vec<String>>, bool), String> {
+pub(crate) fn list(dir: &str) -> Result<(String, Arc<Vec<String>>, bool), String> {
     let mut cached = LIST.lock().map_err(|e| e.to_string())?;
     if let Some((asked, at, root, files)) = cached.as_ref() {
         if asked == dir && at.elapsed() < LIST_FRESH {
@@ -155,7 +155,7 @@ fn search_file(path: &Path, needle: &str, fold: bool) -> Vec<Hit> {
 }
 
 /// A hit for the match at byte `at` of `line`, `len` bytes long, with the line trimmed and cut around it.
-fn shown(line: &str, at: usize, len: usize, number: u32) -> Hit {
+pub(crate) fn shown(line: &str, at: usize, len: usize, number: u32) -> Hit {
     let col = line[..at].chars().count() as u32 + 1;
     let lead = line.len() - line.trim_start().len();
     let body = line.trim();

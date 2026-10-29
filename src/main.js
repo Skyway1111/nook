@@ -18,7 +18,7 @@ import { path as paths } from './paths.js'
 import { $, openMenu, openPicker } from './ui.js'
 import { SAFE, worktreeName, fanNames, since } from './launch.js'
 import { expand, offer, saved } from './prompts.js'
-import { stat as worktreeStat, keep } from './keep.js'
+import { stat as worktreeStat, keep, discard } from './keep.js'
 
 const win = getCurrentWindow()
 // For bench/linux.mjs: how far startup got, in ms since nook started.
@@ -124,7 +124,32 @@ if (error) banner(`Using default settings. ${error}`)
 const tabFolder = () => {
   const tab = tabs.active()
   if (!tab) return files.current() || cwd
-  return tab.type === 'claude' || tab.type === 'diff' || tab.type === 'review' ? tab.path : paths.parent(tab.path) || files.current() || cwd
+  return ['claude', 'diff', 'review', 'search'].includes(tab.type) ? tab.path : paths.parent(tab.path) || files.current() || cwd
+}
+
+// Ctrl+Shift+F (outside a Claude tab, where it finds in Claude's output) and Ctrl+Shift+H open the search tab, which
+// finds across the folder's files and replaces. One tab at a time; it loads on first use.
+let searchTab = null
+function findInFiles(replacing = false) {
+  const text = tabs.active()?.viewer?.selection?.() ?? ''
+  if (!searchTab?.viewer) {
+    const dir = tabFolder()
+    searchTab = tabs.openView('search', 'Search', dir, view => {
+      const search = import('./replace.js').then(m => m.startReplace(view, {
+        dir,
+        openFile,
+        unsaved: tabs.unsaved,
+        refresh: tabs.refreshFiles,
+      }))
+      return {
+        refresh: () => search.then(s => s.refresh()),
+        focus: () => search.then(s => s.focus()),
+        open: (text, replacing) => search.then(s => s.open(text, replacing)),
+        close: () => { searchTab = null },
+      }
+    })
+  } else tabs.show(searchTab)
+  searchTab.viewer.open(text.includes('\n') ? '' : text, replacing)
 }
 // nook's welcome: on the first run, and from the command palette after.
 function welcome() {
@@ -145,6 +170,7 @@ const openQuick = () => {
       newSession: () => tabs.openClaude(here()),
       openQuick: prefix => openQuick().then(q => q.open(prefix)),
       quickPrompts,
+      findInFiles,
       welcome,
     }),
     gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
@@ -220,6 +246,8 @@ dashboard = startDashboard($('pane'), {
   showChanges: path => git.changes(path),
   review: ({ tab, report }) => git.review(report.root || tab.path, report.touched ?? [], `${tab.name} · Claude's changes`),
   send: (tab, text) => tabs.prompt(tab, text),
+  queue: (tab, text) => tabs.then(tab, text),
+  unqueue: tab => tabs.unqueue(tab),
   answer: (tab, allow) => tabs.answer(tab, allow),
   fanOut,
   worktree: {
@@ -231,6 +259,25 @@ dashboard = startDashboard($('pane'), {
       banner(`Couldn't keep ${tab.name}: ${e.message ?? e}`)
       throw e
     }),
+    // Its session ends first; a process just told to quit can still hold the folder for a moment on Windows.
+    discard: async (tab, report) => {
+      if (!tabs.end(tab)) {
+        const why = `${tab.name} is this window's last tab, so open another before discarding it`
+        banner(why)
+        throw new Error(why)
+      }
+      for (const wait of [300, 1500, 4000]) {
+        await new Promise(r => setTimeout(r, wait))
+        try {
+          return await discard(runGit, report.root)
+        } catch (e) {
+          if (wait === 4000) {
+            banner(`Couldn't discard ${tab.name}: ${e.message ?? e}`)
+            throw e
+          }
+        }
+      }
+    },
   },
   onClose: () => tabs.focus(),
 })
@@ -307,6 +354,10 @@ addEventListener('keydown', e => {
   if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyE') {
     e.preventDefault()
     files.focus()
+  }
+  if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'KeyH' || (e.code === 'KeyF' && !tabs.active()?.terminal))) {
+    e.preventDefault()
+    findInFiles(e.code === 'KeyH')
   }
 })
 // The file browser's git colors come from the panel's status, which isn't read while the panel is hidden.

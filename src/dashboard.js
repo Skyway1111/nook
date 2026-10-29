@@ -4,8 +4,8 @@
 // permission for, and compact a session filling up.
 // The header names the account's rate limits. It draws only while open, and then redraws when a report changes
 // and once a second for the clocks, so a closed dashboard costs nothing. Its prompt box sends one prompt to
-// every ticked session at once, which starts ticked when it sits between turns, or starts it in several new
-// sessions, each in a git worktree of its own. A card for a session in a worktree says how much it changed
+// every ticked session at once, which starts ticked when it sits between turns, queues it for each to take when
+// its turn ends, or starts it in several new sessions, each in a git worktree of its own. A card for a session in a worktree says how much it changed
 // there, and between turns offers to keep it: its changes staged in the main checkout.
 import { el } from './ui.js'
 import { ago, modelName, summary, cannotSend, pickedAtFirst, asking, planLine, fill, FULL, money, limits } from './sessions.js'
@@ -13,13 +13,14 @@ import { isWorktree, changeLine } from './keep.js'
 
 const FILES = 4 // the files a card lists
 const STEPS = 12 // the most steps a plan draws
+const SURE = 4000 // how long Discard waits for its second press, in ms
 const WORDS = { working: 'Working', waiting: 'Waiting on you', done: 'Done', '': 'Idle' }
 
 /** `list()` gives `[{ tab, view, report }]` for every Claude tab, `open(tab)` shows one, `newSession()`
- * starts another, `send(tab, text)` sends one a prompt, and `review(session)` opens all it changed. `button` toggles the dashboard; `onClose` hears
- * it close. `worktree.stat(root)` says what a worktree changed, and `worktree.keep(tab, report)` stages that in its
- * main checkout. */
-export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, answer, fanOut, worktree, onClose }) {
+ * starts another, `send(tab, text)` sends one a prompt, `queue(tab, text)` sends it when its turn ends, `unqueue(tab)` drops those, and `review(session)` opens all it changed. `button` toggles the dashboard; `onClose` hears
+ * it close. `worktree.stat(root)` says what a worktree changed, `worktree.keep(tab, report)` stages that in its
+ * main checkout, and `worktree.discard(tab, report)` ends the session and deletes its worktree. */
+export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, queue, unqueue, answer, fanOut, worktree, onClose }) {
   let box = null
   let timer = 0
   let at = 0 // the card the arrow keys are on
@@ -28,6 +29,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
   const picked = ({ tab, view, report }) => !cannotSend(view, report) && (ticks.get(tab) ?? pickedAtFirst(view, report))
   // What each worktree changed, by its root and the turn it's on, so a card asks git once per turn, not per draw.
   const stats = new Map()
+  let discarding = null, discardingAt = 0 // the worktree a first press on Discard asked about, which a second deletes
   function changes(report) {
     const key = `${report.turns}|${report.since}`
     const known = stats.get(report.root)
@@ -48,7 +50,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     const c = el('button', { className: `session${i === at ? ' at' : ''}` })
     c.dataset.mark = mark
     c.innerHTML = '<header><b class="pick" role="checkbox"></b><b class="mark"></b><span class="state"></span><span class="where"></span></header>' +
-      '<i class="fill" role="meter" aria-valuemin="0" aria-valuemax="100"></i><p class="prompt"></p><p class="plan"><span class="steps"></span><span class="words"></span></p><p class="doing"></p><p class="asks"></p><p class="answer"></p><footer></footer><p class="files"></p>'
+      '<i class="fill" role="meter" aria-valuemin="0" aria-valuemax="100"></i><p class="prompt"></p><p class="queue"></p><p class="plan"><span class="steps"></span><span class="words"></span></p><p class="doing"></p><p class="asks"></p><p class="answer"></p><footer></footer><p class="files"></p>'
     c.querySelector('.state').textContent = WORDS[mark] + since
     c.querySelector('.where').textContent = tab.name
     c.querySelector('.where').title = tab.path
@@ -59,6 +61,13 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     pick.title = why ?? 'Send the prompt below to this session too (Space)'
     c.querySelector('.prompt').textContent = report.prompt ? `“${report.prompt}”` : 'No prompt yet'
     const busy = mark === 'working' || mark === 'waiting'
+    // Prompts queued to go when its turn ends, the next first.
+    const queued = tab.queue ?? []
+    if (queued.length) {
+      c.querySelector('.queue').append(
+        el('span', { className: 'next', textContent: `Then “${queued[0]}”${queued.length > 1 ? ` +${queued.length - 1}` : ''}`, title: queued.map((q, k) => `${k + 1}. ${q}`).join('\n') }),
+        el('span', { className: 'file unqueue', textContent: 'Clear', title: 'Drop the prompts queued for this session' }))
+    }
     // Claude's plan: a step for each task, filled as they're done, and the one under way.
     const plan = report.plan
     const line = planLine(plan)
@@ -106,6 +115,14 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     ].filter(Boolean)
     c.querySelector('footer').textContent = facts.join(' · ')
     if (tree?.files) c.querySelector('.files').append(el('span', { className: 'file keep', textContent: 'Keep', title: `Bring this worktree's changes into ${tree.main}, staged, to look over and commit there` }))
+    if (tree) {
+      const sure = discarding === report.root && Date.now() - discardingAt < SURE
+      c.querySelector('.files').append(el('span', {
+        className: `file discard${sure ? ' sure' : ''}`,
+        textContent: sure ? (tree.files ? `Delete ${changeLine(tree)}?` : 'Delete it?') : 'Discard',
+        title: sure ? 'Press again to delete this worktree and its branch' : 'Close this session and delete its worktree and branch, with every change in it',
+      }))
+    }
     // A session filling up can be compacted from here, where Enter would send the command.
     if (full >= FULL && !why && !busy) c.querySelector('.files').append(el('span', { className: 'file act', textContent: 'Compact', title: 'Run /compact: Claude sums up the conversation so far, to free its context' }))
     // Every file Claude wrote in one diff, then the newest few, each opening its own.
@@ -120,7 +137,9 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
       if (e.target.closest('.pick')) return tick(i)
       if (e.target.closest('.asks .file')) return decide(tab, e.target.closest('.act') != null)
       if (e.target.closest('.act')) return compact(tab)
+      if (e.target.closest('.unqueue')) return unqueue(tab)
       if (e.target.closest('.keep')) return keepIt(tab, report)
+      if (e.target.closest('.discard')) return discardIt(tab, report)
       const file = e.target.closest('.file')
       close()
       if (file?.classList.contains('review')) review({ tab, view, report })
@@ -151,6 +170,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     const go = box.querySelector('.send .go')
     go.textContent = n ? `Send to ${n}` : 'Send'
     go.disabled = !n || !box.querySelector('.send textarea').value.trim()
+    box.querySelector('.send .then').disabled = go.disabled
     const start = box.querySelector('.send .start')
     start.textContent = `Start ${fans()} new`
     start.disabled = !box.querySelector('.send textarea').value.trim()
@@ -187,6 +207,21 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     }, () => say(`Didn't keep ${tab.name}`))
   }
 
+  // Discard asks once on the chip itself, and deletes on a second press while it asks.
+  function discardIt(tab, report) {
+    if (discarding !== report.root || Date.now() - discardingAt >= SURE) {
+      discarding = report.root
+      discardingAt = Date.now()
+      return render()
+    }
+    discarding = null
+    say(`Discarding ${tab.name}`)
+    worktree.discard(tab, report).then(() => {
+      stats.delete(report.root)
+      say(`Discarded ${tab.name}`)
+    }, () => say(`Didn't discard ${tab.name}`))
+  }
+
   /** How many new sessions the fan-out starts, 1 to 8. */
   const fans = () => Math.min(8, Math.max(1, Math.round(Number(box.querySelector('.send .fan input').value) || 1)))
 
@@ -198,6 +233,18 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     const n = fans()
     close()
     fanOut(text, n)
+  }
+
+  /** Queues the prompt for every ticked session, each to go when its turn ends. */
+  function queueAll() {
+    const area = box.querySelector('.send textarea')
+    const text = area.value.trim()
+    const to = list().filter(picked)
+    if (!text || !to.length) return
+    for (const { tab } of to) queue(tab, text)
+    area.value = ''
+    area.style.height = ''
+    say(`Queued for ${to.length} session${to.length > 1 ? 's' : ''}`)
   }
 
   function sendAll() {
@@ -215,7 +262,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
   function show() {
     box = pane.appendChild(el('div', { className: 'sessions', tabIndex: -1 }))
     box.innerHTML = '<header><b>Sessions</b><span class="count"></span><span class="limits"></span><button class="new"><i class="icon">&#xE710;</i>New session</button></header><div class="cards"></div>' +
-      '<div class="send"><textarea rows="1" spellcheck="false" placeholder="A prompt for every ticked session"></textarea><span class="fan" title="Start new sessions on this prompt, each in a git worktree of its own (Ctrl+Enter)"><input type="number" min="1" max="8" value="3" aria-label="How many"><button class="start"></button></span><button class="go"></button></div>'
+      '<div class="send"><textarea rows="1" spellcheck="false" placeholder="A prompt for every ticked session"></textarea><span class="fan" title="Start new sessions on this prompt, each in a git worktree of its own (Ctrl+Enter)"><input type="number" min="1" max="8" value="3" aria-label="How many"><button class="start"></button></span><button class="then" title="Send it to each ticked session when its turn ends, after any queued before it (Alt+Enter)">Queue</button><button class="go"></button></div>'
     box.querySelector('.new').onclick = () => { close(); newSession() }
     const area = box.querySelector('.send textarea')
     area.oninput = () => {
@@ -224,12 +271,14 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
       ready()
     }
     box.querySelector('.send .go').onclick = sendAll
+    box.querySelector('.send .then').onclick = queueAll
     box.querySelector('.send .start').onclick = fan
     box.querySelector('.send .fan input').oninput = () => ready()
     box.onkeydown = e => {
       const n = list().length
       if (e.target === area) {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); fan() }
+        else if (e.key === 'Enter' && e.altKey) { e.preventDefault(); queueAll() }
         else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAll() }
         else if (e.key === 'Escape') close()
         return

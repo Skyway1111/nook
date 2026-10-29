@@ -7,7 +7,7 @@ import { path as paths } from './paths.js'
 import { ICON, kind, same, basename } from './files.js'
 import { $, el, openMenu } from './ui.js'
 import { claudeWith } from './launch.js'
-import { watchSessions, wanting, notice, ANSWERS } from './sessions.js'
+import { watchSessions, wanting, notice, due, ANSWERS } from './sessions.js'
 
 const win = getCurrentWindow()
 const strip = $('tabs')
@@ -151,6 +151,11 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
         if (tab === active) onShow(tab)
       }
       tab.el.title = describe(tab, view, report)
+      // Prompts queued for after the turn: the next goes once the session is free again.
+      if (due(tab.queue, tab.queuedAt, report)) {
+        tab.queuedAt = report.turns ?? 0
+        tab.terminal?.prompt(tab.queue.shift())
+      }
       tab.terminal?.wrote(report.touched ?? [])
       if (view.attention) win.requestUserAttention(UserAttentionType.Informational).catch(() => {})
       // With nook's window in the background, the desktop says so too: the tab's dot shows only inside nook.
@@ -328,11 +333,21 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     /** Every Claude tab with its session's view and newest report, in strip order. */
     sessions: () => tabs.filter(t => t.terminal).map(tab => ({ tab, view: sessions.view(tab), report: sessions.report(tab) ?? {} })),
     openView,
+    /** The paths of files with unsaved edits in a tab. */
+    unsaved: () => tabs.filter(t => t.viewer?.dirty?.()).map(t => t.path),
+    /** Has every file tab reread its file, as after files change on disk. */
+    refreshFiles: () => { for (const t of tabs) if (t.viewer?.dirty) t.viewer.refresh() },
     focus,
     cycle,
     /** The tab in front: `{ type, name, path, viewer }`, where a Claude tab has no viewer. */
     active: () => active,
     close: () => active && close(active),
+    /** Closes a Claude tab, ending its session, unless it's the window's last tab. Says whether it closed. */
+    end(tab) {
+      if (!tab.terminal || tabs.length < 2 || !tabs.includes(tab)) return false
+      drop(tab)
+      return true
+    },
     restyle() {
       look++
       for (const tab of [active, beside]) {
@@ -350,6 +365,19 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     },
     /** Sends `text` to a Claude tab as a prompt, leaving the tab in front where it is. */
     prompt: (tab, text) => tab.terminal?.prompt(text),
+    /** Sends `text` to a Claude tab once its turn ends: now if it's free, else after the prompts queued before it. */
+    then(tab, text) {
+      const report = sessions.report(tab) ?? {}
+      if (!tab.queue?.length && report.status === 'idle') return tab.terminal?.prompt(text)
+      if (!tab.queue?.length) tab.queuedAt = report.turns ?? 0
+      ;(tab.queue ??= []).push(text)
+      onSessions?.()
+    },
+    /** Drops the prompts queued for a tab. */
+    unqueue(tab) {
+      tab.queue = []
+      onSessions?.()
+    },
     /** Answers the permission prompt a Claude tab shows, with its first choice (allow once) or Escape (deny). */
     answer(tab, allow) {
       tab.terminal?.key(allow ? '1' : '\x1b')

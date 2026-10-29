@@ -54,6 +54,10 @@ export function cannotSend(view, report = {}) {
   return null
 }
 
+/** Whether the next prompt queued for a session is due: it's free, and a turn ended since the last one went
+ * (`after` is its turn count then), so a report still reading idle just after a send doesn't send twice. */
+export const due = (queue, after, report = {}) => queue?.length > 0 && report.status === 'idle' && (report.turns ?? 0) > after
+
 /** Whether a session starts picked to get a prompt sent to several: free to take one, and not mid-turn. */
 export const pickedAtFirst = (view, report = {}) => !cannotSend(view, report) && report.status !== 'working'
 

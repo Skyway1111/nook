@@ -4,7 +4,8 @@ import { execFile } from 'node:child_process'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isWorktree, worktrees, shortstat, changeLine, stat, keep } from './keep.js'
+import { isWorktree, worktrees, shortstat, changeLine, stat, keep, discard } from './keep.js'
+import { existsSync } from 'node:fs'
 
 test('a worktree is one Claude made under .claude/worktrees', () => {
   assert.ok(isWorktree('/home/m/nook/.claude/worktrees/nook-1029-184737-2'))
@@ -107,5 +108,21 @@ test('a worktree with nothing changed has nothing to keep', async () => {
   const { tree, done } = await repo()
   try {
     await assert.rejects(keep(git, tree), /nothing to keep/)
+  } finally { done() }
+})
+
+test('discarding a worktree deletes it and its branch, and only that', async () => {
+  const { dir, tree, done } = await repo()
+  try {
+    writeFileSync(join(tree, 'b.txt'), 'new\n')
+    await git(tree, ['add', 'b.txt'])
+    await git(tree, ['commit', '-qm', 'an attempt'])
+    writeFileSync(join(tree, 'c.txt'), 'not committed\n')
+    await discard(git, tree)
+    assert.ok(!existsSync(tree))
+    assert.equal((await git(dir, ['branch', '--list', 'worktree-try-1'])).trim(), '')
+    assert.equal((await git(dir, ['worktree', 'list', '--porcelain'])).split('\n\n').filter(Boolean).length, 1)
+    assert.equal(readFileSync(join(dir, 'a.txt'), 'utf8'), 'one\ntwo\nthree\n')
+    await assert.rejects(discard(git, dir), /isn't a worktree/) // never the main checkout
   } finally { done() }
 })
