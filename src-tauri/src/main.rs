@@ -392,6 +392,7 @@ fn main() {
             pty::pty_resize,
             pty::pty_close,
             pty::pty_state,
+            pty::pty_states,
             pty::pty_command,
             pty::session_image,
         ])

@@ -34,6 +34,10 @@
   --icon-doc: var(--ink-2);
   --icon-claude: var(--accent);
   --icon-diff: var(--ansi-green);
+  /* A Claude tab's dot: its session works, waits on you, or finished while you looked elsewhere. */
+  --session-working: var(--accent);
+  --session-waiting: var(--ansi-yellow);
+  --session-done: var(--ansi-green);
 
   /* Terminal backdrop: any CSS background (a color, or layered gradients like these). */
   --term-bg:

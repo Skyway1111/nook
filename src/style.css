@@ -67,6 +67,13 @@ body.blurred .brand, body.blurred #tabs, body.blurred .caption { opacity: .5; }
 .tab .close:hover { background: var(--hover); color: var(--ink-1); }
 /* Unsaved edits: a dot in place of the close button, until the pointer reaches it. */
 .tab.dirty .close { visibility: visible; }
+/* What a Claude tab's session is doing, a dot in its icon's place: still, so a working session repaints nothing. */
+.tab .mark { flex: none; width: 14px; display: none; place-items: center; }
+.tab .mark::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--session-working); }
+.tab:is([data-mark=working], [data-mark=waiting], [data-mark=done]) > i.icon { display: none; }
+.tab:is([data-mark=working], [data-mark=waiting], [data-mark=done]) .mark { display: grid; }
+.tab[data-mark=waiting] .mark::before { background: var(--session-waiting); box-shadow: 0 0 0 2px color-mix(in oklch, var(--session-waiting) 35%, transparent); }
+.tab[data-mark=done] .mark::before { background: var(--session-done); }
 .tab.dirty .close:not(:hover) { font-size: 0; }
 .tab.dirty .close:not(:hover)::after { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-2); }
 

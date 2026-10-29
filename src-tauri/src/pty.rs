@@ -182,6 +182,13 @@ pub fn pty_state(id: u64) -> Option<String> {
     std::fs::read_to_string(state_file(id)).ok()
 }
 
+/// What nook's mod last reported for each of `ids`, in order, read in one call so the tab strip follows
+/// every session for one IPC round trip.
+#[tauri::command(async)]
+pub fn pty_states(ids: Vec<u64>) -> Vec<Option<String>> {
+    ids.into_iter().map(pty_state).collect()
+}
+
 /// The `n`th image pasted into session `id`, in the folder nook's mod reports; `None` until Claude saves it.
 #[tauri::command(async)]
 pub fn session_image(id: u64, n: u32) -> Option<PathBuf> {

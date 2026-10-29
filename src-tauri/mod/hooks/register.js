@@ -1,14 +1,17 @@
 // Tells nook's composer what to show beside Claude's prompt, runs the two commands its menus send, and
 // draws pictures in the transcript. Every hook passes its event on unchanged, and the two render hooks add
 // pictures under Claude's own drawing. The mod writes the session's model, effort, effort levels, context
-// fill, and pasted images' folder as JSON to NOOK_STATE, and reads requests from the .cmd file beside it:
-// { command, args, at }.
+// fill, pasted images' folder, and what the session is doing as JSON to NOOK_STATE, and reads requests from
+// the .cmd file beside it: { command, args, at }.
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const MODELS = ['fable', 'opus', 'sonnet', 'haiku'] // the menu's aliases, each its family's latest model
 const ROWS = 20 // the tallest picture, in rows
 const ROW_PIXELS = 20 // a picture's pixels per row, so a small one draws near its own size
 const INDENT = 5 // to the text after `  ⎿  `
 const UNKNOWN = [1600, 900] // the size of a picture whose own can't be read
+const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) // the tools whose file nook marks as Claude's
+const ASKS = new Set(['AskUserQuestion', 'ExitPlanMode']) // the tools that wait on the person
+const TOUCHED = 200 // the most files a report lists
 const sizes = new Map() // a pasted image's path -> its size, as a promise
 let state = { efforts: LEVELS }
 let wrote = ''
@@ -28,6 +31,15 @@ async function model($) {
   const { modelSettings, effortLevel } = await $.settings.read()
   const effort = modelSettings?.[id.replace(/\[.*\]$/, '')]?.effortLevel ?? effortLevel
   return { model: id, models: MODELS.filter(a => row?.options?.includes(a)), ...(effort && { effort }) }
+}
+
+/** One line about a tool call, as the tab strip and the dashboard show it: the tool and what it works on. */
+function activity(e) {
+  const name = path => String(path).split(/[\\/]/).pop()
+  const cut = text => String(text).split('\n')[0].slice(0, 80)
+  const what = e.file_path ? name(e.file_path) : e.notebook_path ? name(e.notebook_path) : e.command ? cut(e.command)
+    : e.description ? cut(e.description) : e.pattern ? cut(e.pattern) : e.url ? cut(e.url) : e.query ? cut(e.query) : ''
+  return what ? `${e.tool} · ${what}` : String(e.tool)
 }
 
 /** Runs a request from nook's menus, if one arrived: `/model <alias>` or `/effort <level>`. */
@@ -109,6 +121,18 @@ async function pasted($, text) {
   return pictures
 }
 
+// What the session is doing: `status` is working, waiting (on the person), or idle, since `since`;
+// `activity` the tool running, `prompt` the main turn's first line, `agents` the subagents running,
+// `turns` the main turns finished, and `touched` the files Claude wrote, newest last.
+const agents = new Set()
+const running = new Map() // tool_use_id -> activity, of the calls under way
+
+async function setStatus($, file, status, patch = {}) {
+  const since = status === state.status ? state.since : await $.clock.now()
+  const last = [...running.values()].pop() ?? ''
+  await report($, file, { status, since, activity: status === 'idle' ? '' : last, agents: agents.size, ...patch })
+}
+
 export function register(on) {
   let file = null
   on('session.start', async ($, e, next) => {
@@ -118,13 +142,61 @@ export function register(on) {
       file = path
       const requests = path.replace(/\.json$/, '.cmd')
       handled = await $.fs.read(requests).catch(() => '') // a request from an earlier session is spent
+      await setStatus($, file, 'idle', { turns: 0, touched: [], prompt: '' })
       // /clear starts a new session, with an empty context and a new images folder.
       const tick = async () => report($, file, {
-        ...(await take($, requests)), context: (await $.session.usage()).context, images: await imagesDir($), ...(await model($)),
+        ...(await take($, requests)), context: (await $.session.usage()).context, images: await imagesDir($), session: await $.session.id(), ...(await model($)),
       })
       await tick()
       $.clock.every(250, () => tick().catch(() => {})) // a failed tick leaves the last report standing
     }
+    return next(e)
+  })
+  on('turn.start', async ($, e, next) => {
+    if (file && e.agentId) agents.add(e.agentId)
+    if (file) {
+      const patch = e.agentId ? {} : { prompt: e.text.trim().split('\n')[0].slice(0, 200) }
+      await setStatus($, file, 'working', patch).catch(() => {})
+    }
+    return next(e)
+  })
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    if (!file) return result
+    if (e.agentId) {
+      agents.delete(e.agentId)
+      await setStatus($, file, state.status).catch(() => {})
+    } else {
+      running.clear()
+      agents.clear()
+      await setStatus($, file, 'idle', { turns: (state.turns ?? 0) + 1, ended: e.reason }).catch(() => {})
+    }
+    return result
+  })
+  on('tool.call', async ($, e, next) => {
+    if (!file) return next(e)
+    const id = e.tool_use_id ?? `${e.tool}-${running.size}`
+    running.set(id, activity(e))
+    await setStatus($, file, ASKS.has(e.tool) && !e.agentId ? 'waiting' : 'working').catch(() => {})
+    try {
+      return await next(e)
+    } finally {
+      running.delete(id)
+      const path = EDITS.has(e.tool) ? e.file_path ?? e.notebook_path : null
+      const touched = path ? [...(state.touched ?? []).filter(p => p !== path), path].slice(-TOUCHED) : state.touched
+      // A call that ran after the turn ended (a hook's own) leaves the session idle.
+      await setStatus($, file, state.status === 'idle' ? 'idle' : 'working', { touched }).catch(() => {})
+    }
+  })
+  // A permission prompt: the session waits on the person until the call runs or the turn ends.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const result = await next(e)
+    if (file && !result?.decision) await setStatus($, file, 'waiting').catch(() => {})
+    return result
+  })
+  on('session.end', async ($, e, next) => {
+    // After a /clear the process goes on as a new session, with nothing yet said.
+    if (file) await setStatus($, file, 'idle', { ended: e.reason, prompt: '' }).catch(() => {})
     return next(e)
   })
   // The effort each request goes out with, the main agent's only.

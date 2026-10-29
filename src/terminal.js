@@ -248,6 +248,7 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
   })
 
   return {
+    id, // the session's, for its mod's reports
     restyle: () => { applyTheme(term); refit() },
     paste: text => { term.paste(text); term.focus() },
     focus: () => term.focus(),
