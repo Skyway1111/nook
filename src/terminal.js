@@ -258,12 +258,15 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   new ResizeObserver(refit).observe(host)
 
   let search // the find bar, loaded with its addon the first time it opens
+  function find() {
+    search ??= import('./search.js').then(m => m.startSearch(term, host))
+    search.then(s => s.open())
+  }
   const turns = startTurns(term)
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true
     if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyF') {
-      search ??= import('./search.js').then(m => m.startSearch(term, host))
-      search.then(s => s.open())
+      find()
       e.preventDefault()
       return false
     }
@@ -343,6 +346,9 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     /** Presses Enter, as to send what was pasted. */
     submit: () => send('\r'),
     focus: () => term.focus(),
+    find,
+    /** Shows the prompt you sent before the view's top, or after it. */
+    jump: up => turns.jump(up),
     close: () => {
       closed = true
       clearTimeout(hold?.timer)

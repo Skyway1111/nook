@@ -6,6 +6,7 @@ import { path as paths } from './paths.js'
 
 export function appCommands({ tabs, files, git, drawer, openQuick, quickPrompts, newSession, insertPath, home, banner, welcome }) {
   const active = () => tabs.active()
+  const claude = () => active()?.terminal ?? null
   const file = () => (active()?.viewer && active().type !== 'diff' ? active().path : null)
   const toggle = cls => () => { document.body.classList.toggle(cls); if (cls === 'git-hidden') git.refresh(); tabs.focus() }
   const copy = text => navigator.clipboard.writeText(text).catch(banner)
@@ -15,6 +16,9 @@ export function appCommands({ tabs, files, git, drawer, openQuick, quickPrompts,
     { title: 'Next tab', keys: 'Ctrl+Tab', icon: '\uE72A', run: () => tabs.cycle(1) },
     { title: 'Previous tab', keys: 'Ctrl+Shift+Tab', icon: '\uE72B', run: () => tabs.cycle(-1) },
     { title: 'Close tab', keys: 'Ctrl+W in a file', icon: '\uE711', run: () => tabs.close() },
+    { title: 'Find in Claude\'s output…', keys: 'Ctrl+Shift+F', icon: '\uE721', when: claude, run: () => claude().find() },
+    { title: 'Previous prompt you sent', keys: 'Ctrl+Shift+Up', icon: '\uE74A', when: claude, run: () => claude().jump(true) },
+    { title: 'Next prompt you sent', keys: 'Ctrl+Shift+Down', icon: '\uE74B', when: claude, run: () => claude().jump(false) },
     { title: 'Toggle file browser', icon: ICON.folder, run: toggle('files-hidden') },
     { title: 'Toggle git panel', icon: ICON.diff, run: toggle('git-hidden') },
     { title: 'Open settings', icon: '\uE713', run: drawer.toggle },
