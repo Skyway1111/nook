@@ -66,6 +66,8 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
       forward.length = 0
     }
     if (path !== cur) picked.clear()
+    // Up a level, the cursor lands on the folder you came from, as in Explorer; anywhere else, on the first row.
+    if (path !== cur) [cursor, cursorAt] = [cur && same(parent(cur) ?? '', path) ? cur : '', 0]
     cur = path
     say('')
     list.scrollTop = 0
@@ -90,6 +92,10 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     items = entries.map(e => ({ path: join(cur, e.name), kind: cur === '' ? 'drive' : kind(e), name: e.name }))
     const here = new Set(items.map(i => i.path))
     picked = new Set([...picked].filter(p => here.has(p)))
+    // A cursor whose row went away moves to the row now in its place.
+    const at = items.findIndex(i => same(i.path, cursor))
+    cursor = items[at >= 0 ? at : Math.min(cursorAt, items.length - 1)]?.path ?? ''
+    cursorAt = Math.max(0, items.findIndex(i => i.path === cursor))
     drawn = [-1, -1]
     draw()
     syncNav()
@@ -124,7 +130,8 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   function showRow(index, block = 'center') {
     if (index < 0 || index >= items.length) return null
     const top = index * ROW
-    if (top < list.scrollTop || top + ROW > list.scrollTop + list.clientHeight)
+    if (block === 'nearest') list.scrollTop = Math.min(top, Math.max(list.scrollTop, top + ROW - list.clientHeight))
+    else if (top < list.scrollTop || top + ROW > list.scrollTop + list.clientHeight)
       list.scrollTop = block === 'start' ? top : top - (list.clientHeight - ROW) / 2
     draw()
     return [...list.children].find(r => r.dataset.path === items[index].path) ?? null
@@ -135,9 +142,98 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     const path = r.dataset.path
     if (marked && same(path, marked)) r.classList.add('selected')
     if (picked.has(path)) r.classList.add('picked')
+    if (path === cursor) r.classList.add('cursor')
     claudeMark(r)
     return r
   }
+
+  // ——— Keys ———
+  // Ctrl+Shift+E puts the keys in the list: arrows, Home, End, and the page keys move a cursor, Shift picks the
+  // rows passed, Ctrl moves without dropping picks, and Space picks or drops the cursor's row. Enter opens,
+  // Ctrl+Enter adds to Claude's prompt, Backspace goes up, and typing a name's first letters jumps to it. F2,
+  // Delete, and Ctrl+C, X, V, and A do what they do in Explorer. Escape gives the keys back to the tab.
+  let cursor = '' // the path of the row the keys act on
+  let cursorAt = 0 // its index in items
+  list.tabIndex = -1
+
+  /** Moves the cursor to row `index`. `how`: 'extend' picks the rows from the anchor to it, 'keep' leaves the
+   * picks as they are, and anything else drops them, as a plain click does. */
+  function moveTo(index, how = '') {
+    if (!items.length) return
+    index = Math.max(0, Math.min(items.length - 1, index))
+    if (how === 'extend' && cur !== '') {
+      let from = items.findIndex(i => i.path === anchor)
+      if (from < 0) [from, anchor] = [cursorAt, cursor]
+      picked = new Set(items.slice(Math.min(from, index), Math.max(from, index) + 1).map(i => i.path))
+    } else if (how !== 'keep') {
+      anchor = items[index].path
+      picked.clear()
+    }
+    ;[cursor, cursorAt] = [items[index].path, index]
+    showRow(index, 'nearest')
+    for (const r of list.children) {
+      r.classList.toggle('cursor', r.dataset.path === cursor)
+      r.classList.toggle('picked', picked.has(r.dataset.path))
+    }
+  }
+  const cursorRow = () => [...list.children].find(r => r.dataset.path === cursor) ?? showRow(cursorAt)
+
+  let typed = ''
+  let typedAt = 0
+  /** Jumps to the next row whose name starts with what was typed in the last second. A letter pressed again
+   * and again steps through the names that start with it. */
+  function seek(key) {
+    const now = Date.now()
+    typed = (now - typedAt < 1000 ? typed : '') + key.toLowerCase()
+    typedAt = now
+    const repeat = [...typed].every(c => c === typed[0])
+    const want = repeat ? typed[0] : typed
+    const from = repeat ? cursorAt + 1 : cursorAt
+    for (let k = 0; k < items.length; k++) {
+      const i = (from + k) % items.length
+      if (items[i].name.toLowerCase().startsWith(want)) return moveTo(i)
+    }
+  }
+
+  list.addEventListener('keydown', e => {
+    if (editing || e.target !== list) return
+    const ctrl = e.ctrlKey || e.metaKey
+    const page = Math.max(1, Math.floor(list.clientHeight / ROW) - 1)
+    const r = () => cursorRow()
+    const many = () => (r() ? actOn(r()) : [])
+    const steps = { ArrowDown: 1, ArrowUp: -1, PageDown: page, PageUp: -page }
+    const how = e.shiftKey ? 'extend' : ctrl ? 'keep' : ''
+    if (e.key in steps && !e.altKey) moveTo(cursorAt + steps[e.key], how)
+    else if (e.key === 'Home' || e.key === 'End') moveTo(e.key === 'Home' ? 0 : items.length - 1, how)
+    else if (e.key === ' ' && r() && cur !== '') pick(r(), false)
+    else if (e.key === 'Enter' && ctrl) many().forEach(insertPath)
+    else if (e.key === 'Enter' && r()) (r().matches('.dir, .drive') ? go : openFile)(cursor)
+    else if (e.key === 'Backspace' || (e.altKey && e.key === 'ArrowUp')) parent(cur) !== null && go(parent(cur))
+    else if (e.altKey && e.key === 'ArrowLeft') goBack()
+    else if (e.altKey && e.key === 'ArrowRight') goForward()
+    else if (e.key === 'F2' && r() && cur !== '') rename(r(), true)
+    else if (e.key === 'Delete' && r() && cur !== '') {
+      const doomed = many()
+      ;(async () => {
+        for (const path of doomed) if (await invoke('recycle', { path }).catch(say)) moved(path, null)
+        sync(true)
+      })()
+    } else if (ctrl && /^[cx]$/i.test(e.key) && r() && cur !== '') invoke('copy_files', { paths: many(), cut: /x/i.test(e.key) }).catch(say)
+    else if (ctrl && /^v$/i.test(e.key) && cur !== '') paste(cur)
+    else if (ctrl && /^a$/i.test(e.key) && cur !== '') {
+      picked = new Set(items.map(i => i.path))
+      paintPicked()
+    } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+      const b = r()?.getBoundingClientRect()
+      b && r().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: b.left + 40, clientY: b.bottom - 4 }))
+    } else if (e.key === 'Escape') {
+      if (picked.size) { picked.clear(); paintPicked() } else list.blur()
+    } else if (e.key.length === 1 && !ctrl && !e.altKey && e.key !== ' ') seek(e.key)
+    else return
+    e.preventDefault()
+    e.stopPropagation()
+  })
+  list.addEventListener('blur', () => list.classList.remove('keys'))
 
   const byClaude = path => claude.some(t => same(t, path))
   function claudeMark(r) {
@@ -224,8 +320,9 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
 
   let hovered = null
   let editing = false // a name box is open, so the listing holds still
-  /** Swaps a row's label for a name box: Enter or a click elsewhere commits, Escape cancels. */
-  function nameBox(li, name, commit) {
+  /** Swaps a row's label for a name box: Enter or a click elsewhere commits, Escape cancels. `back`: the keys
+   * return to the list after, as they came from it. */
+  function nameBox(li, name, commit, back = false) {
     editing = true
     const input = el('input', { value: name, spellcheck: false })
     li.lastChild.replaceWith(input)
@@ -239,6 +336,10 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
       editing = false
       removeEventListener('pointerdown', outside, true)
       input.blur() // a removed input would leave focus nowhere, not back in the tab
+      if (back) {
+        list.classList.add('keys')
+        list.focus({ preventScroll: true })
+      }
       say('')
       const value = input.value.trim()
       if (keep && value && value !== name) await commit(value)
@@ -258,12 +359,15 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     })
   }
 
-  function rename(li) {
+  function rename(li, back = false) {
     const path = li.dataset.path
     nameBox(li, basename(path), async name => {
       const to = join(parent(path), name)
-      if (await invoke('rename_path', { from: path, to })) moved(path, to)
-    })
+      if (await invoke('rename_path', { from: path, to })) {
+        moved(path, to)
+        if (cursor === path) cursor = to
+      }
+    }, back)
   }
 
   /** A name box atop the folders for a new folder, or atop the files for a new file. */
@@ -375,6 +479,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     ul.addEventListener('click', e => {
       const r = rowAt(e)
       const pickable = ul === list && cur !== ''
+      if (r && ul === list) moveCursor(r)
       if (r && pickable && (e.ctrlKey || e.metaKey || e.shiftKey)) return pick(r, e.shiftKey)
       if (pickable && picked.size) { picked.clear(); paintPicked() }
       if (r) (r.matches('.dir, .drive') ? go : openFile)(r.dataset.path)
@@ -429,6 +534,12 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     const prev = cur
     if (await go(from.pop(), 'history')) to.push(prev)
     syncNav()
+  }
+  /** Puts the cursor on row `r`, as a click does. */
+  function moveCursor(r) {
+    cursor = r.dataset.path
+    cursorAt = Math.max(0, items.findIndex(i => i.path === cursor))
+    for (const x of list.children) x.classList.toggle('cursor', x === r)
   }
   const goBack = () => travel(back, forward)
   const goForward = () => travel(forward, back)
@@ -486,6 +597,13 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   return {
     current: () => cur,
     go,
+    /** Gives the keys to the file list, showing it if it's hidden. */
+    focus() {
+      document.body.classList.remove('files-hidden')
+      list.classList.add('keys')
+      list.focus({ preventScroll: true })
+      if (items.length) moveTo(cursorAt)
+    },
     mark,
     reveal,
     create,

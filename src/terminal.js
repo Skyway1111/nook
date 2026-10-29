@@ -277,7 +277,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     }
     if (e.altKey && e.key === 'F4') return false // the system closes the window
     if (e.ctrlKey && e.key === 'Tab') return false // the tab strip cycles
-    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[PS]$/.test(e.code)) return false // quick prompts, sessions
+    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[PSE]$/.test(e.code)) return false // quick prompts, sessions, file list
     if (e.ctrlKey && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) return false // the tab strip shows that tab
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'Backslash') return false // the pane splits
     const ctrl = e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() // with Caps Lock on, Ctrl+C is 'C'
