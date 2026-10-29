@@ -497,6 +497,7 @@ fn main() {
             shell::drop_files,
             git::git,
             git::git_status,
+            git::git_progress,
             git::git_diff,
             pty::pty_spawn,
             pty::pty_write,

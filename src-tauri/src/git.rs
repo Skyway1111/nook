@@ -5,12 +5,13 @@ use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap},
     ffi::OsStr,
+    io::Read,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::Mutex,
     thread,
 };
-use tauri::async_runtime::spawn_blocking;
+use tauri::{async_runtime::spawn_blocking, ipc::Channel};
 
 use crate::err;
 
@@ -29,6 +30,62 @@ fn run(dir: &Path, args: &[impl AsRef<OsStr>], input: Option<&str>) -> Result<St
 #[tauri::command]
 pub async fn git(dir: String, args: Vec<String>, input: Option<String>) -> Result<String, String> {
     spawn_blocking(move || run(Path::new(&dir), &args, input.as_deref())).await.map_err(err)?
+}
+
+/// A fetch, pull, or push: `git` with `--progress`, sending each line git writes to stderr through `progress`
+/// as it comes, so the panel can show how far along it is.
+#[tauri::command]
+pub async fn git_progress(dir: String, args: Vec<String>, progress: Channel<String>) -> Result<String, String> {
+    spawn_blocking(move || run_progress(Path::new(&dir), &args, |line| drop(progress.send(line.into())))).await.map_err(err)?
+}
+
+fn run_progress(dir: &Path, args: &[impl AsRef<OsStr>], mut each: impl FnMut(&str) + Send) -> Result<String, String> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(dir).args(args).arg("--progress").env("GIT_TERMINAL_PROMPT", "0").env("GIT_EDITOR", ":");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("can't run git: {e}"))?;
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let (out, said) = thread::scope(|s| {
+        let out = s.spawn(move || {
+            let mut out = Vec::new();
+            let _ = stdout.read_to_end(&mut out);
+            out
+        });
+        // A line git ends with \r is progress it will write over; one it ends with \n stays, for the error.
+        let mut said = Vec::new();
+        let mut line = Vec::new();
+        let mut buf = [0; 4096];
+        while let Ok(n @ 1..) = stderr.read(&mut buf) {
+            for &b in &buf[..n] {
+                if b != b'\r' && b != b'\n' {
+                    line.push(b);
+                    continue;
+                }
+                let text = String::from_utf8_lossy(&line);
+                if !text.trim().is_empty() {
+                    each(text.trim());
+                }
+                if b == b'\n' {
+                    said.extend_from_slice(&line);
+                    said.push(b'\n');
+                }
+                line.clear();
+            }
+        }
+        said.extend_from_slice(&line);
+        (out.join().unwrap_or_default(), said)
+    });
+    let status = child.wait().map_err(err)?;
+    if status.success() {
+        return Ok(String::from_utf8_lossy(&out).into_owned());
+    }
+    let said = if said.iter().all(u8::is_ascii_whitespace) { &out } else { &said };
+    Err(String::from_utf8_lossy(said).trim().to_string())
 }
 
 #[derive(Serialize, Default, Debug, PartialEq)]
@@ -387,6 +444,32 @@ mod tests {
         let root = repo_root(&file).unwrap();
         assert!(root.join(".git").exists() && here.starts_with(root));
         assert_eq!(repo_root(Path::new("src")), None);
+    }
+
+    /// A clone's progress comes line by line as git writes it; what it says when it fails is kept.
+    #[test]
+    fn reports_progress_as_git_writes_it() {
+        let dir = std::env::temp_dir().join(format!("nook-git-progress-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("src");
+        let id = ["-c", "user.name=nook", "-c", "user.email=nook@example.com"];
+        run(&dir, &["init", "-q", "src"], None).unwrap();
+        for i in 0..20 {
+            std::fs::write(src.join(format!("{i}.txt")), format!("{i}\n").repeat(500)).unwrap();
+        }
+        run(&src, &["add", "."], None).unwrap();
+        run(&src, &[&id[..], &["commit", "-qm", "files"]].concat(), None).unwrap();
+        let mut lines = Vec::new();
+        // file:// so git packs objects as it would for a server, and says so.
+        let url = format!("file://{}", src.display());
+        run_progress(&dir, &["clone", &url, "copy"], |l| lines.push(l.to_string())).unwrap();
+        assert!(lines.iter().any(|l| l.contains("Receiving objects") && l.contains('%')), "{lines:?}");
+        assert!(dir.join("copy/0.txt").exists());
+        let e = run_progress(&dir, &["clone", "file:///nowhere/at/all", "none"], |_| {}).unwrap_err();
+        assert!(e.contains("nowhere"), "{e}");
+        assert!(!e.contains('%'), "{e}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Stages through stdin, commits, then edits: what the panel does, against real git.
