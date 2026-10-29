@@ -32,6 +32,19 @@ export const ANSWERS = /^(Enter|NumpadEnter|Escape|Digit[1-9]|Numpad[1-9])$/
 export const answeredReport = (report, answered) =>
   answered != null && report.status === 'waiting' && report.since === answered ? { ...report, status: 'working' } : report
 
+/** The desktop notification for a session that just wanted the user, `{ title, body }`, or null when it
+ * wants nothing. `name` is its tab's. A wait names the tool Claude asks about; a finish, the prompt it ran. */
+export function notice(view, report = {}, name = '') {
+  if (!view.attention) return null
+  const where = name ? ` in ${name}` : ''
+  const prompt = report.prompt ? `“${report.prompt}”` : ''
+  if (view.mark === 'waiting') {
+    const asks = report.activity ? `Asks about ${report.activity}` : 'Waiting on you'
+    return { title: `Claude needs you${where}`, body: [asks, prompt].filter(Boolean).join('\n') }
+  }
+  return { title: `Claude finished${where}`, body: prompt || 'Done' }
+}
+
 /** How many sessions want the user: waiting on them, or done since they last looked. */
 export const wanting = views => views.filter(v => v.mark === 'waiting' || v.mark === 'done').length
 

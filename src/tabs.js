@@ -6,7 +6,7 @@ import { startViewer } from './viewer.js'
 import { ICON, kind, same, basename } from './files.js'
 import { $, el, openMenu } from './ui.js'
 import { claudeWith } from './launch.js'
-import { watchSessions, wanting, ANSWERS } from './sessions.js'
+import { watchSessions, wanting, notice, ANSWERS } from './sessions.js'
 
 const win = getCurrentWindow()
 const strip = $('tabs')
@@ -135,6 +135,9 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
       }
       tab.el.title = describe(tab, view, report)
       if (view.attention) win.requestUserAttention(UserAttentionType.Informational).catch(() => {})
+      // With nook's window in the background, the desktop says so too: the tab's dot shows only inside nook.
+      const note = settings.notifications !== false && !document.hasFocus() && notice(view, report, tab.name)
+      if (note) invoke('notify', note).catch(() => {})
       retitle()
       onSessions?.()
       save()
