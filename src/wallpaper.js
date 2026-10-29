@@ -9,6 +9,7 @@ import { bytes } from './palette.js'
 import { el } from './ui.js'
 
 const FRAME_MS = 100 // ten frames a second. Characters step from cell to cell, so more frames would only cost.
+const SPEEDS = [.25, 3] // --wallpaper-speed's range. Below 1 the frames slow with the scene, so a slower scene costs less.
 const REST_MS = 600 // after a key or a resize, the wallpaper holds still this long, so their repaints never wait on a frame
 const THUMB_PX = 4 // the picker's thumbnails draw their cells this many pixels high
 const SETTLE_MS = 100 // while the pane resizes, the last bitmap stretches; it redraws at the new size once this long passes without one, as backdrops.js does
@@ -81,7 +82,9 @@ function atlas(w, h, font, colors) {
  * `--wallpaper` in the user's theme.css, and `onClose` hears the picker close. */
 export function startWallpaper(pane, { button, save, onClose }) {
   const canvas = pane.insertBefore(el('canvas', { className: 'wallpaper', hidden: true }), pane.firstChild)
-  const started = performance.now()
+  let speed = 1, since = performance.now(), before = 0 // the scene's clock runs at `speed` from `since`, when it read `before`
+  const clock = now => before + (now - since) * speed / 1000 // seconds, in the scene's time
+  const frameMs = () => FRAME_MS / Math.min(1, speed)
   let look = { id: 'none', size: 14, family: 'monospace', colors: {} } // theme.css's, at the last restyle
   let previewing = null // a scene the picker shows before it's kept
   let showing = true // false while a file tab is in front
@@ -111,7 +114,7 @@ export function startWallpaper(pane, { button, save, onClose }) {
   function draw(now = performance.now()) {
     lastFrame = now
     const { ctx, w, h, cols, rows, tiles } = cells
-    const g = render(id(), cols, rows, (now - started) / 1000, spare)
+    const g = render(id(), cols, rows, clock(now), spare)
     paint(ctx, g, w, h, tiles, onCanvas)
     spare = onCanvas
     onCanvas = g
@@ -124,7 +127,7 @@ export function startWallpaper(pane, { button, save, onClose }) {
   function schedule() {
     if (timer || raf || (!live() && !picker) || still.matches) return
     const now = performance.now()
-    const wait = Math.max(0, FRAME_MS - (now - lastFrame), REST_MS - (now - lastInput))
+    const wait = Math.max(0, frameMs() - (now - lastFrame), REST_MS - (now - lastInput))
     timer = setTimeout(() => {
       timer = 0
       if (!raf) raf = requestAnimationFrame(frame)
@@ -133,10 +136,10 @@ export function startWallpaper(pane, { button, save, onClose }) {
   function frame(now) {
     raf = 0
     if (!live() && !picker) return
-    if (now - lastFrame >= FRAME_MS - 4 && now - lastInput >= REST_MS) {
+    if (now - lastFrame >= frameMs() - 4 && now - lastInput >= REST_MS) {
       lastFrame = now
       if (live()) draw(now)
-      picker?.tick(now - started)
+      picker?.tick(clock(now))
     }
     schedule()
   }
@@ -162,6 +165,13 @@ export function startWallpaper(pane, { button, save, onClose }) {
       size: parseFloat(v('--wallpaper-font-size')) || 14,
       family: v('--font-term') || 'monospace',
       colors: Object.fromEntries(ROLES.map(r => [r, rgba(v(`--wallpaper-${r}`) || v('--ink-3'))])),
+    }
+    const pace = Math.min(SPEEDS[1], Math.max(SPEEDS[0], parseFloat(v('--wallpaper-speed')) || 1))
+    if (pace !== speed) {
+      const now = performance.now()
+      before = clock(now) // the scene goes on from where it is, at the new pace
+      since = now
+      speed = pace
     }
     if (previewing === look.id) previewing = null // a kept pick has reached theme.css
     measure()
@@ -256,12 +266,12 @@ export function startWallpaper(pane, { button, save, onClose }) {
           const { width, height } = thumb.getBoundingClientRect()
           return { ...fit(thumb, width, height, THUMB_PX, look.family, look.colors), last: null, spare: null }
         })
-        api.tick(performance.now() - started)
+        api.tick(clock(performance.now()))
       },
-      tick(ms) {
+      tick(t) {
         cards.forEach(({ sid }, i) => {
           const th = thumbs[i]
-          const g = render(sid, th.cols, th.rows, ms / 1000, th.spare)
+          const g = render(sid, th.cols, th.rows, t, th.spare)
           paint(th.ctx, g, th.w, th.h, th.tiles, th.last)
           th.spare = th.last
           th.last = g

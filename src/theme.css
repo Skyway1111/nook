@@ -106,6 +106,7 @@
      The titlebar's wallpaper button writes your pick here. */
   --wallpaper: none;
   --wallpaper-opacity: .5; /* over --term-bg, under Claude's text */
+  --wallpaper-speed: 1; /* .25 to 3. Slower draws fewer frames, so it costs less too. */
   --wallpaper-font-size: var(--term-font-size); /* the height of its cells */
   /* The colors the scenes paint with. */
   --wallpaper-faint: var(--ink-3); /* stars, ripples, rain, and far-off things */
