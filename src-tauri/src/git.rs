@@ -14,8 +14,6 @@ use tauri::async_runtime::spawn_blocking;
 
 use crate::err;
 
-/// The tree of a repository with no commits yet.
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /// A diff shows this many untracked files; an unignored build folder would be thousands.
 const UNTRACKED_SHOWN: usize = 100;
 
@@ -184,28 +182,35 @@ fn parse_numstat(out: &str) -> HashMap<&str, (u32, u32)> {
     counts
 }
 
-/// What changed under `path` since the last commit, as a unified diff; `""` is the whole repo.
+/// What changed under `path`, as a unified diff; `""` is the whole repo. Staged: the index against the last
+/// commit. Unstaged: the working tree against the index, with untracked files as added.
 #[tauri::command]
-pub async fn git_diff(root: String, path: String) -> Result<String, String> {
+pub async fn git_diff(root: String, path: String, staged: bool) -> Result<String, String> {
     spawn_blocking(move || {
         let root = Path::new(&root);
         let spec = if path.is_empty() { "." } else { &path };
+        // The user's diff settings can't change the shape git.js parses: no external tool, color, or odd prefixes.
         let read = |args: &[&str]| {
-            run(root, &[&["--no-optional-locks", "-c", "core.quotepath=false"], args, &["--", spec]].concat(), None)
+            let options = ["--no-optional-locks", "-c", "core.quotepath=false", "-c", "diff.noprefix=false"];
+            run(root, &[&options[..], args, &["--", spec]].concat(), None)
         };
+        let diff = ["diff", "--no-ext-diff", "--no-color", "--src-prefix=a/", "--dst-prefix=b/"];
+        if staged {
+            return read(&[&diff[..], &["--cached"]].concat());
+        }
         let (tracked, untracked) = thread::scope(|s| {
             let untracked = s.spawn(|| read(&["ls-files", "--others", "--exclude-standard", "-z"]));
-            let tracked = read(&["diff", "HEAD"]).or_else(|_| read(&["diff", EMPTY_TREE]));
-            (tracked, untracked.join().unwrap())
+            (read(&diff), untracked.join().unwrap())
         });
         let mut diff = tracked?;
         let untracked = untracked?;
         let files: Vec<&str> = untracked.split('\0').filter(|f| !f.is_empty()).collect();
         for file in files.iter().take(UNTRACKED_SHOWN) {
-            diff += &new_file(file, crate::read_text(root.join(file).to_string_lossy().into_owned()));
+            let full = root.join(file);
+            diff += &new_file(file, executable(&full), crate::read_text(full.to_string_lossy().into_owned()));
         }
         if files.len() > UNTRACKED_SHOWN {
-            diff += &format!("\\ and {} more untracked files\n", files.len() - UNTRACKED_SHOWN);
+            diff += &format!("\\ nook left out {} more untracked files\n", files.len() - UNTRACKED_SHOWN);
         }
         Ok(diff)
     })
@@ -213,16 +218,32 @@ pub async fn git_diff(root: String, path: String) -> Result<String, String> {
     .map_err(err)?
 }
 
-/// An untracked file as a diff that adds every line. A `\` line says why it can't be shown.
-fn new_file(path: &str, text: Result<String, String>) -> String {
-    let mut out = format!("diff --git a/{path} b/{path}\n");
+#[cfg(unix)]
+fn executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+}
+#[cfg(not(unix))]
+fn executable(_: &Path) -> bool {
+    false
+}
+
+/// An untracked file as git would diff it once added, so a patch of some of its lines stages them.
+/// A `\` line says why it can't be shown.
+fn new_file(path: &str, executable: bool, text: Result<String, String>) -> String {
+    let mode = if executable { "100755" } else { "100644" };
+    let mut out = format!("diff --git a/{path} b/{path}\nnew file mode {mode}\n--- /dev/null\n+++ b/{path}\n");
     match text {
+        Ok(text) if text.is_empty() => {}
         Ok(text) => {
             out += &format!("@@ -0,0 +1,{} @@\n", text.lines().count());
             for line in text.lines() {
                 out += "+";
                 out += line;
                 out += "\n";
+            }
+            if !text.ends_with('\n') {
+                out += "\\ No newline at end of file\n";
             }
         }
         Err(e) => out += &format!("\\ nook can't show this file: {e}\n"),
@@ -289,8 +310,12 @@ mod tests {
 
     #[test]
     fn an_untracked_file_diffs_as_all_added() {
-        assert_eq!(new_file("a.txt", Ok("one\ntwo\n".into())), "diff --git a/a.txt b/a.txt\n@@ -0,0 +1,2 @@\n+one\n+two\n");
-        assert!(new_file("a.png", Err("it isn't text".into())).ends_with("\\ nook can't show this file: it isn't text\n"));
+        let head = "diff --git a/a.txt b/a.txt\nnew file mode 100644\n--- /dev/null\n+++ b/a.txt\n";
+        assert_eq!(new_file("a.txt", false, Ok("one\ntwo\n".into())), format!("{head}@@ -0,0 +1,2 @@\n+one\n+two\n"));
+        assert!(new_file("run.sh", true, Ok("x".into())).contains("new file mode 100755"));
+        assert!(new_file("a.txt", false, Ok("one".into())).ends_with("+one\n\\ No newline at end of file\n"));
+        assert_eq!(new_file("a.txt", false, Ok(String::new())), head);
+        assert!(new_file("a.png", false, Err("it isn't text".into())).ends_with("\\ nook can't show this file: it isn't text\n"));
     }
 
     #[test]
