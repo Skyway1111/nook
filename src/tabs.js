@@ -12,7 +12,7 @@ const strip = $('tabs')
 const pane = $('pane')
 
 /** `settings.command` is what each new Claude tab runs. */
-export function startTabs({ settings, onShow }) {
+export function startTabs({ settings, onShow, onSessions }) {
   const tabs = []
   let active = null
   let claude = null // the Claude tab shown last: where paths go while a file tab is showing
@@ -71,6 +71,7 @@ export function startTabs({ settings, onShow }) {
       tab.el.title = describe(tab, view, report)
       if (view.attention) win.requestUserAttention(UserAttentionType.Informational).catch(() => {})
       retitle()
+      onSessions?.()
     },
   })
   addEventListener('focus', () => sessions.poll())
@@ -167,6 +168,9 @@ export function startTabs({ settings, onShow }) {
   return {
     openClaude,
     openFile,
+    show,
+    /** Every Claude tab with its session's view and newest report, in strip order. */
+    sessions: () => tabs.filter(t => t.terminal).map(tab => ({ tab, view: sessions.view(tab), report: sessions.report(tab) ?? {} })),
     openView,
     focus,
     restyle() {

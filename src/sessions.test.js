@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { follow, wanting } from './sessions.js'
+import { follow, wanting, ago, modelName, summary } from './sessions.js'
 
 const run = (steps, view) => steps.map(([report, watched]) => (view = follow(view, report, watched)))
 
@@ -42,4 +42,25 @@ test('a session with no report yet idles', () => {
 
 test('wanting counts sessions waiting or done', () => {
   assert.equal(wanting([{ mark: 'waiting' }, { mark: 'done' }, { mark: 'working' }, { mark: '' }]), 2)
+})
+
+test('ago reads a span the way the cards show it', () => {
+  assert.equal(ago(0), '0s')
+  assert.equal(ago(59_900), '59s')
+  assert.equal(ago(125_000), '2m 05s')
+  assert.equal(ago(3_725_000), '1h 02m')
+  assert.equal(ago(-5), '0s')
+})
+
+test('modelName shortens a model id', () => {
+  assert.equal(modelName('claude-opus-5-5[1m]'), 'Opus 5.5')
+  assert.equal(modelName('claude-haiku-5'), 'Haiku 5')
+  assert.equal(modelName(undefined), '')
+  assert.equal(modelName('gpt'), 'gpt')
+})
+
+test('summary counts sessions by what they do', () => {
+  assert.equal(summary(['working', 'working', 'waiting', '']), '2 working · 1 waiting on you')
+  assert.equal(summary(['', '']), '2 idle')
+  assert.equal(summary(['done']), '1 done')
 })
