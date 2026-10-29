@@ -256,8 +256,15 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   })
   new ResizeObserver(refit).observe(host)
 
+  let search // the find bar, loaded with its addon the first time it opens
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true
+    if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyF') {
+      search ??= import('./search.js').then(m => m.startSearch(term, host))
+      search.then(s => s.open())
+      e.preventDefault()
+      return false
+    }
     if (e.altKey && e.key === 'F4') return false // the system closes the window
     if (e.ctrlKey && e.key === 'Tab') return false // the tab strip cycles
     if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[PS]$/.test(e.code)) return false // quick prompts, sessions
@@ -334,6 +341,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
       clearTimeout(hold?.timer)
       composer.close()
       links.dispose()
+      search?.then(s => s.dispose())
       output.onmessage = () => {}
       invoke('pty_close', { id })
       term.dispose()
