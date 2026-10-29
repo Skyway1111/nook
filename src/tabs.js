@@ -1,9 +1,11 @@
 // The tab strip: Claude sessions and open files. Each tab owns one view in #pane; only the active one shows.
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window'
+import { invoke } from '@tauri-apps/api/core'
 import { startTerminal } from './terminal.js'
 import { startViewer } from './viewer.js'
 import { ICON, kind, same, basename } from './files.js'
 import { $, el, openMenu } from './ui.js'
+import { watchSessions, wanting } from './sessions.js'
 
 const win = getCurrentWindow()
 const strip = $('tabs')
@@ -18,7 +20,7 @@ export function startTabs({ settings, onShow }) {
 
   function add(type, name, path) {
     const head = el('div', { className: `tab ${type}`, title: path })
-    head.innerHTML = `<i class="icon">${ICON[type]}</i><span></span><button class="icon close" title="Close">&#xE711;</button>`
+    head.innerHTML = `<i class="icon">${ICON[type]}</i><b class="mark"></b><span></span><button class="icon close" title="Close">&#xE711;</button>`
     const view = pane.appendChild(el('div', { className: 'view', hidden: true }))
     const tab = { el: head, view, type, name, path, label: head.querySelector('span') }
     tab.label.textContent = name
@@ -42,10 +44,36 @@ export function startTabs({ settings, onShow }) {
     if (tab.look !== look) tab.terminal?.restyle()
     tab.look = look
     tab.viewer?.refresh()
-    win.setTitle(`${tab.name} · nook`)
+    retitle()
     onShow(tab)
     focus()
+    sessions.poll() // a done mark clears as its tab shows
   }
+
+  // The window's title names the open tab, after how many sessions want the user, so the taskbar shows it.
+  const retitle = () => {
+    const n = wanting(tabs.map(sessions.view).filter(Boolean))
+    if (active) win.setTitle(`${n ? `(${n}) ` : ''}${active.name} · nook`)
+  }
+
+  /** What a Claude tab's tooltip says: its folder, what it's doing, and the prompt it's on. */
+  const describe = (tab, view, report) => {
+    const doing = { working: report.activity || 'Working', waiting: 'Waiting on you', done: 'Done' }[view.mark] ?? 'Idle'
+    return [tab.path, doing, report.prompt && `“${report.prompt}”`].filter(Boolean).join('\n')
+  }
+
+  const sessions = watchSessions({
+    invoke,
+    tabs: () => tabs,
+    watched: tab => tab === active && document.hasFocus(),
+    onChange: (tab, view, report) => {
+      tab.el.dataset.mark = view.mark
+      tab.el.title = describe(tab, view, report)
+      if (view.attention) win.requestUserAttention(UserAttentionType.Informational).catch(() => {})
+      retitle()
+    },
+  })
+  addEventListener('focus', () => sessions.poll())
 
   /** Closes `tab`, first asking whether to save a file with unsaved edits. */
   function close(tab) {
@@ -112,6 +140,12 @@ export function startTabs({ settings, onShow }) {
       e.preventDefault()
       const n = tabs.length
       show(tabs[(tabs.indexOf(active) + (e.shiftKey ? n - 1 : 1)) % n])
+    } else if (e.ctrlKey && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) {
+      // Ctrl+1 to Ctrl+8 show that tab, and Ctrl+9 the last, as in a browser.
+      e.preventDefault()
+      const n = Number(e.code.slice(5))
+      const tab = n === 9 ? tabs.at(-1) : tabs[n - 1]
+      if (tab) show(tab)
     } else if (e.ctrlKey && e.key.toLowerCase() === 'w' && active?.viewer) {
       e.preventDefault() // in a Claude tab, Ctrl+W is Claude's
       close(active)
