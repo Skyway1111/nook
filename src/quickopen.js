@@ -145,10 +145,15 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, ins
   /** What the box offers for `query`, as `{ rows, act, hint }`. `act(i, how)` runs row i. */
   function offer(query) {
     if (query.startsWith('>')) {
-      const found = rank(query.slice(1), commands().filter(c => !c.when || c.when()), { text: c => c.title, limit: 100 })
+      const all = commands().filter(c => !c.when || c.when())
+      const back = () => { for (const f of new Set(all.map(c => c.back))) f?.() }
+      const found = rank(query.slice(1), all, { text: c => c.title, limit: 100 })
       return {
         rows: found.map(r => commandRow(r.item, r.positions)),
         act: i => found[i].item.run(),
+        // A command can show what it would do while it's marked, such as a theme, and `back` undoes that.
+        look: i => (found[i]?.item.look ?? back)(),
+        back,
         hint: found.length ? 'Enter runs the command' : 'No command matches',
         count: found.length,
       }
@@ -246,7 +251,7 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, ins
     current = offer(input.value)
     list.replaceChildren(...current.rows)
     at = Math.min(at, Math.max(0, current.rows.length - 1))
-    highlight(/^@./.test(input.value.trim()))
+    highlight(/^[@>]./.test(input.value.trim()))
     foot.replaceChildren(el('span', { textContent: current.hint }), ...(current.keys ? [el('span', { textContent: current.keys })] : []))
   }
 
@@ -318,6 +323,7 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, ins
   /** Hides the box; unless a row was `acted` on, a symbol it showed gives way to where the caret was. */
   function close(refocus = true, acted = false) {
     if (!acted) symbols?.file?.back()
+    if (!acted) current?.back?.()
     symbols = null
     box.hidden = true
     list.replaceChildren() // nothing to hold on to while hidden

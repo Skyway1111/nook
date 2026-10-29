@@ -212,11 +212,19 @@ export function startThemes({ configDir, home, settings, save, reread, showTheme
   follow.onchange = () => save({ claudeFollows: follow.checked }).then(() => setFollow(follow.checked))
 
   /** The installed themes' names, null first for nook's own, each with its card's picture. */
+  let known = [] // the installed themes' names, as last listed
   async function list() {
     const listed = await invoke('list_dir', { path: dir }).catch(() => [])
-    const names = listed.filter(e => e.dir && !e.name.startsWith('.')).map(e => e.name).sort((a, b) => a.localeCompare(b))
+    const names = known = listed.filter(e => e.dir && !e.name.startsWith('.')).map(e => e.name).sort((a, b) => a.localeCompare(b))
     return [[null, preview], ...names.map(n => [n, `${convertFileSrc(paths.join(dir, n, 'screenshot.png'))}?v=${launched}.${installs.get(n) ?? 0}`])]
   }
 
-  return { show, mark, install, list, use, label, peek, unpeek, active: () => active, fromPicture: () => pictures.click(), watch: f => watchers.add(f) }
+  /** nook's own (null) and each installed theme's name, as last listed. It lists them again, at most every few
+   * seconds, so one installed meanwhile joins next time. */
+  let listed = 0
+  const names = () => {
+    if (performance.now() - listed > 3000) { listed = performance.now(); list() }
+    return [null, ...known]
+  }
+  return { show, mark, install, list, names, use, label, peek, unpeek, active: () => active, fromPicture: () => pictures.click(), watch: f => watchers.add(f) }
 }
