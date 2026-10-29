@@ -181,6 +181,12 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .sessions .session .file.deny { flex: none; }
 .sessions .session .asks { display: flex; align-items: center; gap: 6px; }
 .sessions .session .asks:empty { display: none; }
+.sessions .session .plan { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--ink-2); }
+.sessions .session .plan:has(.words:empty) { display: none; }
+.sessions .session .plan .steps { flex: none; display: flex; gap: 2px; }
+.sessions .session .plan .steps i { width: 7px; height: 7px; border-radius: 2px; background: var(--line); }
+.sessions .session .plan .steps i.done { background: var(--session-done); }
+.sessions .session .plan .words { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sessions .session .doing[hidden] { display: none; }
 .sessions .session .asks .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-term); font-size: .8rem; color: var(--ink-1); }
 .sessions .mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }

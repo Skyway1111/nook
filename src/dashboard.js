@@ -6,9 +6,10 @@
 // and once a second for the clocks, so a closed dashboard costs nothing. Its prompt box sends one prompt to
 // every ticked session at once, which starts ticked when it sits between turns.
 import { el } from './ui.js'
-import { ago, modelName, summary, cannotSend, pickedAtFirst, asking, fill, FULL, money, limits } from './sessions.js'
+import { ago, modelName, summary, cannotSend, pickedAtFirst, asking, planLine, fill, FULL, money, limits } from './sessions.js'
 
 const FILES = 4 // the files a card lists
+const STEPS = 12 // the most steps a plan draws
 const WORDS = { working: 'Working', waiting: 'Waiting on you', done: 'Done', '': 'Idle' }
 
 /** `list()` gives `[{ tab, view, report }]` for every Claude tab, `open(tab)` shows one, `newSession()`
@@ -29,7 +30,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     const c = el('button', { className: `session${i === at ? ' at' : ''}` })
     c.dataset.mark = mark
     c.innerHTML = '<header><b class="pick" role="checkbox"></b><b class="mark"></b><span class="state"></span><span class="where"></span></header>' +
-      '<i class="fill" role="meter" aria-valuemin="0" aria-valuemax="100"></i><p class="prompt"></p><p class="doing"></p><p class="asks"></p><p class="answer"></p><footer></footer><p class="files"></p>'
+      '<i class="fill" role="meter" aria-valuemin="0" aria-valuemax="100"></i><p class="prompt"></p><p class="plan"><span class="steps"></span><span class="words"></span></p><p class="doing"></p><p class="asks"></p><p class="answer"></p><footer></footer><p class="files"></p>'
     c.querySelector('.state').textContent = WORDS[mark] + since
     c.querySelector('.where').textContent = tab.name
     c.querySelector('.where').title = tab.path
@@ -40,6 +41,16 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     pick.title = why ?? 'Send the prompt below to this session too (Space)'
     c.querySelector('.prompt').textContent = report.prompt ? `“${report.prompt}”` : 'No prompt yet'
     const busy = mark === 'working' || mark === 'waiting'
+    // Claude's plan: a step for each task, filled as they're done, and the one under way.
+    const plan = report.plan
+    const line = planLine(plan)
+    if (line) {
+      const shown = Math.min(plan.total, STEPS) // a long list draws in proportion
+      const done = Math.round(plan.done / plan.total * shown)
+      c.querySelector('.plan .steps').append(...Array.from({ length: shown }, (_, k) => el('i', { className: k < done ? 'done' : '' })))
+      c.querySelector('.plan .words').textContent = line
+      c.querySelector('.plan').title = `Claude's plan: ${plan.done} of ${plan.total} tasks done`
+    }
     c.querySelector('.doing').textContent = busy ? report.activity ?? '' : ''
     // A permission prompt, answered from here: its first choice allows the call once, Escape denies it.
     const asks = asking(view, report)
