@@ -1,5 +1,6 @@
 // A diff tab: what changed under a path, staged and unstaged, in syntax colors, unified or side by side.
 // A hunk's buttons stage, unstage, or discard it, or only the lines picked in it, through `git apply`.
+// history.js shows a commit's changes with it too, read-only.
 import { invoke } from '@tauri-apps/api/core'
 import { el, openMenu } from './ui.js'
 import { ICON, basename } from './files.js'
@@ -12,14 +13,20 @@ const SPLIT_KEY = 'nook.diff.split'
 const remembered = key => { try { return localStorage.getItem(key) === '1' } catch { return false } }
 const remember = (key, on) => { try { localStorage.setItem(key, on ? '1' : '0') } catch {} }
 
+/** What `git show` needs to write a commit's changes as a diff tab reads them; a merge shows what it brought in. */
+const SHOW = ['-c', 'core.quotepath=false', 'show', '--format=', '--no-color', '--no-ext-diff', '--no-relative', '-M', '--diff-merges=first-parent', '--src-prefix=a/', '--dst-prefix=b/']
+
 /**
  * Fills `view` with the changes under `rel` in the repository at `root` ('' for all of it). `run(args, input)`
  * runs a git command after any the panel has queued and resolves to true, or to what git said went wrong;
  * `stage(paths, on)` stages or unstages whole files as the panel's checkboxes do, and resolves the same way.
+ * Given `commit`, it shows that commit's changes instead, read-only, after `commit.intro`; `show(commit)`
+ * moves it to another, and null shows none.
  */
-export function startDiff(view, { root, rel, openFile, run, stage }) {
+export function startDiff(view, { root, rel, openFile, run, stage, commit }) {
   view.tabIndex = -1 // focusable, so the keyboard scrolls it
-  let shown // the two diffs' text last painted
+  const fixed = commit !== undefined
+  let shown // the diffs' text last painted
   let split = remembered(SPLIT_KEY)
   let hunks = [] // every hunk on screen: { file, hunk, staged, el, cells: Map(line index → [cell]) }
   let picked = null // { k, set, anchor }: lines picked in hunk k
@@ -33,26 +40,48 @@ export function startDiff(view, { root, rel, openFile, run, stage }) {
   let near = null
   const lineHeight = () => parseFloat(getComputedStyle(view).fontSize) * 1.5 || 21
 
+  let loaded = null // the commit shown: its changes never change, so it reads them once
   async function refresh(force) {
+    if (fixed) {
+      const at = commit
+      if (!at || (at === loaded && !force)) return
+      const text = await invoke('git', { dir: root, args: [...SHOW, at.oid, '--', ...(rel ? [rel] : [])] }).catch(e => `\\ nook ${e}`)
+      if (at !== commit) return
+      loaded = at
+      shown = text
+      return render([[null, parseDiff(text), false]])
+    }
     const [staged, unstaged] = await Promise.all([true, false].map(s => invoke('git_diff', { root, path: rel, staged: s }).catch(e => `\\ nook ${e}`)))
     const text = staged + '\0' + unstaged
     if (text === shown && !force) return
     if (text !== shown) picked = null
     shown = text
     const top = view.scrollTop
-    render(parseDiff(staged), parseDiff(unstaged))
+    render([['Staged', parseDiff(staged), true], ['Changes', parseDiff(unstaged), false]])
     view.scrollTop = top
   }
 
-  function render(staged, unstaged) {
+  /** Shows another commit's changes, from the top. */
+  function show(next) {
+    commit = next
+    loaded = null
+    view.scrollTop = 0
+    if (next) return refresh()
+    paint++
+    view.replaceChildren()
+  }
+
+  /** `sections` are `[title, files, staged]`; a commit's one section has no title. */
+  function render(sections) {
     paint++
     hunks = []
     near?.disconnect()
     near = new IntersectionObserver(entries => {
       for (const e of entries) if (e.isIntersecting) near.unobserve(e.target), e.target.fill()
     }, { root: view, rootMargin: '1200px 0px' })
-    view.className = `view diff${split ? ' sides' : ''}`
-    const all = [...staged, ...unstaged]
+    view.classList.add('diff')
+    view.classList.toggle('sides', split)
+    const all = sections.flatMap(([, files]) => files)
     const bar = el('header', { className: 'diff-bar' })
     const sum = el('span', { className: 'sum' })
     const add = all.reduce((n, f) => n + f.added, 0)
@@ -66,11 +95,11 @@ export function startDiff(view, { root, rel, openFile, run, stage }) {
     }
     const error = failed && el('span', { className: 'error', textContent: failed, title: 'Dismiss', onclick: () => error.remove() })
     bar.append(sum, ...(error ? [error] : []), ...(undo ? [el('button', { className: 'pill', textContent: 'Undo discard', onclick: putBack })] : []), mode)
-    const out = [bar]
-    if (!all.length) out.push(el('p', { className: 'none', textContent: 'No changes' }))
-    for (const [title, files, isStaged] of [['Staged', staged, true], ['Changes', unstaged, false]]) {
+    const out = [...(commit?.intro ?? []), bar]
+    if (!all.length) out.push(el('p', { className: 'none', textContent: fixed ? 'No changes to files' : 'No changes' }))
+    for (const [title, files, isStaged] of sections) {
       if (!files.length) continue
-      out.push(el('h2', { textContent: `${title} · ${files.length}` }))
+      if (title) out.push(el('h2', { textContent: `${title} · ${files.length}` }))
       for (const f of files) out.push(file(f, isStaged))
       for (const n of files.notes) out.push(el('p', { className: 'meta', textContent: n }))
     }
@@ -94,7 +123,7 @@ export function startDiff(view, { root, rel, openFile, run, stage }) {
     h.children[3].innerHTML = [f.added && `<b class="add">+${f.added}</b>`, f.removed && `<b class="del">−${f.removed}</b>`].filter(Boolean).join(' ')
     const deleted = f.header.some(l => l.startsWith('deleted file mode'))
     h.children[4].append(
-      el('button', { textContent: isStaged ? 'Unstage file' : 'Stage file', onclick: e => (e.stopPropagation(), wrote(stage([f.path, ...(f.from ? [f.from] : [])], !isStaged))) }),
+      ...(fixed ? [] : [el('button', { textContent: isStaged ? 'Unstage file' : 'Stage file', onclick: e => (e.stopPropagation(), wrote(stage([f.path, ...(f.from ? [f.from] : [])], !isStaged))) })]),
       ...(deleted ? [] : [el('button', { className: 'icon', title: 'Open file', innerHTML: ICON.open, onclick: e => (e.stopPropagation(), openFile(paths.fromSlashes(root, f.path))) })]),
     )
     h.onclick = () => {
@@ -195,6 +224,7 @@ export function startDiff(view, { root, rel, openFile, run, stage }) {
     const n = picked?.k === k ? picked.set.size : 0
     const what = n ? `${n} line${n > 1 ? 's' : ''}` : 'hunk'
     const box = entry.el.querySelector('.hunk-head .tools')
+    if (fixed) return
     const untracked = entry.file.header.some(l => l.startsWith('new file mode'))
     box.replaceChildren(
       el('button', { textContent: `${entry.staged ? 'Unstage' : 'Stage'} ${what}`, onclick: () => apply(k, entry.staged ? 'unstage' : 'stage') }),
@@ -244,7 +274,7 @@ export function startDiff(view, { root, rel, openFile, run, stage }) {
     }
   }
   const at = target => {
-    const c = target.closest?.('.cell[data-i]')
+    const c = fixed ? null : target.closest?.('.cell[data-i]')
     const wrap = c?.closest('.hunk')
     if (!c || !wrap || !view.contains(wrap)) return null
     const k = +wrap.dataset.k
@@ -305,7 +335,7 @@ export function startDiff(view, { root, rel, openFile, run, stage }) {
     }
   }
 
-  return { refresh }
+  return { refresh, show }
 }
 
 /** Rebuilds `code` as `text` in token spans, with the changed characters `mark` set apart. */
