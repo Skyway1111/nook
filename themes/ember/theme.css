@@ -1,0 +1,43 @@
+/* Ember: a banked fire in a dark room. Charcoal, warm ash text, and coals glowing from the corner. */
+
+:root {
+  --h: 35;
+  --bg: oklch(.15 .012 40);
+  --raised: oklch(.22 .02 40);
+  --hover: oklch(.85 .06 50 / .07);
+  --line: oklch(.85 .06 50 / .11);
+  --ink-1: oklch(.95 .02 70);
+  --ink-2: oklch(.78 .03 60);
+  --ink-3: oklch(.58 .035 50);
+  --accent: oklch(.74 .16 45);
+  --icon-image: oklch(.72 .14 15);
+  --icon-code: oklch(.8 .12 80);
+
+  --term-bg:
+    radial-gradient(70% 55% at 100% 100%, oklch(.36 .12 35 / .55), transparent 70%),
+    radial-gradient(55% 40% at 85% 100%, oklch(.5 .16 45 / .25), transparent 70%),
+    oklch(.13 .01 40);
+  --term-fg: oklch(.92 .02 70);
+  --cursor: oklch(.78 .16 55);
+  --selection: oklch(.6 .14 40 / .35);
+
+  --ansi-black: oklch(.28 .015 40);
+  --ansi-red: oklch(.68 .17 28);
+  --ansi-green: oklch(.76 .12 125);
+  --ansi-yellow: oklch(.84 .14 80);
+  --ansi-blue: oklch(.72 .08 230);
+  --ansi-magenta: oklch(.72 .12 350);
+  --ansi-cyan: oklch(.78 .08 190);
+  --ansi-white: oklch(.86 .02 70);
+  --ansi-bright-black: oklch(.55 .03 50);
+  --ansi-bright-red: oklch(.76 .16 32);
+  --ansi-bright-green: oklch(.84 .11 125);
+  --ansi-bright-yellow: oklch(.9 .12 85);
+  --ansi-bright-blue: oklch(.8 .07 230);
+  --ansi-bright-magenta: oklch(.8 .1 350);
+  --ansi-bright-cyan: oklch(.85 .07 190);
+  --ansi-bright-white: oklch(.97 .015 70);
+}
+
+#pane { box-shadow: 0 0 40px oklch(.6 .17 40 / .1); }
+.tab.active { box-shadow: inset 0 -1.5px 0 var(--accent); }

@@ -5,6 +5,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::Once,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{
@@ -42,13 +43,25 @@ pub fn read_theme(app: AppHandle) -> Theme {
     let dir = config_dir(&app);
     let path = dir.join("theme.css");
     let first = !path.exists();
+    // Install the themes that ship beside nook and the user hasn't had yet: all of them on the first run,
+    // before the welcome lists them, and on a later launch the ones a newer nook added, once the window is
+    // up, so a copy of a theme's pictures never competes with the open.
+    static OFFERED: Once = Once::new();
+    OFFERED.call_once(|| {
+        if let Ok(bundled) = app.path().resource_dir().map(|r| r.join("themes")) {
+            let themes = dir.join("themes");
+            if first {
+                offer_bundled(&bundled, &themes);
+            } else {
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    offer_bundled(&bundled, &themes);
+                });
+            }
+        }
+    });
     if first {
         let _ = fs::create_dir_all(&dir).and_then(|()| fs::write(&path, THEME_SEED));
-        // First run: install the themes that ship beside nook.
-        let themes = dir.join("themes");
-        if !themes.exists() {
-            let _ = app.path().resource_dir().map(|bundled| copy_dir(&bundled.join("themes"), &themes));
-        }
     }
     let read = |p: &Path| fs::read(p).ok().map(|bytes| decode(&bytes).into_owned());
     let name = read_settings(&app).ok().and_then(|s| s.theme);
@@ -153,6 +166,37 @@ fn unpack(src: &Path, to: &Path) -> Result<(), String> {
     }
 }
 
+/// Copies each theme in `bundled` into `themes` once: `themes/.bundled` lists those already offered, so a
+/// theme the user removed stays removed. Before that list existed, nook shipped Twilight alone.
+fn offer_bundled(bundled: &Path, themes: &Path) {
+    let list = themes.join(".bundled");
+    let mut offered: Vec<String> = match fs::read_to_string(&list) {
+        Ok(text) => text.lines().map(str::to_owned).collect(),
+        Err(_) if themes.exists() => vec!["twilight".into()],
+        Err(_) => vec![],
+    };
+    let Ok(entries) = fs::read_dir(bundled) else { return };
+    let before = fs::metadata(themes).and_then(|m| m.modified()).ok();
+    let mut changed = false;
+    for entry in entries.flatten().filter(|e| e.path().is_dir()) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if offered.contains(&name) {
+            continue;
+        }
+        let to = themes.join(&name);
+        if to.exists() || copy_dir(&entry.path(), &to).is_ok() {
+            offered.push(name);
+            changed = true;
+        }
+    }
+    if changed {
+        let _ = fs::write(&list, offered.join("\n") + "\n");
+        // read_theme's stamp follows the folder's time, and a new stamp makes every open window reload its
+        // theme's pictures. Nothing in use changed, so put the time back (or far back, for a new folder).
+        let _ = fs::File::open(themes).and_then(|f| f.set_modified(before.unwrap_or(UNIX_EPOCH)));
+    }
+}
+
 /// The folder that holds theme.css: `dir`, or the one folder inside it that does.
 fn theme_root(dir: &Path) -> Option<PathBuf> {
     if dir.join("theme.css").is_file() {
@@ -207,7 +251,7 @@ fn extract_zip(zip: &Path, into: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{install, list_zip, newest_change};
+    use super::{install, list_zip, newest_change, offer_bundled};
     use std::{
         fs,
         time::{Duration, UNIX_EPOCH},
@@ -264,5 +308,46 @@ mod tests {
         assert!(install(&themes, &src, None).is_err());
         assert!(themes.join("dark-moon").join("theme.css").is_file()); // a failed install leaves the theme it would replace
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn offers_each_bundled_theme_once_and_keeps_a_removed_one_removed() {
+        let root = scratch("bundled");
+        let (bundled, themes) = (root.join("bundled"), root.join("themes"));
+        for name in ["twilight", "fjord"] {
+            fs::create_dir_all(bundled.join(name)).unwrap();
+            fs::write(bundled.join(name).join("theme.css"), name).unwrap();
+        }
+        // A first run installs them all.
+        offer_bundled(&bundled, &themes);
+        assert!(themes.join("twilight/theme.css").is_file() && themes.join("fjord/theme.css").is_file());
+        // A theme the user removed stays removed, and one they edited keeps their edit.
+        fs::remove_dir_all(themes.join("fjord")).unwrap();
+        fs::write(themes.join("twilight/theme.css"), "mine").unwrap();
+        offer_bundled(&bundled, &themes);
+        assert!(!themes.join("fjord").exists());
+        assert_eq!(fs::read_to_string(themes.join("twilight/theme.css")).unwrap(), "mine");
+        // A newer nook's new theme arrives once.
+        fs::create_dir_all(bundled.join("ember")).unwrap();
+        fs::write(bundled.join("ember/theme.css"), "ember").unwrap();
+        let time = fs::metadata(&themes).unwrap().modified().unwrap();
+        offer_bundled(&bundled, &themes);
+        assert!(themes.join("ember/theme.css").is_file());
+        // without touching the folder's time, which would make open windows reload their theme
+        assert_eq!(fs::metadata(&themes).unwrap().modified().unwrap(), time);
+    }
+
+    #[test]
+    fn an_older_install_without_the_list_gets_the_new_themes_but_not_twilight_again() {
+        let root = scratch("bundled-old");
+        let (bundled, themes) = (root.join("bundled"), root.join("themes"));
+        for name in ["twilight", "fjord"] {
+            fs::create_dir_all(bundled.join(name)).unwrap();
+            fs::write(bundled.join(name).join("theme.css"), name).unwrap();
+        }
+        fs::create_dir_all(themes.join("mine")).unwrap(); // Twilight was removed long ago
+        offer_bundled(&bundled, &themes);
+        assert!(themes.join("fjord/theme.css").is_file());
+        assert!(!themes.join("twilight").exists());
     }
 }

@@ -1,0 +1,40 @@
+/* Sakura: dusk under cherry blossoms. Plum shadows, petal-pink light, and a little evening blue. */
+
+:root {
+  --h: 350;
+  --bg: oklch(.16 .025 340);
+  --raised: oklch(.23 .035 340);
+  --hover: oklch(.9 .05 350 / .07);
+  --line: oklch(.9 .05 350 / .11);
+  --ink-1: oklch(.96 .015 350);
+  --ink-2: oklch(.8 .035 345);
+  --ink-3: oklch(.6 .045 340);
+  --accent: oklch(.82 .1 355);
+  --icon-image: oklch(.8 .1 10);
+  --icon-code: oklch(.8 .08 240);
+
+  --term-bg:
+    radial-gradient(80% 60% at 100% 0%, oklch(.36 .09 350 / .55), transparent 70%),
+    radial-gradient(70% 60% at 0% 100%, oklch(.28 .07 270 / .5), transparent 70%),
+    oklch(.14 .02 330);
+  --term-fg: oklch(.94 .02 350);
+  --cursor: oklch(.85 .11 355);
+  --selection: oklch(.7 .12 355 / .32);
+
+  --ansi-black: oklch(.3 .03 340);
+  --ansi-red: oklch(.72 .15 15);
+  --ansi-green: oklch(.8 .1 150);
+  --ansi-yellow: oklch(.86 .1 85);
+  --ansi-blue: oklch(.74 .1 260);
+  --ansi-magenta: oklch(.78 .13 340);
+  --ansi-cyan: oklch(.8 .08 200);
+  --ansi-white: oklch(.88 .015 350);
+  --ansi-bright-black: oklch(.58 .04 340);
+  --ansi-bright-red: oklch(.8 .13 15);
+  --ansi-bright-green: oklch(.87 .09 150);
+  --ansi-bright-yellow: oklch(.92 .09 85);
+  --ansi-bright-blue: oklch(.82 .09 260);
+  --ansi-bright-magenta: oklch(.86 .11 340);
+  --ansi-bright-cyan: oklch(.87 .07 200);
+  --ansi-bright-white: oklch(.98 .01 350);
+}
