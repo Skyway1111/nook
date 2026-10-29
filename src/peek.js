@@ -20,8 +20,9 @@ export function peek(path, line, x, y, hint) {
   const key = (wanted = {})
   timer = setTimeout(async () => {
     const from = line ? Math.max(1, line - ABOVE) : 1
-    const lines = await invoke('peek_lines', { path, from, count: LINES }).catch(() => null)
-    if (wanted !== key || !lines?.length) return
+    // A file that isn't text, or is empty, gets the card's name and hint alone.
+    const lines = await invoke('peek_lines', { path, from, count: LINES }).catch(() => [])
+    if (wanted !== key) return
     show(path, from, line, lines, hint, x, y, key)
   }, REST_MS)
 }
@@ -44,9 +45,10 @@ function show(path, from, line, lines, hint, x, y, key) {
   })
   const body = el('div', { className: 'lines' })
   body.append(...rows)
-  card.replaceChildren(name, body, el('div', { className: 'hint', textContent: hint }))
+  card.replaceChildren(name, ...(rows.length ? [body] : []), el('div', { className: 'hint', textContent: hint }))
   card.hidden = false
   place(card, x, y)
+  if (!rows.length) return
   // Colors follow when the editor's languages load; the card shows plain text until then.
   import('./editor.js').then(({ tokenize }) => tokenize(lines.join('\n'), paths.basename(path))).then(tokens => {
     if (wanted !== key || !tokens) return
