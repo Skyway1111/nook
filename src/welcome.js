@@ -8,6 +8,7 @@ const TIPS = [
   ['F1', 'runs any of nook\'s commands, this welcome among them'],
   ['Ctrl+Shift+P', 'sends a quick prompt, such as reviewing your changes'],
   ['Ctrl+Shift+S', 'shows every session, across folders'],
+  ['F11', 'hides everything but Claude, in a column over the wallpaper'],
 ]
 
 /** Shows the welcome over `pane`. `themes` is the settings drawer's; `wallpapers` opens the wallpaper picker. */

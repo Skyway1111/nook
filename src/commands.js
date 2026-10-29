@@ -23,6 +23,7 @@ export function appCommands({ tabs, files, git, drawer, wallpaper, openQuick, qu
     { title: 'Move around the file browser with the keys', keys: 'Ctrl+Shift+E', icon: ICON.folder, run: () => files.focus() },
     { title: 'Filter the file list by name', keys: 'Ctrl+F in the file list', icon: ICON.folder, when: () => files.current(), run: () => files.filter() },
     { title: 'Toggle git panel', icon: ICON.diff, run: toggle('git-hidden') },
+    { title: 'Focus on Claude', keys: 'F11', icon: '\uE740', run: toggle('focus') },
     { title: 'Open settings', icon: '\uE713', run: drawer.toggle },
     { title: 'Pick a wallpaper', icon: '\uE771', run: () => document.getElementById('toggle-wallpaper').click() },
     { title: 'Make a theme from a picture…', icon: '\uEB9F', run: drawer.themes.fromPicture },

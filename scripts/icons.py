@@ -33,6 +33,8 @@ ICONS = {
     0xE738: "subtract",  # a checkbox's mixed state
     0xE73E: "checkmark",
     0xE721: "search",  # find in Claude's output
+    0xE73F: "full_screen_minimize",  # BackToWindow: leave focus mode
+    0xE740: "full_screen_maximize",  # FullScreen: focus mode
     0xE74A: "arrow_up",
     0xE74B: "arrow_down",
     0xE74D: "delete",

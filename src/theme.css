@@ -15,6 +15,7 @@
   --term-font-size: 14px;
   --term-line-height: 1; /* above 1, block art (Claude's mascot) shows gaps between rows */
   --sidebar-width: 252px;
+  --focus-width: 1040px; /* F11's focus mode: how wide Claude's column is, the wallpaper either side */
 
   /* Chrome: titlebar and file browser */
   --bg: oklch(.165 .02 var(--h));
