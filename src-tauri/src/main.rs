@@ -5,6 +5,7 @@ mod commands;
 mod git;
 mod history;
 mod index;
+mod notify;
 #[cfg_attr(not(windows), path = "priority_unix.rs")]
 mod priority;
 mod pty;
@@ -90,6 +91,9 @@ struct Settings {
     prompts: Vec<Prompt>,
     /// Whether nook reopens the Claude sessions that were open when it closed.
     reopen_sessions: bool,
+    /// Whether a Claude session that needs the user or finishes while nook's window is in the background
+    /// shows a desktop notification.
+    notifications: bool,
     /// The Claude sessions open now, in tab order, for the next start to resume.
     sessions: Vec<OpenSession>,
 }
@@ -143,6 +147,7 @@ impl Default for Settings {
             day_theme: None,
             night_theme: None,
             reopen_sessions: true,
+            notifications: true,
             sessions: Vec::new(),
             prompts: PROMPTS.iter().map(|(name, text)| Prompt { name: name.to_string(), text: text.to_string() }).collect(),
         }
@@ -499,6 +504,7 @@ fn main() {
         // behind it. Only the PTY's writes, resizes, and closes and the shell's quick calls stay there.
         .invoke_handler(tauri::generate_handler![
             bench,
+            notify::notify,
             boot,
             settings,
             update_settings,
@@ -563,7 +569,7 @@ mod tests {
         let patch = json!({ "sessions": [{ "dir": "/work", "id": "abc", "active": true }] });
         let s = merge(Settings::default(), patch.as_object().unwrap().clone()).unwrap();
         assert_eq!(s.sessions, [super::OpenSession { dir: "/work".into(), id: "abc".into(), prompt: String::new(), active: true }]);
-        assert!(s.reopen_sessions);
+        assert!(s.reopen_sessions && s.notifications);
     }
 
     #[test]

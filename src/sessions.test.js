@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { follow, wanting, ago, modelName, summary, answeredReport, ANSWERS } from './sessions.js'
+import { follow, wanting, ago, modelName, summary, answeredReport, notice, ANSWERS } from './sessions.js'
 
 const run = (steps, view) => steps.map(([report, watched]) => (view = follow(view, report, watched)))
 
@@ -73,4 +73,15 @@ test('an answered prompt reads as working until the session reports again', () =
   assert.equal(answeredReport({ status: 'idle', since: 5 }, 5).status, 'idle')
   assert.ok(['Enter', 'NumpadEnter', 'Escape', 'Digit2', 'Numpad1'].every(k => ANSWERS.test(k)))
   assert.ok(!['ArrowDown', 'KeyY', 'Digit0', 'Tab'].some(k => ANSWERS.test(k)))
+})
+
+test('a notice names what Claude asks about, or the prompt it finished, and only when it wants the user', () => {
+  const report = { activity: 'Bash · npm publish', prompt: 'Ship it' }
+  assert.deepEqual(notice({ mark: 'waiting', attention: true }, report, 'nook'), {
+    title: 'Claude needs you in nook',
+    body: 'Asks about Bash · npm publish\n“Ship it”',
+  })
+  assert.deepEqual(notice({ mark: 'done', attention: true }, report, 'nook'), { title: 'Claude finished in nook', body: '“Ship it”' })
+  assert.deepEqual(notice({ mark: 'waiting', attention: true }, {}), { title: 'Claude needs you', body: 'Waiting on you' })
+  assert.equal(notice({ mark: 'working', attention: false }, report, 'nook'), null)
 })
