@@ -10,7 +10,7 @@ use std::{
 };
 use tauri::{
     async_runtime::spawn_blocking,
-    ipc::{InvokeBody, Request},
+    ipc::{InvokeBody, Request, Response},
     AppHandle, Manager,
 };
 
@@ -273,6 +273,38 @@ fn list_zip(zip: &Path) -> Result<String, String> {
 #[cfg(not(windows))]
 fn extract_zip(zip: &Path, into: &Path) -> Result<(), String> {
     crate::run(Command::new("unzip").args(["-q", "-o"]).arg(zip).arg("-d").arg(into), None).map(drop)
+}
+
+/// Where an element's baked backdrop waits for the next start: `body`, `pane`, and the like, in the cache folder.
+fn backdrop_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase()) {
+        return Err(format!("{name} isn't a backdrop's name"));
+    }
+    Ok(app.path().app_cache_dir().map_err(err)?.join("backdrops").join(name))
+}
+
+/// The backdrop `save_backdrop` kept for the element `name`, as it was saved, or nothing.
+#[tauri::command(async)]
+pub fn saved_backdrop(app: AppHandle, name: String) -> Result<Response, String> {
+    Ok(Response::new(fs::read(backdrop_file(&app, &name)?).unwrap_or_default()))
+}
+
+/// Keeps an element's baked backdrop for the next start. The body is the element's name, a NUL, then what
+/// `saved_backdrop` gives back. Written aside and moved in, so a start never reads half a file.
+#[tauri::command]
+pub async fn save_backdrop(app: AppHandle, request: Request<'_>) -> Result<(), String> {
+    let InvokeBody::Raw(body) = request.body() else { return Err("expected a backdrop".into()) };
+    let at = body.iter().position(|&b| b == 0).ok_or("expected a name")?;
+    let file = backdrop_file(&app, &String::from_utf8_lossy(&body[..at]))?;
+    let bytes = body[at + 1..].to_vec();
+    spawn_blocking(move || {
+        let aside = file.with_extension("new");
+        fs::create_dir_all(file.parent().unwrap()).map_err(err)?;
+        fs::write(&aside, bytes).map_err(err)?;
+        fs::rename(&aside, &file).map_err(err)
+    })
+    .await
+    .map_err(err)?
 }
 
 #[cfg(test)]
