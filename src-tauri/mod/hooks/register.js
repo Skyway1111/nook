@@ -408,6 +408,23 @@ export function splitBlocks(text) {
   return pieces // text, [kind, source], … , text
 }
 
+/** A reply's text cut after each closed fenced code block: text, code, text, … , text, where each text piece
+ * keeps its blocks and each code piece is the block before it as one would paste it, its fence's indent
+ * taken off. A block still streaming in, with no closing fence yet, isn't cut after. */
+export function splitCode(text) {
+  const pieces = []
+  let at = 0
+  for (const m of text.matchAll(/^([ \t]*)(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n?^[ \t]*\2[ \t]*$/gm)) {
+    const indent = m[1].length
+    const code = m[3].split('\n').map(l => l.slice(Math.min(indent, l.length - l.trimStart().length))).join('\n')
+    if (!code.trim()) continue
+    pieces.push(text.slice(at, m.index + m[0].length).trim(), code)
+    at = m.index + m[0].length
+  }
+  pieces.push(at ? text.slice(at).trim() : text)
+  return pieces
+}
+
 /** About how many rows a display formula takes at the terminal's own text size, a row being about an em:
  * an em a line, more for a fraction, a nested one, or a big operator with limits. nook fits the drawing
  * inside the box, so a guess too small only draws it smaller. */
@@ -897,9 +914,31 @@ export function register(on) {
     const text = e.props.text.includes('$') ? plainInline(e.props.text) : e.props.text
     const diagrams = file && (text.includes('```mermaid') || text.includes('$$') || text.includes('\\[') || text.includes('<svg'))
     const shown = text.includes('![') ? await linkedPictures($, text) : new Map()
+    const code = text.includes('```') || text.includes('~~~')
     const plain = text === e.props.text ? e : { ...e, props: { ...e.props, text } }
-    if (!diagrams && !shown.size) return next(plain)
-    const { Box, Image, Markdown } = $.ui.resolve(e)
+    if (!diagrams && !shown.size && !code) return next(plain)
+    const { Box, Button, Image, Markdown } = $.ui.resolve(e)
+    // Under each code block, a Copy that puts the block's code, without its fences, on the clipboard.
+    const copies = new Map() // keys taken in this reply, so a block that repeats gets its own
+    const copy = (source, more) => {
+      const n = copies.get(source) ?? 0
+      copies.set(source, n + 1)
+      const lines = source.split('\n').length
+      return Box({
+        paddingLeft: REPLY_INDENT,
+        marginBottom: more ? 1 : 0, // the blank line Claude keeps after a block, when words follow
+        children: [Button({
+          key: `copy:${hash(source)}:${n}`,
+          label: '⧉ Copy',
+          plain: true,
+          dimColor: true,
+          onPress: async press => {
+            const { isCopied } = await $.ui.copy({ text: source, surface: press?.surface })
+            $.ui.toast(isCopied ? `Copied ${lines} line${lines === 1 ? '' : 's'}` : 'Nothing could take the copy here')
+          },
+        })],
+      })
+    }
     const dir = file?.replace(/[\\/][^\\/]*$/, '')
     const room = Math.min(255, (e.viewport?.columns ?? 80) - REPLY_INDENT - 1)
     // The reply as words, diagrams, and pictures, in order: each odd piece of a split is what its text was cut at.
@@ -930,7 +969,7 @@ export function register(on) {
         continue
       }
       for (const [j, part] of (shown.size ? splitPictures(piece, shown) : [piece]).entries()) {
-        if (j % 2 === 0) blocks.push(part)
+        if (j % 2 === 0) blocks.push(...(code ? splitCode(part).map((p, k, all) => (k % 2 ? copy(p, !!all[k + 1]) : p)) : [part]))
         else blocks.push(Box({ flexDirection: 'column', marginY: 1, children: part.map(t => picture(Box, Image, ...shown.get(t), room, REPLY_INDENT)) }))
       }
     }

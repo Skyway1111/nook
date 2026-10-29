@@ -137,7 +137,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, svgSize, linkTarget, outcome, pictureLinks, readPaths, planned, replan, searchParts, shellSearch, spent, splitBlocks, splitPictures, summary, testCounts } from './register.js'
+import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, svgSize, linkTarget, outcome, pictureLinks, readPaths, planned, replan, searchParts, shellSearch, spent, splitBlocks, splitCode, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -571,5 +571,37 @@ test('a PDF Claude reads shows its first page in a tab nook started, and nowhere
   await $.session.start({ cwd: '/work' })
   const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'ToolUse', requestId: 'b', props })
   expect((await ui.find({ type: 'Image' }))?.props).toMatchObject({ source: { file: '/work/report.pdf' }, columns: 31, rows: 20 })
+  await ui.unmount()
+})
+
+test('a reply is cut after each closed code block, its code as one would paste it', () => {
+  const reply = 'Run:\n\n```sh\nnpm test\n```\n\nthen\n\n- in a list:\n  ```js\n  let a = 1\n    nested()\n  ```\nDone.'
+  expect(splitCode(reply)).toEqual(['Run:\n\n```sh\nnpm test\n```', 'npm test', 'then\n\n- in a list:\n  ```js\n  let a = 1\n    nested()\n  ```', 'let a = 1\n  nested()', 'Done.'])
+  expect(splitCode('~~~\nx\n~~~')).toEqual(['~~~\nx\n~~~', 'x', ''])
+  // A block that holds a shorter fence ends only at its own.
+  expect(splitCode('````md\n```js\nx\n```\n````')[1]).toBe('```js\nx\n```')
+  // Still streaming, or empty: nothing to copy.
+  expect(splitCode('Half:\n```py\nprint(1)\n')).toEqual(['Half:\n```py\nprint(1)\n'])
+  expect(splitCode('```\n\n```')).toHaveLength(1)
+  expect(splitCode('No code here.')).toEqual(['No code here.'])
+})
+
+test('a code block in a reply has a Copy under it that puts its code on the clipboard', async ($, on) => {
+  const reports: Record<string, unknown>[] = []
+  nook(on, reports, ['terminal'])
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: `engine: ${e.props.text}` }))
+  const copied: string[] = []
+  on('ui.copy', ($, e) => {
+    copied.push(e.text)
+    return { value: { isCopied: true } }
+  })
+  await $.session.start({ cwd: '/work' })
+  const text = 'Try:\n\n```sh\nnpm run gate\n```\n\nor\n\n```sh\nnpm run gate\n```'
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AssistantMessage', requestId: 'r1', props: { text, isFirstOfReply: true } })
+  expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine: Try:\n\n```sh\nnpm run gate\n```')
+  const first = await ui.find({ type: 'Button' })
+  expect(first?.props.label).toBe('⧉ Copy')
+  await ui.press({ key: first!.props.key })
+  expect(copied).toEqual(['npm run gate'])
   await ui.unmount()
 })
