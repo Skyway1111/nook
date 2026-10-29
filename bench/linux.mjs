@@ -15,16 +15,17 @@
 // is the median of those sessions, with the spread (min-max) beside it. Below the table, each build's open is
 // split into the steps it passes, as ms since nook started: its window built, the page began to load, the
 // script ran, and so on until the terminal's text showed.
-// With two builds, `--bin base,new`, launches alternate between them, so drift in the machine hits both alike,
-// and the table ends with each change from base to new. A change worse than its noise floor is flagged, and
-// the exit code is 1 if any is.
+// With two builds or more, `--bin base,new` or `--bin baseline,main,new`, launches take turns between them, so
+// drift in the machine hits all alike, and the table ends with the change from each earlier build to the last.
+// A change worse than its noise floor is flagged, and the exit code is 1 if any is. Comparing against a fixed
+// baseline as well as main catches a slow drift that no single merge shows.
 // CPU and memory count nook and its WebKit processes, not the shell in its tab. The tab runs a small bash loop
 // that echoes lines, in a folder outside any repository, so neither Claude nor the git panel's poll adds
 // noise. Xvfb has no GPU, so WebKit draws in software: compare numbers from the same machine, not with a
 // desktop's.
 // Needs Xvfb and xdotool, and a build: `npx tauri build --no-bundle`.
-//   node bench/linux.mjs [--bin src-tauri/target/release/nook[,other]] [--wallpapers none,koi] [--runs 7]
-//                        [--sessions 3] [--json out.json]
+//   node bench/linux.mjs [--bin src-tauri/target/release/nook[,other...]] [--wallpapers none,koi] [--runs 7]
+//                        [--sessions 3] [--tui off] [--json out.json]
 import { spawn, execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -88,6 +89,11 @@ function launch(bin, run) {
       const [tag, event, ms, since] = line.split(' ')
       if (tag !== 'bench') continue
       const item = { event, ms: Number(ms), since: Number(since), at: performance.now() }
+      // A batch of key echo times comes as keys:<ms>,<ms>,...
+      if (event.startsWith('keys:')) {
+        lines.push(...event.slice(5).split(',').map(ms => ({ ...item, event: 'key', ms: Number(ms) })))
+        continue
+      }
       lines.push(item)
       waiting.filter(w => w.event === event).forEach(w => w.resolve(item))
     }
@@ -289,7 +295,7 @@ for (const wallpaper of wallpapers) {
   }
   rmSync(run.dir, { recursive: true, force: true })
   const tui = scratch(wallpaper, [process.execPath, new URL('tui.mjs', import.meta.url).pathname])
-  for (let i = 0; i < sessions; i++) {
+  for (let i = 0; i < (flag('tui', 'on') === 'off' ? 0 : sessions); i++) {
     for (const m of i % 2 ? [...mine].reverse() : mine) {
       const app = launch(m.bin, tui)
       await app.ready
@@ -308,21 +314,24 @@ const cell = (r, key, d) => {
   return `${f(median(xs), d)} (${f(xs[0], d)}-${f(xs.at(-1), d)})`
 }
 let worse = 0
+const last = bins.length - 1 // the build under test; every earlier one is a base it must match or beat
 for (const wallpaper of wallpapers) {
   const mine = results.filter(r => r.wallpaper === wallpaper)
   console.log(`\nwallpaper ${wallpaper}: median (min-max) of ${runs} opens and ${sessions} sessions`)
   bins.forEach((b, i) => console.log(`  [${i}] ${b}`))
-  console.log('metric'.padEnd(20) + mine.map((_, i) => `[${i}]`.padEnd(24)).join('') + (mine.length === 2 ? 'change' : ''))
+  const bases = mine.slice(0, last)
+  console.log('metric'.padEnd(20) + mine.map((_, i) => `[${i}]`.padEnd(24)).join('') + bases.map((_, i) => `[${last}] vs [${i}]`.padEnd(22)).join(''))
   for (const [key, label, d, floor] of METRICS) {
     let line = label.padEnd(20) + mine.map(r => cell(r, key, d).padEnd(24)).join('')
-    if (mine.length === 2) {
-      const [a, b] = mine.map(r => median(values(r, key)))
+    const b = median(values(mine[last], key))
+    for (const base of bases) {
+      const a = median(values(base, key))
       const delta = b - a
       const flagged = delta > Math.max(floor, RELATIVE * Math.abs(a))
       if (flagged) worse++
-      line += `${delta >= 0 ? '+' : ''}${f(delta, d)}${a ? ` (${delta >= 0 ? '+' : ''}${f((100 * delta) / a, 0)}%)` : ''}${flagged ? '  WORSE' : ''}`
+      line += `${delta >= 0 ? '+' : ''}${f(delta, d)}${a ? ` (${delta >= 0 ? '+' : ''}${f((100 * delta) / a, 0)}%)` : ''}${flagged ? ' WORSE' : ''}`.padEnd(22)
     }
-    console.log(line)
+    console.log(line.trimEnd())
   }
   // Where an open's time goes: the median ms since nook started at which each step finished.
   const steps = ['setup', 'window', 'page', 'script', 'boot', 'settings', 'chrome', 'spawned', 'ready']
@@ -331,6 +340,6 @@ for (const wallpaper of wallpapers) {
     if (at.some(Number.isFinite)) console.log(`open steps [${mine.indexOf(r)}]: ` + steps.map((s, i) => `${s} ${f(at[i], 0)}`).join(', '))
   }
 }
-if (bins.length === 2) console.log(worse ? `\n${worse} metric(s) look worse than noise.` : '\nNothing looks worse than noise.')
+if (bins.length > 1) console.log(worse ? `\n${worse} metric(s) look worse than noise.` : '\nNothing looks worse than noise.')
 if (flag('json')) writeFileSync(flag('json'), JSON.stringify({ bins, runs, sessions, results }, null, 2))
 process.exitCode = worse ? 1 : 0

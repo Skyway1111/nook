@@ -45,6 +45,7 @@ export function startBench() {
  * that shows its last line, with the longest gaps between frames meanwhile. */
 function watch() {
   let key = null // when the key whose echo hasn't shown yet went down
+  const keys = [] // echo times not yet reported
   let wheel = null
   let flood = null // { t, gaps, last, done }
   // The last rows only: reading every row on each change would cost more than what it measures.
@@ -60,7 +61,11 @@ function watch() {
     if (key !== null) {
       const t = key
       key = null
-      shown(() => report('key', performance.now() - t))
+      shown(() => {
+        // Ten at a time, so reporting adds little to the typing CPU it runs beside.
+        keys.push(Math.round(performance.now() - t))
+        if (keys.length >= 10) report(`keys:${keys.splice(0).join(',')}`)
+      })
     }
     if (wheel !== null) {
       const t = wheel
