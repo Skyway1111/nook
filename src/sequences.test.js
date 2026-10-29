@@ -1,7 +1,7 @@
 // `npm test`: spotting sixel and iTerm2 pictures in output, so xterm's image addon loads only for them.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { imageStart, FOUND, NONE } from './sequences.js'
+import { imageStart, FOUND, NONE, clipboardText } from './sequences.js'
 
 const b = s => new TextEncoder().encode(s)
 
@@ -25,4 +25,22 @@ test('a chunk that ends partway into a possible picture says where', () => {
   assert.equal(imageStart(b('abc\x1bP0;1')), 3)
   assert.equal(imageStart(b('ab\x1b]133')), 2)
   assert.equal(imageStart(b('ab\x1b]0;tit')), NONE)
+})
+
+const b64 = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)))
+
+test('OSC 52 puts its text on the clipboard', () => {
+  assert.equal(clipboardText(`c;${b64('hello')}`), 'hello')
+  assert.equal(clipboardText(`;${b64('no selection named')}`), 'no selection named')
+  assert.equal(clipboardText(`pc;${b64('naïve — 日本 🐟')}`), 'naïve — 日本 🐟')
+  assert.equal(clipboardText(`c;${b64('two\nlines')}`), 'two\nlines')
+  assert.equal(clipboardText('c;'), '')
+})
+
+test('OSC 52 reads and broken payloads put nothing', () => {
+  assert.equal(clipboardText('c;?'), null)
+  assert.equal(clipboardText('no separator'), null)
+  assert.equal(clipboardText('c;not base64!'), null)
+  assert.equal(clipboardText('c;/w=='), null) // 0xff is not UTF-8
+  assert.equal(clipboardText('c;' + 'A'.repeat((8 << 20) + 4)), null)
 })
