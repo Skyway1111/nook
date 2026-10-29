@@ -264,7 +264,7 @@ const METRICS = [
   ['idle', 'idle CPU %', 1, 0.5],
   ['typing', 'typing CPU %', 1, 1.5],
   ['memory', 'memory MB', 0, 5],
-  ['memoryFull', 'memory full MB', 0, 8],
+  ['memoryFull', 'memory full MB', 0, 20], // when the webview collects the flood's garbage varies by tens of MB
   ['resizeFull', 'resize full ms', 1, 3],
   ['tuiKey', 'tui key echo ms', 1, 2],
   ['tuiKeyP95', 'tui key p95 ms', 1, 4],
