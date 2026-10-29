@@ -279,6 +279,221 @@ export const SCENES = [
       stamp(g, wrap(walked, lap) - 9, g.rows - 3, CLAWD[Math.floor(t * 4) % 2], 'claude')
     },
   },
+  {
+    id: 'rain',
+    name: 'Rain',
+    draw(g, t) {
+      // Streaks that fall with a little wind, and splash where they land.
+      const lap = g.rows + 4
+      for (let i = 0, n = many(g, 45, 6); i < n; i++) {
+        const speed = 13 + hash(22, i, 1) * 9
+        const fall = hash(22, i, 2) * lap + t * speed
+        const y = wrap(fall, lap) - 2
+        const x0 = hash(22, i, 3, Math.floor(fall / lap)) * (g.cols + g.rows * 0.3)
+        const x = x0 - y * 0.3
+        const near = hash(22, i, 4) < 0.35
+        put(g, x, y, near ? '/' : '\'', near ? 'water' : 'faint')
+        if (near) put(g, x + 0.3, y - 1, '/', 'faint')
+        const landed = wrap(fall, lap) - lap + 1 // how long ago it reached the bottom, in rows of fall
+        if (landed > -speed * 0.25 && landed <= 0 && near) {
+          const at = x0 - (g.rows - 1) * 0.3
+          put(g, at - 1, g.rows - 1, '.', 'faint')
+          put(g, at, g.rows - 1, 'v', 'sea')
+          put(g, at + 1, g.rows - 1, '.', 'faint')
+        }
+      }
+      // A puddle's rings along the bottom.
+      for (let i = 0, n = many(g, 900, 2); i < n; i++) {
+        const beat = Math.floor(t / 1.6 + hash(23, i, 1) * 9)
+        const age = wrap(t / 1.6 + hash(23, i, 1) * 9, 1)
+        const x = hash(23, i, 2, beat) * g.cols
+        const r = Math.round(1 + age * 3)
+        put(g, x - r * 2, g.rows - 1, '(', 'faint')
+        put(g, x + r * 2, g.rows - 1, ')', 'faint')
+      }
+    },
+  },
+  {
+    id: 'aurora',
+    name: 'Aurora',
+    draw(g, t) {
+      stars(g, t, 24, 90, 0.7)
+      // Curtains of light that ripple along the sky, brightest at their hems.
+      const top = Math.floor(g.rows * 0.08)
+      const span = Math.max(4, Math.floor(g.rows * 0.5))
+      for (let x = 0; x < g.cols; x++) {
+        const u = x / Math.max(1, g.cols)
+        const glow = 0.3 + Math.sin(u * 5 + t * 0.3) * 0.35 + Math.sin(u * 13 - t * 0.5) * 0.25 + Math.sin(u * 2.3 + t * 0.12) * 0.2
+        if (glow < 0.05) continue
+        const hem = top + span * (0.55 + 0.25 * Math.sin(u * 5 + t * 0.25)) // the curtain's lower edge waves
+        if (hash(25, x) < 0.3) continue // the curtains are rays of light, with dark between them
+        const height = span * (0.35 + glow * 0.5) * (0.6 + 0.4 * hash(25, x, 1))
+        for (let y = Math.max(0, Math.floor(hem - height)); y <= hem && y < g.rows; y++) {
+          const k = (y - (hem - height)) / Math.max(1, height) // 0 at the top of the curtain, 1 at its hem
+          const v = glow * (0.25 + k * 0.9)
+          if (v < 0.2) continue
+          put(g, x, y, v > 0.8 ? '|' : v > 0.45 ? ':' : '\'', k > 0.8 ? 'leaf' : k > 0.4 ? 'sea' : 'glow')
+        }
+      }
+      // A ridge of mountains along the bottom.
+      const ridge = x => Math.round(g.rows - 1 - Math.min(g.rows * 0.3, 9) * (0.55 + 0.25 * Math.sin(x * 0.09) + 0.15 * Math.sin(x * 0.23 + 1) + 0.08 * Math.sin(x * 0.61)))
+      for (let x = 0; x < g.cols; x++) {
+        const [l, y, r] = [ridge(x - 1), ridge(x), ridge(x + 1)]
+        put(g, x, y, l > y && r > y ? '^' : r < y ? '/' : l < y ? '\\' : '_', 'ink')
+      }
+    },
+  },
+  {
+    id: 'snow',
+    name: 'Snowfall',
+    draw(g, t) {
+      motes(g, t, 27, many(g, 50), { speed: 0.9, chars: '.', role: 'faint', sway: 1 })
+      motes(g, t, 28, many(g, 140), { speed: 2.2, chars: '+*', role: 'bright', sway: 2.5 })
+      // Pines on a white ground.
+      const ground = g.rows - 1
+      for (let x = 0; x < g.cols; x++) put(g, x, ground, hash(29, x) < 0.5 ? '_' : '.', 'bright')
+      for (let i = 0, n = Math.max(2, Math.round(g.cols / 16)); i < n; i++) {
+        const tall = 3 + Math.floor(hash(30, i, 1) * 4)
+        const x = Math.round(((i + 0.2 + hash(30, i, 2) * 0.6) / n) * g.cols)
+        for (let k = 0; k < tall; k++) {
+          const half = k
+          for (let d = -half; d <= half; d++) {
+            const ch = k === 0 ? '^' : d === -half ? '/' : d === half ? '\\' : hash(31, i, k, d) < 0.25 ? '*' : '^'
+            put(g, x + d, ground - tall + k, ch, ch === '*' ? 'bright' : 'leaf')
+          }
+        }
+        put(g, x, ground, '|', 'ink')
+      }
+    },
+  },
+  {
+    id: 'campfire',
+    name: 'Campfire',
+    draw(g, t) {
+      stars(g, t, 32, 80, 0.55)
+      const ground = g.rows - 2
+      for (let x = 0; x < g.cols; x++) put(g, x, ground + 1, hash(33, x) < 0.4 ? ',' : '_', 'faint')
+      const cx = Math.round(g.cols * 0.5)
+      // Logs, then flames whose edges flicker eight times a second.
+      stamp(g, cx - 7, ground, ['\\\\__/\\_//\\__//'], 'ink')
+      const tall = Math.max(4, Math.min(14, Math.round(g.rows * 0.25)))
+      const flick = Math.floor(t * 8)
+      for (let k = 0; k < tall; k++) {
+        const y = ground - 1 - k
+        const lean = Math.round(Math.sin(t * 1.7 + k * 0.4) * k * 0.15)
+        const half = 6 * Math.pow(1 - k / tall, 0.8) * (0.8 + 0.35 * hash(34, k, flick))
+        for (let d = -Math.ceil(half); d <= Math.ceil(half); d++) {
+          const edge = Math.abs(d) / Math.max(0.5, half)
+          if (edge > 1 || (edge > 0.75 && hash(35, k, d, flick) < 0.4)) continue
+          const heat = (1 - edge) * (1 - k / tall)
+          put(g, cx + d + lean, y, heat > 0.55 ? '#' : heat > 0.3 ? '*' : heat > 0.12 ? (d < 0 ? '(' : ')') : '\'', heat > 0.55 ? 'light' : heat > 0.2 ? 'warm' : 'accent')
+        }
+      }
+      // Sparks that rise and drift, and go out.
+      for (let i = 0, n = 14; i < n; i++) {
+        const life = 2.5 + hash(36, i, 1) * 2
+        const age = wrap(t + hash(36, i, 2) * life, life)
+        const x = cx + (hash(36, i, 3, Math.floor((t + hash(36, i, 2) * life) / life)) - 0.5) * 6 + Math.sin(t * 1.3 + i) * age * 1.2
+        const y = ground - tall + 1 - age * 3.2
+        if (y > 0) put(g, x, y, age < life * 0.6 ? '.' : '\'', age < life * 0.4 ? 'light' : 'faint')
+      }
+      // Pines at the edges of the clearing.
+      for (const side of [-1, 1]) {
+        for (let i = 0; i < 3; i++) {
+          const x = cx + side * Math.round(g.cols * (0.3 + i * 0.07)) + Math.round(hash(37, i, side) * 4)
+          const h = 4 + Math.floor(hash(38, i, side) * 4)
+          for (let k = 0; k < h; k++) for (let d = -k; d <= k; d++) put(g, x + d, ground - h + k + 1, k === 0 ? '^' : d === -k ? '/' : d === k ? '\\' : '^', 'ink')
+        }
+      }
+    },
+  },
+  {
+    id: 'lava',
+    name: 'Lava lamp',
+    draw(g, t) {
+      // Blobs that rise, sink, and melt into one another: cells where their summed pull passes 1.
+      const blobs = []
+      for (let i = 0, n = Math.max(4, Math.round((g.cols * g.rows) / 700)); i < n; i++) {
+        const r = Math.max(2, Math.min(g.rows, g.cols / 2) * (0.05 + hash(39, i, 1) * 0.05))
+        const period = 22 + hash(39, i, 2) * 26
+        blobs.push({
+          x: g.cols * (0.15 + 0.7 * hash(39, i, 3)) + Math.sin(t * 0.21 + i * 1.7) * g.cols * 0.06,
+          y: g.rows * (0.5 - 0.42 * Math.cos(((t / period) + hash(39, i, 4)) * TAU)),
+          r2: r * r,
+        })
+      }
+      for (let y = 0; y < g.rows; y++) {
+        for (let x = 0; x < g.cols; x++) {
+          let f = 0
+          for (const b of blobs) {
+            const dx = (x - b.x) / 2 // a cell is about twice as tall as wide
+            const dy = y - b.y
+            const q = b.r2 / (dx * dx + dy * dy + 0.5)
+            f += q * q // a steep falloff keeps blobs round instead of one wide haze
+          }
+          if (f < 0.7) continue
+          put(g, x, y, f > 6 ? '@' : f > 2.5 ? 'O' : f > 1.1 ? 'o' : '.', f > 2.5 ? 'warm' : f > 1.1 ? 'accent' : 'glow')
+        }
+      }
+    },
+  },
+  {
+    id: 'orbit',
+    name: 'Orbits',
+    draw(g, t) {
+      stars(g, t, 40, 260)
+      const [cx, cy] = [g.cols / 2, g.rows / 2]
+      const size = Math.min(g.cols / 2, g.rows) * 0.9
+      const rays = Math.floor(t * 2) % 2
+      stamp(g, cx - 4, cy - 2, rays ? ['  \\ | /  ', '   .-.   ', '--( @ )--', "   '-'   ", '  / | \\  '] : ['  .   .  ', '   .-.   ', '- ( @ ) -', "   '-'   ", '  .   .  '], 'light')
+      for (let i = 0; i < 5; i++) {
+        const a = size * (0.26 + i * 0.16)
+        const b = a * 0.5
+        // The path, faint and still, then the planet on it, faster near the sun.
+        for (let k = 0, n = Math.round(a * 1.2); k < n; k++) {
+          const th = (k / n) * TAU
+          put(g, cx + Math.cos(th) * a * 2 * 0.98, cy + Math.sin(th) * b, '.', 'faint')
+        }
+        const th = t * (0.5 / Math.pow(i + 1, 1.3)) + hash(42, i) * TAU
+        const [px, py] = [cx + Math.cos(th) * a * 2 * 0.98, cy + Math.sin(th) * b]
+        stamp(g, px - (i === 3 ? 2 : 0), py, [['o', 'O', '@', '-(O)-', 'O'][i]], ['sea', 'warm', 'water', 'light', 'accent'][i])
+        if (i === 2 || i === 4) {
+          const m = t * 1.6 + i
+          put(g, px + Math.cos(m) * 3, py + Math.sin(m) * 1.2, '.', 'bright')
+        }
+      }
+      // Now and then a comet crosses, its tail behind it.
+      const pass = 14
+      const age = wrap(t, pass)
+      if (age < 6) {
+        const k = Math.floor(t / pass)
+        const [x0, y0] = [-10 + hash(43, k, 1) * g.cols * 0.3, hash(43, k, 2) * g.rows * 0.4]
+        const [vx, vy] = [g.cols / 5, g.rows / 14]
+        for (let j = 0; j < 8; j++) put(g, x0 + vx * age - j * 1.6, y0 + vy * age - j * 0.4, j ? (j < 4 ? '-' : '.') : '*', j ? 'faint' : 'bright')
+      }
+    },
+  },
+  {
+    id: 'coderain',
+    name: 'Code rain',
+    draw(g, t) {
+      // Streams of code fall down some of the columns, bright at their heads. Each column rests between streams.
+      const glyphs = '01{}[]()<>=+*/;:.$#&!?|~'
+      for (let x = 0; x < g.cols; x += 2) {
+        const speed = 6 + hash(44, x, 1) * 8
+        const lap = g.rows * (1.6 + hash(44, x, 2) * 1.2)
+        const run = hash(44, x, 3) * lap + t * speed
+        const head = wrap(run, lap)
+        const trail = 6 + Math.floor(hash(44, x, 4, Math.floor(run / lap)) * 14)
+        for (let k = 0; k < trail; k++) {
+          const y = Math.floor(head) - k
+          if (y < 0 || y >= g.rows) continue
+          const ch = glyphs[Math.floor(hash(45, x, y, Math.floor(t * 2 + hash(45, x, y) * 9)) * glyphs.length)]
+          put(g, x, y, ch, k === 0 ? 'bright' : k < trail * 0.5 ? 'leaf' : 'faint')
+        }
+      }
+    },
+  },
 ]
 
 /** The scene named `id`, or undefined for none. */

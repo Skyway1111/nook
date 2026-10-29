@@ -102,20 +102,21 @@
   --claude-selectionBg: var(--selection);
 
   /* Living wallpaper: a scene drawn in characters behind Claude tabs, always moving. One of none, drift,
-     turtles, koi, jellyfish, boats, fireflies, or moonlit. The titlebar's wallpaper button writes your pick here. */
+     turtles, koi, jellyfish, boats, fireflies, moonlit, rain, aurora, snow, campfire, lava, orbit, or coderain.
+     The titlebar's wallpaper button writes your pick here. */
   --wallpaper: none;
   --wallpaper-opacity: .5; /* over --term-bg, under Claude's text */
   --wallpaper-font-size: var(--term-font-size); /* the height of its cells */
   /* The colors the scenes paint with. */
-  --wallpaper-faint: var(--ink-3); /* stars, ripples, and far-off things */
-  --wallpaper-ink: var(--ink-2);
-  --wallpaper-bright: var(--ink-1); /* cloud tops, the moon, and bubbles */
-  --wallpaper-accent: var(--accent);
+  --wallpaper-faint: var(--ink-3); /* stars, ripples, rain, and far-off things */
+  --wallpaper-ink: var(--ink-2); /* clouds, logs, and the mountains' ridge */
+  --wallpaper-bright: var(--ink-1); /* cloud tops, the moon, bubbles, and snow */
+  --wallpaper-accent: var(--accent); /* flames' edges, and the lava's rims */
   --wallpaper-claude: var(--claude-clawd_body); /* Claude's mascot, in Moonlit */
   --wallpaper-water: var(--ansi-blue);
   --wallpaper-sea: var(--ansi-cyan);
-  --wallpaper-leaf: var(--ansi-green); /* turtles, lily pads, and grass */
-  --wallpaper-warm: var(--ansi-red); /* koi, and the lilies' flowers */
-  --wallpaper-light: var(--ansi-yellow); /* fireflies, and golden koi */
-  --wallpaper-glow: var(--ansi-magenta); /* jellyfish */
+  --wallpaper-leaf: var(--ansi-green); /* turtles, lily pads, grass, pines, the aurora's hem, and code rain */
+  --wallpaper-warm: var(--ansi-red); /* koi, the lilies' flowers, fire, and lava */
+  --wallpaper-light: var(--ansi-yellow); /* fireflies, golden koi, the fire's heart, and the sun */
+  --wallpaper-glow: var(--ansi-magenta); /* jellyfish, and the aurora's crown */
 }
