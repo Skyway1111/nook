@@ -159,6 +159,58 @@ export function testCounts(text) {
   return null
 }
 
+/** What a build, an install, a linter, or git says it did, from its own closing lines: a commit's hash and
+ * line counts, where a push went, a merge's line counts, warnings and errors counted, and packages added.
+ * Parts as `outcome` gives them, a third element true when the part joins the one before with a space; null
+ * when the output holds none of these. */
+export function summary(text) {
+  const lines = text.slice(-TAIL).split('\n').map(l => l.replace(/\x1b\[[\d;]*m/g, '').trimEnd())
+  const find = pattern => lines.map(l => pattern.exec(l)).find(Boolean)
+  const parts = []
+  // git's stat: 3 files changed, 10 insertions(+), 2 deletions(-)
+  const stat = find(/^\s*(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/)
+  const lineCounts = () => [
+    ...(stat[2] ? [[`+${stat[2]}`, 'diffAdded', true]] : []),
+    ...(stat[3] ? [[`\u2212${stat[3]}`, 'diffRemoved', true]] : []),
+  ]
+  // git commit: [main a1b2c3d] the message
+  const commit = find(/^\[([^\s\]]+)(?: \([^)]*\))? ([0-9a-f]{7,40})\]/)
+  if (commit) {
+    parts.push([`committed ${commit[2]}`, 'success'])
+    if (stat) parts.push([plural(+stat[1], 'file')], ...lineCounts())
+    return parts
+  }
+  // git push: "   a1b2c3d..e4f5a6b  main -> main", or "* [new branch]  x -> x"
+  if (lines.some(l => /^To \S/.test(l))) {
+    const ref = find(/^\s*[+*!= -]?\s*(?:[0-9a-f]+\.{2,3}[0-9a-f]+|\[[a-z ]+\])\s+\S+ -> (\S+)/)
+    if (ref) return [[lines.some(l => /\[rejected\]/.test(l)) ? `rejected ${ref[1]}` : `pushed ${ref[1]}`, lines.some(l => /\[rejected\]/.test(l)) ? 'error' : 'success']]
+  }
+  if (lines.some(l => /^Already up to date\.?$/.test(l.trim()))) return [['up to date', null]]
+  // git pull or merge: Fast-forward, or Merge made by the 'ort' strategy, then the stat
+  if (stat && lines.some(l => /^(?:Fast-forward|Merge made by)/.test(l.trim()))) return [['merged', 'merged'], [plural(+stat[1], 'file')], ...lineCounts()]
+  // cargo: warning: `nook` (bin "nook") generated 3 warnings; error: could not compile `nook` ... due to 2 previous errors
+  const warned = lines.reduce((n, l) => n + Number(/^warning: .* generated (\d+) warnings?/.exec(l)?.[1] ?? 0), 0)
+  const failed = find(/^error: could not compile .* due to (\d+) previous errors?/)
+  if (failed) parts.push([plural(+failed[1], 'error'), 'error'])
+  // tsc: Found 3 errors in 2 files.
+  const tsc = find(/^Found (\d+) errors?(?: in (\d+) files?)?\.?$/)
+  if (tsc) parts.push([`${plural(+tsc[1], 'error')}${tsc[2] ? ` in ${plural(+tsc[2], 'file')}` : ''}`, 'error'])
+  // eslint: ✖ 5 problems (3 errors, 2 warnings)
+  const lint = find(/^\u2716 \d+ problems? \((\d+) errors?, (\d+) warnings?\)/)
+  if (lint && +lint[1]) parts.push([plural(+lint[1], 'error'), 'error'])
+  const warnings = warned + (lint ? +lint[2] : 0)
+  if (warnings) parts.push([plural(warnings, 'warning'), 'warning'])
+  // npm: added 120 packages, and audited 121 packages in 3s; 3 vulnerabilities (1 moderate, 2 high)
+  const added = find(/^(?:added|removed|changed) \d+ packages?.*?(?:, and audited|in [\d.]+m?s|$)/)
+  if (added) parts.push([added[0].replace(/,? and audited.*$| in [\d.]+m?s$/, ''), null])
+  const vulnerable = find(/^(\d+) (?:\w+ severity )?vulnerabilit(?:y|ies)/)
+  if (vulnerable && +vulnerable[1]) parts.push([plural(+vulnerable[1], 'vulnerability', 'vulnerabilities'), 'warning'])
+  // pip: Successfully installed a-1.0 b-2.0
+  const pip = find(/^Successfully installed (.+)/)
+  if (pip) parts.push([`installed ${plural(pip[1].split(/\s+/).length, 'package')}`, null])
+  return parts.length ? parts : null
+}
+
 const ERROR = /^(?:error(?:\[E\d+\])?:|.*\berror TS\d+:|\w*Error:|\w+Exception:|npm ERR!|fatal:|FAIL\b|thread '.*' panicked|panic:)/
 
 /** The line of a failed command's output that says what went wrong, with a Rust error's `-->` place, or
@@ -239,8 +291,8 @@ export function shellSearch(command, output, root) {
 
 /** One outcome row under Claude's own, its parts dim unless they carry a color. */
 function outcomeRow(Box, Text, parts) {
-  const runs = parts.flatMap(([text, color], i) => [
-    ...(i ? [Text({ dimColor: true, children: ' · ' })] : []),
+  const runs = parts.flatMap(([text, color, joined], i) => [
+    ...(i ? [Text({ dimColor: true, children: joined ? ' ' : ' · ' })] : []),
     Text(color ? { color, children: text } : { dimColor: true, children: text }),
   ])
   return Box({ paddingLeft: INDENT, children: [Text({ wrap: 'truncate-end', children: runs })] })
@@ -257,7 +309,8 @@ export function outcome(output, isErrored, ms) {
   const tests = text ? testCounts(text) : null
   if (tests?.failed) parts.push([`✗ ${tests.failed} failed, ${tests.passed} passed`, 'error'])
   else if (tests) parts.push([`✓ ${tests.passed} passed`, 'success'])
-  else if (isErrored && text) {
+  else if (text) parts.push(...(summary(text) ?? []))
+  if (!tests && isErrored && text) {
     const line = errorLine(text)
     // Claude shows the first lines of a failure itself.
     const shown = text.split('\n').slice(0, 4).map(l => l.trim())
