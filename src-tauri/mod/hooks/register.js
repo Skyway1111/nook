@@ -15,6 +15,10 @@ const TOUCHED = 200 // the most files a report lists
 const sizes = new Map() // a pasted image's path -> its size, as a promise
 const MADE = 3 // the most pictures shown under a command that wrote them
 const made = new Map() // a Bash call's tool_use_id -> the pictures it wrote, as a promise of [path, size]
+const MERMAID = /^```mermaid[^\n]*\n([\s\S]*?)\n```[ \t]*$/gm // a reply's mermaid blocks, each closed
+const DIAGRAM_ROWS = 40 // the tallest diagram, in rows
+const REPLY_INDENT = 2 // to the text after a reply's `● `
+const saved = new Set() // the diagram files written this session
 const PICTURE = /\.(?:png|jpe?g|gif|webp|svg)$/i
 const TAIL = 64 * 1024 // the end of a command's output that its outcome is read from
 const SLOW = 3000 // ms past which a command's outcome line says how long it took
@@ -162,6 +166,35 @@ export async function picturesMade($, command, stdout, start, root) {
     pictures.push([path, await pictureSize($, path)])
   }
   return pictures
+}
+
+/** The [columns, rows] a mermaid diagram's box takes in `room` columns. Nothing draws it before nook does,
+ * so its size is a guess from its source: a left-to-right chart, a gantt, a timeline, or a git graph is wide
+ * and short, anything else grows about three rows a line. nook fits the drawing inside the box. */
+export function diagramBox(source, room) {
+  const lines = source.split('\n').filter(l => l.trim() && !/^\s*%%/.test(l))
+  const wide = /^\s*(?:(?:graph|flowchart)\s+(?:LR|RL)\b|gantt|timeline|gitGraph|journey)/.test(lines[0] ?? '')
+  const rows = Math.round(wide ? lines.length * 1.5 : lines.length * 3)
+  return [Math.max(20, Math.min(room, 100)), Math.max(8, Math.min(DIAGRAM_ROWS, rows))]
+}
+
+/** A short name for `text`, the same each time: FNV-1a, in base 36. */
+function hash(text) {
+  let h = 2166136261
+  for (const c of text) h = Math.imul(h ^ c.codePointAt(0), 16777619)
+  return (h >>> 0).toString(36)
+}
+
+/** A reply's text cut at its mermaid blocks: [the text before the first, [source, the text after it], …]. */
+export function splitDiagrams(text) {
+  const pieces = []
+  let at = 0
+  for (const m of text.matchAll(MERMAID)) {
+    pieces.push(text.slice(at, m.index).trim(), m[1])
+    at = m.index + m[0].length
+  }
+  pieces.push(at ? text.slice(at).trim() : text)
+  return pieces // text, source, text, … , text
 }
 
 /** The passed and failed counts a test runner's own summary gives, summed over every summary of the first
@@ -529,6 +562,42 @@ export function register(on) {
     }
     const drawn = Box({ flexDirection: 'column', children: [await next(e), ...shown] })
     return pictures.length ? withPictures($, e, drawn, pictures.slice(0, MADE)) : drawn
+  })
+  // A reply's ```mermaid block, in a tab nook started: the diagram in its place, which nook draws from the
+  // block saved as a .mmd file beside NOOK_STATE. Other terminals can't draw one, so they get the block.
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    const { text, isSummary } = e.props
+    if (!file || e.surface !== 'terminal' || isSummary || !text.includes('```mermaid')) return next(e)
+    const pieces = splitDiagrams(text)
+    if (pieces.length < 3) return next(e)
+    const { Box, Image, Markdown } = $.ui.resolve(e)
+    const dir = file.replace(/[\\/][^\\/]*$/, '')
+    const room = Math.min(255, (e.viewport?.columns ?? 80) - REPLY_INDENT - 1)
+    const children = []
+    const diagrams = []
+    for (const [i, piece] of pieces.entries()) {
+      if (i % 2 === 0) {
+        if (i && piece) children.push(Box({ paddingLeft: REPLY_INDENT, children: [Markdown({ text: piece })] }))
+        continue
+      }
+      const path = `${dir}${sep(dir)}diagram-${hash(piece)}.mmd`
+      if (!saved.has(path)) {
+        await $.fs.write(path, piece)
+        saved.add(path)
+      }
+      const [columns, rows] = diagramBox(piece, room)
+      const diagram = Box({ paddingLeft: REPLY_INDENT, marginY: 1, children: [Image({ source: { file: path, format: 'png' }, columns, rows, alt: 'diagram' })] })
+      children.push(diagram)
+      diagrams.push(diagram)
+    }
+    // The reply's bullet comes with its first text. A reply that opens on a diagram has its text drawn first
+    // and its diagrams after, and one with no text at all keeps its blocks.
+    if (!pieces[0]) {
+      const words = pieces.filter((p, i) => i % 2 === 0 && p).join('\n\n')
+      if (!words) return next(e)
+      return Box({ flexDirection: 'column', children: [await next({ ...e, props: { ...e.props, text: words } }), ...diagrams] })
+    }
+    return Box({ flexDirection: 'column', children: [await next({ ...e, props: { ...e.props, text: pieces[0] } }), ...children] })
   })
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     const pictures = e.props.text.includes('[Image #') ? await pasted($, e.props.text) : []

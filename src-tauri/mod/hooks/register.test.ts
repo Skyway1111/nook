@@ -5,7 +5,7 @@ import { expect, test } from 'claude-code/testing'
 const STATE = '/nook/1-0.json'
 
 /** A session that nook started, whose reports land in `reports`. */
-function nook(on, reports: Record<string, unknown>[], surfaces = ['terminal']) {
+function nook(on, reports: Record<string, unknown>[], surfaces = ['terminal'], written: Record<string, string> = {}) {
   on('env.get', (_, e) => ({ value: e.name === 'NOOK_STATE' ? STATE : '' }))
   on('session.surfaces', () => ({ value: surfaces }))
   on('clock.now', () => ({ value: 1000 }))
@@ -19,6 +19,7 @@ function nook(on, reports: Record<string, unknown>[], surfaces = ['terminal']) {
   on('fs.read', () => ({ value: '' }))
   on('fs.write', (_, e) => {
     if (e.path === STATE) reports.push(JSON.parse(e.text))
+    else written[e.path] = e.text
     return { value: undefined }
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -65,7 +66,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { errorLine, failingTests, outcome, readPaths, searchParts, shellSearch, summary, testCounts } from './register.js'
+import { diagramBox, errorLine, failingTests, outcome, readPaths, searchParts, shellSearch, splitDiagrams, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -248,4 +249,33 @@ test('a failed test run names the tests that failed', () => {
   expect(failingTests('all good\n')).toEqual([])
   const tap = Array.from({ length: 5 }, (_, i) => `not ok ${i + 1} - case ${i}`).join('\n') + '\n# pass 7\n# fail 5\n'
   expect(outcome(tap, true, 0)).toEqual([['✗ 5 failed, 7 passed', 'error'], ['case 0, case 1, case 2, and 2 more', null]])
+})
+
+test('a reply\'s mermaid blocks split out, each with a box sized from its source', () => {
+  const reply = 'The flow:\n\n```mermaid\nflowchart LR\n  a --> b\n```\n\nThen:\n```mermaid\nsequenceDiagram\n  A->>B: hi\n  B-->>A: ok\n```\nDone.'
+  expect(splitDiagrams(reply)).toEqual(['The flow:', 'flowchart LR\n  a --> b', 'Then:', 'sequenceDiagram\n  A->>B: hi\n  B-->>A: ok', 'Done.'])
+  expect(splitDiagrams('Half a block:\n```mermaid\ngraph TD\n')).toEqual(['Half a block:\n```mermaid\ngraph TD\n'])
+  expect(diagramBox('flowchart LR\n  a --> b', 120)).toEqual([100, 8])
+  expect(diagramBox(['graph TD', ...Array.from({ length: 8 }, (_, i) => `  n${i} --> n${i + 1}`)].join('\n'), 70)).toEqual([70, 27])
+  expect(diagramBox(['graph TD', ...Array(40).fill('  a --> b')].join('\n'), 70)).toEqual([70, 40])
+})
+
+test('a reply with a diagram draws it in its place, in a tab nook started only', async ($, on) => {
+  const reports: Record<string, unknown>[] = []
+  const written: Record<string, string> = {}
+  nook(on, reports, ['terminal'], written)
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: `engine: ${e.props.text}` }))
+  await $.session.start({ cwd: '/work' })
+  const text = 'The flow:\n\n```mermaid\nflowchart LR\n  a --> b\n```\n\nDone.'
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AssistantMessage', requestId: 'r1', props: { text, isFirstOfReply: true } })
+  expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine: The flow:')
+  const image = await ui.find({ type: 'Image' })
+  expect(image?.props.source.file).toMatch(/^\/nook\/diagram-\w+\.mmd$/)
+  expect(written[image?.props.source.file]).toBe('flowchart LR\n  a --> b')
+  expect((await ui.find({ type: 'Markdown' }))?.props.text).toBe('Done.')
+  await ui.unmount()
+  // The desktop app draws Claude's markdown itself, and nook's pictures aren't there.
+  const desktop = await $.ui.mount({ plugin: 'nook', surface: 'desktop', component: 'AssistantMessage', requestId: 'r2', props: { text, isFirstOfReply: true } })
+  expect(await desktop.find({ type: 'Image' })).toBeFalsy()
+  await desktop.unmount()
 })

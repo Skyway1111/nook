@@ -108,6 +108,15 @@ export function startPictures(term, screen, reply = () => {}) {
     if (medium === 'f') {
       // Claude declares a PNG, but the webview decodes whatever the file holds, SVG and JPEG included.
       const path = utf8.decode(Uint8Array.from(atob(payload), c => c.charCodeAt(0)))
+      if (/\.mmd$/i.test(path)) {
+        // A diagram the mod saved: drawn at the box's left, since its size there is the mod's guess.
+        import('./diagrams.js').then(d => d.diagramUrl(path)).then(url => {
+          keep(id, { url, columns: Number(k.c), rows: Number(k.r), blob: true, left: true })
+          answer('OK')
+          draw()
+        }, () => answer("EBADPNG:can't draw the diagram"))
+        return
+      }
       keep(id, { url: convertFileSrc(path), columns: Number(k.c), rows: Number(k.r) })
       answer('OK')
     } else if (medium === 'd') {
@@ -168,7 +177,7 @@ export function startPictures(term, screen, reply = () => {}) {
       const { columns: c, rows: r } = file
       const pct = (n, of) => `${(n / of) * 100}%`
       const css = `left:${pct(x0, term.cols)};top:${pct(y0, term.rows)};width:${pct(c, term.cols)};height:${pct(r, term.rows)};`
-        + `background-image:url("${file.url}");clip-path:inset(${pct(top - y0, r)} ${pct(x0 + c - 1 - right, c)} `
+        + `background-image:url("${file.url}");${file.left ? 'background-position:left center;' : ''}clip-path:inset(${pct(top - y0, r)} ${pct(x0 + c - 1 - right, c)} `
         + `${pct(y0 + r - 1 - bottom, r)} ${pct(left - x0, c)})`
       const pic = shown.get(id) ?? { el: layer.appendChild(el('div')) }
       if (pic.css !== css) pic.el.style.cssText = pic.css = css
