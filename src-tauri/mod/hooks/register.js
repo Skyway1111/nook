@@ -52,6 +52,12 @@ const TIMES = 500 // the most commands whose run time is kept
 const times = new Map() // a Bash call's tool_use_id -> ms it ran
 const GROUP_ROWS = 6 // the most outcome rows under a folded run of calls
 const READ_NAMES = 8 // the most files the row of a folded run's reads names
+// What Claude reads, in a tab nook started, about what nook draws in its replies.
+const DRAWS = 'This terminal is nook, which draws more than text in your replies: a ```mermaid code block shows as a diagram, '
+  + 'display math on lines of its own ($$ … $$ or \\[ … \\]) is typeset, inline $…$ math shows as Unicode symbols, and a '
+  + 'Markdown image link to a local picture file, like ![loss](out/loss.png), shows the picture after its paragraph. '
+  + 'Pictures you read and pictures your commands save show in the transcript too. Use these when a diagram, formula, '
+  + 'or picture makes an answer clearer, not for decoration.'
 let state = { efforts: LEVELS }
 let wrote = ''
 let handled = '' // the last request run, so each runs once
@@ -307,6 +313,8 @@ export function plainMath(tex) {
   let s = tex
   s = s.replace(/\\mathbb\{([A-Z])\}/g, (m, c) => BLACKBOARD[c] ?? m)
   s = s.replace(/\\(?:frac|dfrac|tfrac)\{([^{}]*)\}\{([^{}]*)\}/g, (_, a, b) => `${/^\w+$/.test(a) ? a : `(${a})`}/${/^\w+$/.test(b) ? b : `(${b})`}`)
+  const ACCENTS = { bar: '\u0304', overline: '\u0304', hat: '\u0302', tilde: '\u0303', vec: '\u20d7', dot: '\u0307', ddot: '\u0308' }
+  s = s.replace(/\\(bar|overline|hat|tilde|vec|dot|ddot)\s*(?:\{(\w)\}|(\w))/g, (_, accent, a, b) => (a ?? b) + ACCENTS[accent])
   s = s.replace(/\\sqrt\{([^{}]*)\}/g, (_, a) => `√${a.length > 1 ? `(${a})` : a}`)
   s = s.replace(/\\(?:mathrm|text|mathbf|mathit|operatorname)\{([^{}]*)\}/g, '$1')
   s = s.replace(/\\([a-zA-Z]+)(?=([a-zA-Z0-9]?))/g, (m, name, after) => (name in SYMBOLS ? SYMBOLS[name] + (after && /\w$/.test(SYMBOLS[name]) ? ' ' : '') : m))
@@ -653,6 +661,11 @@ export function register(on) {
       $.clock.every(250, () => tick().catch(() => {})) // a failed tick leaves the last report standing
     }
     return next(e)
+  })
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    if (!file || !e.surfaces.includes('terminal')) return composed
+    return { sections: [...composed.sections, { id: 'nook:draws', text: DRAWS, scope: 'session' }] }
   })
   on('turn.start', async ($, e, next) => {
     if (file && e.agentId) agents.add(e.agentId)
