@@ -571,6 +571,32 @@ svg.defs { position: absolute; width: 0; height: 0; }
   position: fixed; left: 0; top: 0; z-index: 11; pointer-events: none;
   padding: 4px 10px; border-radius: 6px; background: var(--accent); color: var(--bg); font-weight: 600;
 }
+/* Quick open and the command palette, over the top of the window. */
+#quick {
+  position: fixed; z-index: 12; top: 44px; left: 50%; translate: -50% 0;
+  display: flex; flex-direction: column; width: min(640px, calc(100vw - 32px)); max-height: min(520px, calc(100vh - 64px));
+  padding: 6px; border-radius: 10px; user-select: none;
+  background: linear-gradient(var(--raised) 0 0), var(--bg); /* solid, as the menu is */
+  border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+#quick input {
+  flex: none; height: 34px; padding: 0 12px; font: inherit; font-size: 1.07rem; color: var(--ink-1);
+  background: var(--bg); border: 1px solid var(--accent); border-radius: 7px; outline: none; user-select: text;
+}
+#quick ul { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 6px 0 0; padding: 0; scrollbar-width: thin; }
+#quick ul:empty { display: none; }
+#quick li { display: flex; align-items: center; gap: 9px; height: 28px; padding: 0 10px; border-radius: 6px; white-space: nowrap; color: var(--ink-1); }
+#quick li.at { background: var(--hover); box-shadow: inset 2px 0 0 var(--accent); }
+#quick li > span { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+#quick li small { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; font-size: .86rem; color: var(--ink-3); }
+#quick li small > span { direction: ltr; unicode-bidi: plaintext; }
+#quick li b { font-weight: 700; color: var(--accent); }
+#quick li .icon { flex: none; width: 14px; text-align: center; color: var(--ink-3); }
+#quick li.command > span { flex: 1; max-width: none; }
+#quick kbd { flex: none; font: .8rem var(--font-term); color: var(--ink-3); padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; }
+#quick footer { flex: none; display: flex; justify-content: space-between; gap: 12px; padding: 6px 8px 0; font-size: .8rem; color: var(--ink-3); white-space: nowrap; overflow: hidden; }
+#quick footer span:last-child { overflow: hidden; text-overflow: ellipsis; }
+
 [hidden] { display: none !important; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

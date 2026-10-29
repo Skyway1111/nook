@@ -317,11 +317,23 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   // Pick up files created while you work (by Claude, or anything else).
   setInterval(() => document.hidden || sync(), 2000)
 
+  /** Opens the folder that holds `path` and points at its row. */
+  async function reveal(path) {
+    document.body.classList.remove('files-hidden')
+    if (!(await go(parent(path)))) return
+    const r = [...list.children].find(r => same(r.dataset.path ?? '', path))
+    r?.scrollIntoView({ block: 'center' })
+    r?.animate([{ background: 'var(--accent)' }, {}], { duration: 900, easing: 'ease-out' })
+  }
+
   go(start)
   return {
     current: () => cur,
     go,
     mark,
+    reveal,
+    create,
+    pins: () => pins,
     /** The files Claude wrote in any open session, as its mod reports them. */
     claude(touched) {
       claude = touched.map(normalize)
