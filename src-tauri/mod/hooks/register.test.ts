@@ -137,7 +137,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, svgSize, linkTarget, outcome, pictureLinks, readPaths, planned, replan, searchParts, shellSearch, spent, runnable, splitBlocks, splitCode, splitPictures, summary, testCounts } from './register.js'
+import { applyHunks, diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, svgSize, linkTarget, outcome, pictureLinks, readPaths, planned, replan, searchParts, shellSearch, spent, runnable, splitBlocks, splitCode, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -635,4 +635,72 @@ test('a code block in a reply has a Copy under it that puts its code on the clip
   expect(reports).toHaveLength(asked)
   expect(toasts.at(-1)).toMatch(/Send or clear/)
   await ui.unmount()
+})
+
+test('an edit is taken back out where its lines stand, and put back, or not at all once they changed', () => {
+  const hunk = { oldStart: 1, oldLines: 5, newStart: 1, newLines: 5, lines: [' a', ' b', '-c', '+C', ' d', ' e'] }
+  expect(applyHunks('a\nb\nC\nd\ne\n', [hunk], true)).toBe('a\nb\nc\nd\ne\n')
+  expect(applyHunks('a\nb\nc\nd\ne\n', [hunk], false)).toBe('a\nb\nC\nd\ne\n')
+  // Lines added above it since, and Windows line ends, kept.
+  expect(applyHunks('x\r\ny\r\na\r\nb\r\nC\r\nd\r\ne', [hunk], true)).toBe('x\r\ny\r\na\r\nb\r\nc\r\nd\r\ne')
+  expect(applyHunks('a\nb\nZ\nd\ne\n', [hunk], true)).toBeNull()
+  expect(applyHunks('a\nb\nc\nd\ne\n', [hunk], true)).toBeNull()
+  // Two hunks, the first one line longer than it was: the second is found where the first moved it.
+  const old = Array.from({ length: 20 }, (_, i) => `l${i + 1}`)
+  const now = [...old]
+  now.splice(1, 1, 'X', 'X2')
+  now[18] = 'Y'
+  const hunks = [
+    { oldStart: 1, oldLines: 5, newStart: 1, newLines: 6, lines: [' l1', '-l2', '+X', '+X2', ' l3', ' l4', ' l5'] },
+    { oldStart: 15, oldLines: 6, newStart: 16, newLines: 6, lines: [' l15', ' l16', ' l17', '-l18', '+Y', ' l19', ' l20'] },
+  ]
+  expect(applyHunks(now.join('\n'), hunks, true)).toBe(old.join('\n'))
+  expect(applyHunks(['top', ...old].join('\n'), hunks, false)).toBe(['top', ...now].join('\n'))
+})
+
+test('a finished edit has an Undo under its diff, which takes the edit out of its file and then puts it back', async ($, on) => {
+  const files: Record<string, string> = { '/work/src/app.js': 'a\nb\nC\nd\ne\n' }
+  on('session.root', () => ({ value: '/work' }))
+  on('fs.read', (_, e) => (e.path in files ? { value: files[e.path] } : { error: 'missing' }))
+  on('fs.write', (_, e) => {
+    files[e.path] = e.text
+    return { value: undefined }
+  })
+  const toasts: string[] = []
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'engine' }))
+  const output = {
+    filePath: '/work/src/app.js', oldString: 'c', newString: 'C', originalFile: 'a\nb\nc\nd\ne\n', userModified: false, replaceAll: false,
+    structuredPatch: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 5, lines: [' a', ' b', '-c', '+C', ' d', ' e'] }],
+  }
+  const mount = (surface: 'terminal' | 'desktop', more = {}) => $.ui.mount({
+    plugin: 'nook', surface, component: 'ToolResult', requestId: 'e1',
+    props: { tool_use_id: 'e1', tool: 'Edit', output, isErrored: false, isExpanded: false, ...more },
+  })
+  const ui = await mount('terminal')
+  expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
+  const undo = await ui.find({ type: 'Button' })
+  expect(undo?.props.label).toBe('↶ Undo')
+  await ui.press({ key: undo!.props.key })
+  expect(files['/work/src/app.js']).toBe('a\nb\nc\nd\ne\n')
+  expect(toasts.at(-1)).toBe('Undid the edit to src/app.js')
+  expect((await ui.find({ type: 'Button' }))?.props.label).toBe('↷ Redo')
+  await ui.press({ key: undo!.props.key })
+  expect(files['/work/src/app.js']).toBe('a\nb\nC\nd\ne\n')
+  expect(toasts.at(-1)).toBe('Put the edit back in src/app.js')
+  // Changed where the edit was since: the file is left alone, and the person told why.
+  files['/work/src/app.js'] = 'a\nb\nZ\nd\ne\n'
+  await ui.press({ key: undo!.props.key })
+  expect(files['/work/src/app.js']).toBe('a\nb\nZ\nd\ne\n')
+  expect(toasts.at(-1)).toMatch(/has changed where this edit was/)
+  await ui.unmount()
+  // No Undo on another surface, in the full transcript, or for an edit that errored.
+  for (const [surface, more] of [['desktop', {}], ['terminal', { isExpanded: true }], ['terminal', { isErrored: true }]] as const) {
+    const other = await mount(surface, more)
+    expect(await other.find({ type: 'Button' })).toBeFalsy()
+    await other.unmount()
+  }
 })

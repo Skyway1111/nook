@@ -39,6 +39,7 @@
       "mod/.claude-plugin/plugin.json": "mod/.claude-plugin/plugin.json",
       "mod/hooks/hooks.json": "mod/hooks/hooks.json",
       "mod/hooks/register.js": "mod/hooks/register.js",
+      "mod/types/index.d.ts": "mod/types/index.d.ts",
       "mod/themes/nook.json": "mod/themes/nook.json",
       "../themes/": "themes/",
       "../src/fonts/FluentIcons-LICENSE.txt": "FluentIcons-LICENSE.txt"
