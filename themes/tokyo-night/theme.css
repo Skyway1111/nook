@@ -1,0 +1,40 @@
+/* Tokyo Night: the city after dark (MIT), ink-blue night with neon blue, violet, and a warm orange. */
+
+:root {
+  --h: 265;
+  --bg: #16161e;
+  --raised: #292e42;
+  --hover: color-mix(in oklch, #c0caf5 7%, transparent);
+  --line: color-mix(in oklch, #c0caf5 11%, transparent);
+  --ink-1: #c0caf5;
+  --ink-2: #a9b1d6;
+  --ink-3: #565f89;
+  --accent: #7aa2f7;
+  --icon-image: #bb9af7;
+  --icon-code: #7dcfff;
+
+  --term-bg: #1a1b26;
+  --term-fg: #c0caf5;
+  --cursor: #c0caf5;
+  --selection: color-mix(in oklch, #33467c 85%, transparent);
+
+  --ansi-black: #15161e;
+  --ansi-red: #f7768e;
+  --ansi-green: #9ece6a;
+  --ansi-yellow: #e0af68;
+  --ansi-blue: #7aa2f7;
+  --ansi-magenta: #bb9af7;
+  --ansi-cyan: #7dcfff;
+  --ansi-white: #a9b1d6;
+  --ansi-bright-black: #414868;
+  --ansi-bright-red: #f7768e;
+  --ansi-bright-green: #9ece6a;
+  --ansi-bright-yellow: #e0af68;
+  --ansi-bright-blue: #7aa2f7;
+  --ansi-bright-magenta: #bb9af7;
+  --ansi-bright-cyan: #7dcfff;
+  --ansi-bright-white: #c0caf5;
+
+  --claude-claude: #ff9e64;
+  --claude-permission: #7aa2f7;
+}

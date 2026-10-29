@@ -1,0 +1,40 @@
+/* Gruvbox: the dark retro groove palette (MIT), warm browns, cream text, and faded orange. */
+
+:root {
+  --h: 60;
+  --bg: #1d2021;
+  --raised: #3c3836;
+  --hover: color-mix(in oklch, #ebdbb2 7%, transparent);
+  --line: color-mix(in oklch, #ebdbb2 11%, transparent);
+  --ink-1: #fbf1c7;
+  --ink-2: #d5c4a1;
+  --ink-3: #928374;
+  --accent: #fe8019;
+  --icon-image: #d3869b;
+  --icon-code: #8ec07c;
+
+  --term-bg: #282828;
+  --term-fg: #ebdbb2;
+  --cursor: #ebdbb2;
+  --selection: color-mix(in oklch, #665c54 85%, transparent);
+
+  --ansi-black: #282828;
+  --ansi-red: #cc241d;
+  --ansi-green: #98971a;
+  --ansi-yellow: #d79921;
+  --ansi-blue: #458588;
+  --ansi-magenta: #b16286;
+  --ansi-cyan: #689d6a;
+  --ansi-white: #a89984;
+  --ansi-bright-black: #928374;
+  --ansi-bright-red: #fb4934;
+  --ansi-bright-green: #b8bb26;
+  --ansi-bright-yellow: #fabd2f;
+  --ansi-bright-blue: #83a598;
+  --ansi-bright-magenta: #d3869b;
+  --ansi-bright-cyan: #8ec07c;
+  --ansi-bright-white: #ebdbb2;
+
+  --claude-claude: #fe8019;
+  --claude-permission: #83a598;
+}
