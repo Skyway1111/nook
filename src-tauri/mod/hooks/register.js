@@ -9,6 +9,7 @@ const ROWS = 20 // the tallest picture, in rows
 const ROW_PIXELS = 20 // a picture's pixels per row, so a small one draws near its own size
 const INDENT = 5 // to the text after `  ⎿  `
 const UNKNOWN = [1600, 900] // the size of a picture whose own can't be read
+const LETTER = [612, 792] // a PDF page whose own size can't be read, in points
 const PAGE = [1280, 800] // the window an HTML page Claude writes is drawn in
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) // the tools whose file nook marks as Claude's
 const ASKS = new Set(['AskUserQuestion', 'ExitPlanMode']) // the tools that wait on the person
@@ -57,7 +58,7 @@ const READ_NAMES = 8 // the most files the row of a folded run's reads names
 const DRAWS = 'This terminal is nook, which draws more than text in your replies: a ```mermaid code block shows as a diagram, '
   + 'display math on lines of its own ($$ … $$ or \\[ … \\]) is typeset, inline $…$ math shows as Unicode symbols, and a '
   + 'Markdown image link to a local picture file, like ![loss](out/loss.png), shows the picture after its paragraph. '
-  + 'Pictures you read and pictures your commands save show in the transcript too, and an HTML file you write shows '
+  + 'Pictures you read and pictures your commands save show in the transcript too (a PDF as its first page), and an HTML file you write shows '
   + 'as a preview of the page, with its scripts off. Use these when a diagram, formula, '
   + 'or picture makes an answer clearer, not for decoration.'
 let state = { efforts: LEVELS }
@@ -132,8 +133,11 @@ function picture(Box, Image, path, size, room, indent) {
   return Box({ paddingLeft: indent, children: [image] })
 }
 
-/** The [width, height] of the picture a Read call read, or null for any other file. */
-function readSize(path, output) {
+/** The [width, height] of the picture a Read call read, or null for any other file. With `pdf`, in a tab
+ * nook started, a PDF's first page counts as a picture: nook draws it. */
+function readSize(path, output, pdf) {
+  if (pdf && output?.type === 'pdf') return headerSize(atob(String(output.file.base64 ?? '').slice(0, 256 * 1024))) ?? LETTER
+  if (pdf && output?.type === 'parts') return LETTER // the pages Claude was sent as pictures; the file may be large
   if (output?.type === 'image') {
     const d = output.file.dimensions ?? {}
     return [d.originalWidth ?? d.displayWidth, d.originalHeight ?? d.displayHeight]
@@ -144,6 +148,7 @@ function readSize(path, output) {
 
 /** A PNG's, JPEG's, GIF's, or WebP's [width, height], from its first bytes as a binary string, or null. */
 export function headerSize(head) {
+  if (head.startsWith('%PDF')) return pageSize(head)
   const u8 = at => head.charCodeAt(at)
   const be = (at, n) => Array.from({ length: n }, (_, i) => u8(at + i)).reduce((v, b) => v * 256 + b, 0)
   const le = (at, n) => Array.from({ length: n }, (_, i) => u8(at + i)).reduceRight((v, b) => v * 256 + b, 0)
@@ -164,6 +169,18 @@ export function headerSize(head) {
     at += 2 + be(at + 2, 2)
   }
   return null
+}
+
+/** A PDF's first page's [width, height] in points, from the first /MediaBox in `head` and a quarter turn if
+ * its page says /Rotate 90 or 270, or LETTER when it's past `head` or in a compressed object stream. */
+export function pageSize(head) {
+  const box = /\/MediaBox\s*\[\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\]/.exec(head)
+  if (!box) return LETTER
+  const [x0, y0, x1, y1] = box.slice(1).map(Number)
+  const [w, h] = [Math.abs(x1 - x0), Math.abs(y1 - y0)]
+  if (!(w > 0 && h > 0)) return LETTER
+  const page = head.slice(head.lastIndexOf('obj', box.index), head.indexOf('endobj', box.index) >>> 0)
+  return /\/Rotate\s+(?:90|270)\b/.test(page) ? [h, w] : [w, h]
 }
 
 /** A picture file's [width, height] from its header, or UNKNOWN when it can't be read. */
@@ -212,12 +229,14 @@ const LOOKS = /^(?:cd|ls|cat|head|tail|less|wc|echo|git|rg|grep|egrep|find|fd|wh
 /** The pictures a shell command wrote while it ran, three at most, as [path, size]: picture files its
  * command or output names, and new ones in the session's folder, such as a plot a script saved. A file
  * counts when it changed since `start`, less two seconds for file systems that keep coarse times. */
-export async function picturesMade($, command, stdout, start, root) {
+export async function picturesMade($, command, stdout, start, root, pdf = false) {
   const s = sep(root)
   const absolute = p => (/^(?:[a-zA-Z]:)?[\\/]/.test(p) ? p : `${root}${s}${p.replace(/^\.[\\/]/, '')}`)
-  const named = Array.from(`${command}\n${stdout.slice(-TAIL)}`.matchAll(/(?:[a-zA-Z]:)?[^\s'"`(),=:;|<>]+\.(?:png|jpe?g|gif|webp|svg)\b/gi), m => absolute(m[0]))
+  const kinds = pdf ? 'png|jpe?g|gif|webp|svg|pdf' : 'png|jpe?g|gif|webp|svg'
+  const shown = name => PICTURE.test(name) || (pdf && /\.pdf$/i.test(name))
+  const named = Array.from(`${command}\n${stdout.slice(-TAIL)}`.matchAll(new RegExp(`(?:[a-zA-Z]:)?[^\\s'"\`(),=:;|<>]+\\.(?:${kinds})\\b`, 'gi')), m => absolute(m[0]))
   const fresh = LOOKS.test(command.trim()) ? [] : (await $.fs.list(root).catch(() => []))
-    .filter(f => f.kind === 'file' && PICTURE.test(f.name) && f.mtimeMs >= start - 2000)
+    .filter(f => f.kind === 'file' && shown(f.name) && f.mtimeMs >= start - 2000)
     .map(f => `${root}${s}${f.name}`)
   const pictures = []
   for (const path of new Set([...named, ...fresh])) {
@@ -738,7 +757,7 @@ export function register(on) {
     if (!result?.deny && !result?.isError) {
       const root = await $.session.root().catch(() => '')
       const stdout = String(result?.result?.stdout ?? result?.text ?? '')
-      if (root) made.set(e.tool_use_id, picturesMade($, String(e.command ?? ''), stdout, start, root).catch(() => []))
+      if (root) made.set(e.tool_use_id, picturesMade($, String(e.command ?? ''), stdout, start, root, !!file).catch(() => []))
       if (made.size > TIMES) made.delete(made.keys().next().value)
     }
     return result
@@ -768,7 +787,7 @@ export function register(on) {
     const { tool, input, output } = e.props
     const wrote = tool === 'Write' && !e.props.isRunning && !e.props.isErrored ? input.file_path ?? '' : ''
     // An HTML page written in a tab nook started shows as the page, laid out as a 1280 by 800 window would.
-    const size = tool === 'Read' ? readSize(input.file_path, output)
+    const size = tool === 'Read' ? readSize(input.file_path, output, file && e.surface === 'terminal')
       : /\.svg$/i.test(wrote) ? svgSize(String(input.content ?? '')) ?? UNKNOWN
       : file && e.surface === 'terminal' && /\.html?$/i.test(wrote) ? PAGE : null
     return size ? withPictures($, e, await next(e), [[input.file_path, size]]) : next(e)
@@ -803,7 +822,7 @@ export function register(on) {
     const pictures = []
     for (const call of e.props.calls) {
       if (call.tool !== 'Read' || call.isRunning || call.isErrored) continue
-      const size = readSize(String(call.input?.file_path ?? ''), call.output)
+      const size = readSize(String(call.input?.file_path ?? ''), call.output, file && e.surface === 'terminal')
       if (size) pictures.push([call.input.file_path, size])
     }
     for (const call of e.props.calls) pictures.push(...((await made.get(call.tool_use_id)) ?? []))

@@ -94,7 +94,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, spent, splitBlocks, splitPictures, summary, testCounts } from './register.js'
+import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, spent, splitBlocks, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -476,5 +476,27 @@ test('a picture Claude read shows under its folded line too, and a file of text 
   const images = await ui.findAll({ type: 'Image' })
   expect(images.map(i => i.props.source.file)).toEqual(['/work/plot.png'])
   expect(images[0].props).toMatchObject({ columns: 40, rows: 10 })
+  await ui.unmount()
+})
+
+test('a PDF\'s page size comes from its first MediaBox, a quarter turn when rotated, else US letter', () => {
+  expect(pageSize('%PDF-1.7\n3 0 obj << /Type /Page /MediaBox [0 0 595.28 841.89] >> endobj')).toEqual([595.28, 841.89])
+  expect(pageSize('%PDF-1.4\n3 0 obj << /Type /Page /Rotate 90 /MediaBox [0 0 612 792] >> endobj')).toEqual([792, 612])
+  expect(pageSize('%PDF-1.5\n1 0 obj << /Type /ObjStm /Filter /FlateDecode >> stream x endstream')).toEqual([612, 792])
+  expect(headerSize('%PDF-1.7\n<< /MediaBox [0 0 842 595] >>')).toEqual([842, 595])
+})
+
+test('a PDF Claude reads shows its first page in a tab nook started, and nowhere else', async ($, on) => {
+  const reports: Record<string, unknown>[] = []
+  nook(on, reports)
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'Read report.pdf' }))
+  const props = { tool_use_id: 'p', tool: 'Read', input: { file_path: '/work/report.pdf' }, isRunning: false, isErrored: false,
+    output: { type: 'pdf', file: { filePath: '/work/report.pdf', base64: btoa('%PDF-1.7\n<< /MediaBox [0 0 612 792] >>'), originalSize: 40 } } }
+  const before = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'ToolUse', requestId: 'a', props })
+  expect(await before.find({ type: 'Image' })).toBeFalsy()
+  await before.unmount()
+  await $.session.start({ cwd: '/work' })
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'ToolUse', requestId: 'b', props })
+  expect((await ui.find({ type: 'Image' }))?.props).toMatchObject({ source: { file: '/work/report.pdf' }, columns: 31, rows: 20 })
   await ui.unmount()
 })
