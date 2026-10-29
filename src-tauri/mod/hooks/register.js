@@ -1,5 +1,5 @@
 // Tells nook's composer what to show beside Claude's prompt, runs the two commands its menus send, and
-// draws pictures in the transcript: ones Claude read, an SVG it wrote, and ones a shell command wrote. Every hook passes its event on unchanged, and the render hooks add
+// draws pictures in the transcript: ones Claude read, an SVG it wrote, ones a shell command wrote, and ones a reply links. Every hook passes its event on unchanged, and the render hooks add
 // pictures under Claude's own drawing, and under a shell command's result the line that says how it went. The mod writes the session's model, effort, effort levels, context
 // fill, pasted images' folder, and what the session is doing as JSON to NOOK_STATE, and reads requests from
 // the .cmd file beside it: { command, args, at }.
@@ -19,6 +19,9 @@ const MERMAID = /^```mermaid[^\n]*\n([\s\S]*?)\n```[ \t]*$/gm // a reply's merma
 const DIAGRAM_ROWS = 40 // the tallest diagram, in rows
 const REPLY_INDENT = 2 // to the text after a reply's `● `
 const saved = new Set() // the diagram files written this session
+const LINK = /!\[([^\]\n]*)\]\(\s*(<[^>\n]+>|[^\s)]+)(?:\s+"[^"\n]*")?\s*\)/g // Markdown's ![alt](path "title")
+const LINKED = 4 // the most pictures a reply draws
+const linked = new Map() // a picture a reply links -> its [path, size], or null when it's no picture file, as a promise
 const PICTURE = /\.(?:png|jpe?g|gif|webp|svg)$/i
 const TAIL = 64 * 1024 // the end of a command's output that its outcome is read from
 const SLOW = 3000 // ms past which a command's outcome line says how long it took
@@ -77,19 +80,19 @@ async function take($, file) {
 function withPictures($, e, theirs, pictures) {
   const { Box, Image } = $.ui.resolve(e)
   const room = Math.min(255, (e.viewport?.columns ?? 80) - INDENT - 1)
-  return Box({
-    flexDirection: 'column',
-    children: [theirs, ...pictures.map(([path, size]) => {
-      const [w, h] = size[0] > 0 && size[1] > 0 ? size : UNKNOWN
-      // A cell is about twice as tall as it is wide.
-      let rows = Math.min(ROWS, Math.ceil(h / ROW_PIXELS))
-      let columns = Math.max(1, Math.round((2 * rows * w) / h))
-      if (columns > room) [columns, rows] = [room, Math.max(1, Math.round((room * h) / (2 * w)))]
-      // nook decodes the file itself, so `png` stands for JPEG, GIF, WebP, and SVG too.
-      const image = Image({ source: { file: path, format: 'png' }, columns, rows, alt: path.split(/[\\/]/).pop() })
-      return Box({ paddingLeft: INDENT, children: [image] })
-    })],
-  })
+  return Box({ flexDirection: 'column', children: [theirs, ...pictures.map(([path, size]) => picture(Box, Image, path, size, room, INDENT))] })
+}
+
+/** A picture of `path`, `indent` columns in and at most `room` wide, at its own shape. */
+function picture(Box, Image, path, size, room, indent) {
+  const [w, h] = size[0] > 0 && size[1] > 0 ? size : UNKNOWN
+  // A cell is about twice as tall as it is wide.
+  let rows = Math.min(ROWS, Math.ceil(h / ROW_PIXELS))
+  let columns = Math.max(1, Math.round((2 * rows * w) / h))
+  if (columns > room) [columns, rows] = [room, Math.max(1, Math.round((room * h) / (2 * w)))]
+  // nook decodes the file itself, so `png` stands for JPEG, GIF, WebP, and SVG too.
+  const image = Image({ source: { file: path, format: 'png' }, columns, rows, alt: path.split(/[\\/]/).pop() })
+  return Box({ paddingLeft: indent, children: [image] })
 }
 
 /** The [width, height] of the picture a Read call read, or null for any other file. */
@@ -102,12 +105,34 @@ function readSize(path, output) {
   return svgSize(output.file.content) ?? UNKNOWN
 }
 
-/** A PNG's [width, height], from its header. */
-async function pngSize($, path) {
+/** A PNG's, JPEG's, GIF's, or WebP's [width, height], from its first bytes as a binary string, or null. */
+export function headerSize(head) {
+  const u8 = at => head.charCodeAt(at)
+  const be = (at, n) => Array.from({ length: n }, (_, i) => u8(at + i)).reduce((v, b) => v * 256 + b, 0)
+  const le = (at, n) => Array.from({ length: n }, (_, i) => u8(at + i)).reduceRight((v, b) => v * 256 + b, 0)
+  if (head.startsWith('\x89PNG')) return [be(16, 4), be(20, 4)]
+  if (head.startsWith('GIF8')) return [le(6, 2), le(8, 2)]
+  if (head.startsWith('RIFF') && head.slice(8, 12) === 'WEBP') {
+    const chunk = head.slice(12, 16)
+    if (chunk === 'VP8X') return [1 + le(24, 3), 1 + le(27, 3)]
+    if (chunk === 'VP8L') return [1 + (le(21, 2) & 0x3fff), 1 + ((le(22, 3) >> 6) & 0x3fff)]
+    if (chunk === 'VP8 ') return [le(26, 2) & 0x3fff, le(28, 2) & 0x3fff]
+    return null
+  }
+  if (u8(0) !== 0xff || u8(1) !== 0xd8) return null
+  // A JPEG's size is in its first start-of-frame segment, past the segments before it, EXIF's among them.
+  for (let at = 2; at + 9 < head.length && u8(at) === 0xff;) {
+    const kind = u8(at + 1)
+    if (kind >= 0xc0 && kind <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(kind)) return [be(at + 7, 2), be(at + 5, 2)]
+    at += 2 + be(at + 2, 2)
+  }
+  return null
+}
+
+/** A picture file's [width, height] from its header, or UNKNOWN when it can't be read. */
+async function bytesSize($, path) {
   const { base64 } = await $.fs.read(path, { as: 'bytes' })
-  const head = atob(base64.slice(0, 32))
-  const u32 = at => [0, 1, 2, 3].reduce((n, i) => n * 256 + head.charCodeAt(at + i), 0)
-  return [u32(16), u32(20)]
+  return headerSize(atob(base64.slice(0, 256 * 1024))) ?? UNKNOWN // EXIF can push a JPEG's size past its first 64 KB
 }
 
 /** The folder Claude saves the session's nth pasted image to, as <n>.png. nook's `session_image` reads it from the report. */
@@ -127,16 +152,15 @@ async function pasted($, text) {
   for (const n of new Set(Array.from(text.matchAll(/\[Image #(\d+)\]/g), m => m[1]))) {
     const path = `${dir}${sep(dir)}${n}.png`
     if (!(await $.fs.exists(path))) continue
-    if (!sizes.has(path)) sizes.set(path, pngSize($, path).catch(() => UNKNOWN)) // past 4 MiB, $.fs.read refuses
+    if (!sizes.has(path)) sizes.set(path, bytesSize($, path).catch(() => UNKNOWN)) // past 4 MiB, $.fs.read refuses
     pictures.push([path, await sizes.get(path)])
   }
   return pictures
 }
 
-/** A picture file's [width, height]: a PNG's header, an SVG's viewBox, or UNKNOWN for any other kind. */
+/** A picture file's [width, height]: its header, an SVG's viewBox, or UNKNOWN when neither can be read. */
 async function pictureSize($, path) {
-  if (/\.png$/i.test(path)) return pngSize($, path).catch(() => UNKNOWN)
-  if (!/\.svg$/i.test(path)) return UNKNOWN
+  if (!/\.svg$/i.test(path)) return bytesSize($, path).catch(() => UNKNOWN) // past 4 MiB, $.fs.read refuses
   return svgSize(await $.fs.read(path).catch(() => '')) ?? UNKNOWN
 }
 
@@ -185,6 +209,76 @@ function hash(text) {
   return (h >>> 0).toString(36)
 }
 
+/** The file a Markdown link's target names, or null for a web address or a file that isn't a picture. */
+export function linkTarget(raw) {
+  let path = raw.replace(/^<|>$/g, '').replace(/^file:\/\/(?=\/[a-zA-Z]:)\//, '').replace(/^file:\/\//, '')
+  if (/^[a-zA-Z][\w+.-]+:/.test(path) || !PICTURE.test(path)) return null
+  try {
+    path = decodeURI(path)
+  } catch {} // a stray % keeps the path as written
+  return path
+}
+
+/** Where a reply's code blocks open and close: a test for whether line i is inside one, or its fence. */
+function fences(lines) {
+  const inside = []
+  let fence = null
+  for (const line of lines) {
+    const mark = /^\s*(`{3,}|~{3,})/.exec(line)?.[1]
+    inside.push(Boolean(fence || mark))
+    if (!mark) continue
+    if (!fence) fence = mark
+    else if (mark[0] === fence[0] && mark.length >= fence.length) fence = null
+  }
+  return i => inside[i]
+}
+
+/** The pictures a reply links with ![alt](path), outside its code blocks, each target once, as written. */
+export function pictureLinks(text) {
+  const lines = text.split('\n')
+  const code = fences(lines)
+  const links = new Set()
+  for (const [i, line] of lines.entries()) if (!code(i)) for (const m of line.matchAll(LINK)) {
+    const target = linkTarget(m[2])
+    if (target) links.add(target)
+  }
+  return [...links]
+}
+
+/** A reply's text cut after each paragraph that links a picture in `shown`: [text, [target, …], text, …].
+ * A line of such links alone goes, and a link inside a sentence leaves its alt text, or its file's name. */
+export function splitPictures(text, shown) {
+  const lines = text.split('\n')
+  const code = fences(lines)
+  const pieces = []
+  let words = []
+  let found = []
+  const cut = () => {
+    pieces.push(words.join('\n').trim(), [...new Set(found)])
+    words = []
+    found = []
+  }
+  for (const [i, line] of lines.entries()) {
+    if (found.length && !code(i) && !line.trim()) cut()
+    if (code(i) || !line.includes('![')) {
+      words.push(line)
+      continue
+    }
+    const kept = line.replace(LINK, (m, alt, raw) => {
+      const target = linkTarget(raw)
+      if (!shown.has(target)) return m
+      found.push(target)
+      return alt || target.split(/[\\/]/).pop()
+    })
+    const rest = line.replace(LINK, (m, alt, raw) => (shown.has(linkTarget(raw)) ? '' : m))
+    if (!/^[\s\-*+>|,;.:]*$/.test(rest) || kept === line) words.push(kept)
+  }
+  if (found.length) cut()
+  if (!pieces.length) return [text]
+  pieces.push(words.join('\n').trim())
+  return pieces // text, targets, text, … , text
+}
+
 /** A reply's text cut at its mermaid blocks: [the text before the first, [source, the text after it], …]. */
 export function splitDiagrams(text) {
   const pieces = []
@@ -195,6 +289,23 @@ export function splitDiagrams(text) {
   }
   pieces.push(at ? text.slice(at).trim() : text)
   return pieces // text, source, text, … , text
+}
+
+/** The picture files a reply links that exist, LINKED at most: each target -> [path, size]. */
+async function linkedPictures($, text) {
+  const links = pictureLinks(text)
+  if (!links.length) return new Map()
+  const root = await $.session.root()
+  const shown = new Map()
+  for (const target of links) {
+    if (shown.size >= LINKED) break
+    const path = /^(?:[a-zA-Z]:)?[\\/]/.test(target) ? target : `${root}${sep(root)}${target.replace(/^\.[\\/]/, '')}`
+    // A reply draws again with each word that streams in, so each file is looked at once a session.
+    if (!linked.has(path)) linked.set(path, $.fs.stat(path).then(f => (f.kind === 'file' ? pictureSize($, path).then(size => [path, size]) : null), () => null))
+    const found = await linked.get(path)
+    if (found) shown.set(target, found)
+  }
+  return shown
 }
 
 /** The passed and failed counts a test runner's own summary gives, summed over every summary of the first
@@ -565,39 +676,45 @@ export function register(on) {
   })
   // A reply's ```mermaid block, in a tab nook started: the diagram in its place, which nook draws from the
   // block saved as a .mmd file beside NOOK_STATE. Other terminals can't draw one, so they get the block.
+  // A picture file the reply links with ![alt](path) draws after the paragraph that links it.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     const { text, isSummary } = e.props
-    if (!file || e.surface !== 'terminal' || isSummary || !text.includes('```mermaid')) return next(e)
-    const pieces = splitDiagrams(text)
-    if (pieces.length < 3) return next(e)
+    if (e.surface !== 'terminal' || isSummary) return next(e)
+    const diagrams = file && text.includes('```mermaid')
+    const shown = text.includes('![') ? await linkedPictures($, text) : new Map()
+    if (!diagrams && !shown.size) return next(e)
     const { Box, Image, Markdown } = $.ui.resolve(e)
-    const dir = file.replace(/[\\/][^\\/]*$/, '')
+    const dir = file?.replace(/[\\/][^\\/]*$/, '')
     const room = Math.min(255, (e.viewport?.columns ?? 80) - REPLY_INDENT - 1)
-    const children = []
-    const diagrams = []
-    for (const [i, piece] of pieces.entries()) {
-      if (i % 2 === 0) {
-        if (i && piece) children.push(Box({ paddingLeft: REPLY_INDENT, children: [Markdown({ text: piece })] }))
+    // The reply as words, diagrams, and pictures, in order: each odd piece of a split is what its text was cut at.
+    const blocks = []
+    for (const [i, piece] of (diagrams ? splitDiagrams(text) : [text]).entries()) {
+      if (i % 2) {
+        const path = `${dir}${sep(dir)}diagram-${hash(piece)}.mmd`
+        if (!saved.has(path)) {
+          await $.fs.write(path, piece)
+          saved.add(path)
+        }
+        const [columns, rows] = diagramBox(piece, room)
+        blocks.push(Box({ paddingLeft: REPLY_INDENT, marginY: 1, children: [Image({ source: { file: path, format: 'png' }, columns, rows, alt: 'diagram' })] }))
         continue
       }
-      const path = `${dir}${sep(dir)}diagram-${hash(piece)}.mmd`
-      if (!saved.has(path)) {
-        await $.fs.write(path, piece)
-        saved.add(path)
+      for (const [j, part] of (shown.size ? splitPictures(piece, shown) : [piece]).entries()) {
+        if (j % 2 === 0) blocks.push(part)
+        else blocks.push(Box({ flexDirection: 'column', marginY: 1, children: part.map(t => picture(Box, Image, ...shown.get(t), room, REPLY_INDENT)) }))
       }
-      const [columns, rows] = diagramBox(piece, room)
-      const diagram = Box({ paddingLeft: REPLY_INDENT, marginY: 1, children: [Image({ source: { file: path, format: 'png' }, columns, rows, alt: 'diagram' })] })
-      children.push(diagram)
-      diagrams.push(diagram)
     }
-    // The reply's bullet comes with its first text. A reply that opens on a diagram has its text drawn first
-    // and its diagrams after, and one with no text at all keeps its blocks.
-    if (!pieces[0]) {
-      const words = pieces.filter((p, i) => i % 2 === 0 && p).join('\n\n')
+    if (blocks.length < 3) return next(e)
+    const draw = piece => Box({ paddingLeft: REPLY_INDENT, children: [Markdown({ text: piece })] })
+    // The reply's bullet comes with its first text. A reply that opens on a diagram or picture has its text
+    // drawn first and the rest after. One with no text at all names its pictures, or keeps its diagrams' blocks.
+    if (!blocks[0]) {
+      const words = blocks.filter(b => typeof b === 'string' && b).join('\n\n') || [...shown.keys()].map(t => t.split(/[\\/]/).pop()).join(', ')
       if (!words) return next(e)
-      return Box({ flexDirection: 'column', children: [await next({ ...e, props: { ...e.props, text: words } }), ...diagrams] })
+      return Box({ flexDirection: 'column', children: [await next({ ...e, props: { ...e.props, text: words } }), ...blocks.filter(b => typeof b !== 'string')] })
     }
-    return Box({ flexDirection: 'column', children: [await next({ ...e, props: { ...e.props, text: pieces[0] } }), ...children] })
+    const rest = blocks.slice(1).filter(Boolean).map(b => (typeof b === 'string' ? draw(b) : b))
+    return Box({ flexDirection: 'column', children: [await next({ ...e, props: { ...e.props, text: blocks[0] } }), ...rest] })
   })
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     const pictures = e.props.text.includes('[Image #') ? await pasted($, e.props.text) : []
