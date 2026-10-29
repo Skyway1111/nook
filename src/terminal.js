@@ -6,10 +6,14 @@ import { invoke, Channel } from '@tauri-apps/api/core'
 import { showPreview, hidePreview } from './ui.js'
 import { startComposer } from './composer.js'
 import { startPictures } from './pictures.js'
+import { startLinks } from './links.js'
+import { fileUrl } from './linkify.js'
 import { ANSI, CLAUDE_SLOTS, slotVar, bytes } from './palette.js'
 import { WINDOWS } from './paths.js'
 
 const open = path => invoke('open_path', { path })
+// The only link schemes a program's output may hand to the system. Any other could run something.
+const WEB = /^(https?|mailto):/i
 const HOLD_MS = 500 // the longest xterm holds the last frame for Claude's redraw, once Claude has the size
 const QUIET_MS = 16 // how long a redraw's last chunk waits for more when it leaves the cursor hidden
 const MIN_COLS = 20 // the smallest size Claude gets: narrower, its layout falls apart
@@ -76,7 +80,7 @@ const SHOW = [0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68] // ESC [ ? 2 5 h
 /** Whether output ends by showing the cursor, as each of ConPTY's frames does while Claude's prompt has it. */
 const ends = bytes => bytes.length >= 6 && SHOW.every((b, i) => bytes[bytes.length - 6 + i] === b)
 
-export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
+export async function startTerminal(host, { cwd, home, command, openPath, onTitle, onExit }) {
   // IPC calls can complete out of order, so keys and sizes go to the PTY one at a time, in order: keys
   // typed meanwhile batch up, and only the latest size waiting its turn goes.
   let id
@@ -107,11 +111,25 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
     cursorBlink: false, // a blinking cursor repaints twice a second, forever
     // On Windows 11, ConPTY reflows on resize (build >= 21376). A Linux PTY leaves reflow to xterm.
     ...(WINDOWS && { windowsPty: { backend: 'conpty', buildNumber: 22000 } }),
-    linkHandler: { activate: (_, uri) => open(uri) }, // OSC 8 hyperlinks
+    linkHandler: { activate: (_, uri) => link(uri) }, // OSC 8 hyperlinks
   })
+  /** An OSC 8 link: a file opens in nook, a web page in the browser, and nothing else goes anywhere. */
+  function link(uri) {
+    if (WEB.test(uri)) return open(uri)
+    if (!/^file:/i.test(uri)) return
+    const { path, line } = fileUrl(uri)
+    invoke('path_kinds', { paths: [path] }).then(([kind]) => kind && openPath(path, kind === 2 ? 'dir' : 'file', line))
+  }
   const fit = new FitAddon()
   term.loadAddon(fit)
   term.loadAddon(new WebLinksAddon((_, uri) => open(uri)))
+  // A shell reports its folder as OSC 7 file://host/path, so relative paths follow its cd.
+  let here = cwd
+  term.parser.registerOscHandler(7, data => {
+    try { here = fileUrl(data).path } catch {}
+    return true
+  })
+  const links = startLinks(term, () => ({ cwd: here, home }), openPath)
   term.loadAddon(new Unicode11Addon())
   term.unicode.activeVersion = '11'
   applyTheme(term)
@@ -255,6 +273,7 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
     close: () => {
       clearTimeout(hold?.timer)
       composer.close()
+      links.dispose()
       output.onmessage = () => {}
       invoke('pty_close', { id })
       term.dispose()

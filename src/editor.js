@@ -39,6 +39,14 @@ export function createEditor(name, text, changed) {
   return editor
 }
 
+/** Puts the caret at 1-based `line` and `col` and scrolls that line to the middle. */
+export function goto(editor, line, col = 1) {
+  const doc = editor.state.doc
+  const at = doc.line(Math.max(1, Math.min(line, doc.lines)))
+  const pos = Math.min(at.to, at.from + Math.max(0, col - 1))
+  editor.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) })
+}
+
 /** `code` colored as the fence language `lang`, or null if language-data doesn't know it. */
 export async function highlight(code, lang) {
   const found = LanguageDescription.matchLanguageName(languages, lang, false) // python, js, powershell
