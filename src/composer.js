@@ -220,7 +220,7 @@ export function startComposer(term, host, id) {
     layout()
   }
 
-  /** Hides Claude's prompt block under the card, which CSS anchors to the screen's bottom, and moves the screen
+  /** Hides Claude's prompt block under the card, which sits on the terminal's bottom edge, and moves the screen
    * by the card's height less that block, so Claude's rows above the prompt, such as the slash menu, sit right
    * above the card. A frame xterm holds through a resize keeps its bottom row on the screen's bottom row. */
   function layout() {
