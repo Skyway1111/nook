@@ -214,11 +214,16 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
 
   const focus = () => (active?.terminal ?? active?.viewer)?.focus()
 
+  /** Shows the tab `step` places after the active one, wrapping. */
+  const cycle = step => {
+    const n = tabs.length
+    if (n) show(tabs[(tabs.indexOf(active) + step + n) % n])
+  }
+
   addEventListener('keydown', e => {
     if (e.ctrlKey && e.key === 'Tab') {
       e.preventDefault()
-      const n = tabs.length
-      show(tabs[(tabs.indexOf(active) + (e.shiftKey ? n - 1 : 1)) % n])
+      cycle(e.shiftKey ? -1 : 1)
     } else if (e.ctrlKey && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) {
       // Ctrl+1 to Ctrl+8 show that tab, and Ctrl+9 the last, as in a browser.
       e.preventDefault()
@@ -256,6 +261,10 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
     sessions: () => tabs.filter(t => t.terminal).map(tab => ({ tab, view: sessions.view(tab), report: sessions.report(tab) ?? {} })),
     openView,
     focus,
+    cycle,
+    /** The tab in front: `{ type, name, path, viewer }`, where a Claude tab has no viewer. */
+    active: () => active,
+    close: () => active && close(active),
     restyle() {
       look++
       for (const tab of [active, beside]) {

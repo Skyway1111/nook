@@ -13,6 +13,8 @@ import { bytes } from './palette.js'
 import { holdBackdrops } from './backdrops.js'
 import { startWallpaper } from './wallpaper.js'
 import { startDashboard } from './dashboard.js'
+import { opened } from './recent.js'
+import { path as paths } from './paths.js'
 import { $, openMenu, openPicker } from './ui.js'
 import { SAFE, worktreeName, since } from './launch.js'
 import { expand, offer, saved } from './prompts.js'
@@ -81,7 +83,7 @@ for (const [panel, other, dir] of [['files', 'git', 1], ['git', 'files', -1]]) {
   sash.ondblclick = () => { setWidth(panel, null); saveWidths() }
 }
 
-const openFile = path => tabs.openFile(path)
+const openFile = (path, ...at) => { opened(path); tabs.openFile(path, ...at) }
 const insertPath = path => tabs.paste(quote(path) + ' ')
 files = startFiles({
   start: cwd,
@@ -109,6 +111,49 @@ tabs = startTabs({
   },
 })
 if (error) banner(`Using default settings. ${error}`)
+
+// Ctrl+P finds a file in the active tab's repository or folder, and F1, or > in its box, runs a command. Both
+// load on first use. Capture, so the keys reach nook before Claude's terminal or the editor take them.
+const tabFolder = () => {
+  const tab = tabs.active()
+  if (!tab) return files.current() || cwd
+  return tab.type === 'claude' || tab.type === 'diff' ? tab.path : paths.parent(tab.path) || files.current() || cwd
+}
+let quick
+const openQuick = () => {
+  quick ??= Promise.all([import('./quickopen.js'), import('./commands.js')]).then(([{ startQuickOpen }, { appCommands }]) => startQuickOpen({
+    dir: tabFolder,
+    commands: appCommands({
+      tabs, files, git, drawer, home, banner, insertPath,
+      newSession: () => tabs.openClaude(here()),
+      openQuick: prefix => openQuick().then(q => q.open(prefix)),
+      quickPrompts,
+    }),
+    gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
+    openFile,
+    insertPath,
+    reveal: path => files.reveal(path),
+    onClose: () => tabs.focus(),
+  }))
+  return quick
+}
+addEventListener('keydown', e => {
+  const files = e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'p'
+  const commands = e.key === 'F1' && !e.ctrlKey && !e.shiftKey
+  if (!(files || commands) || e.altKey || e.metaKey || e.repeat) return
+  e.preventDefault()
+  e.stopPropagation()
+  // Letters typed while the box's code loads go to the box, not to Claude.
+  let typed = ''
+  const hold = k => {
+    if (k.key.length !== 1 || k.ctrlKey || k.altKey || k.metaKey) return
+    k.preventDefault()
+    k.stopPropagation()
+    typed += k.key
+  }
+  addEventListener('keydown', hold, true)
+  openQuick().then(q => q.toggle(commands ? '>' : '', typed)).catch(banner).finally(() => removeEventListener('keydown', hold, true))
+}, true)
 
 // Files dropped from Explorer become paths in the prompt (Claude Code attaches images itself).
 getCurrentWebview().onDragDropEvent(e => {

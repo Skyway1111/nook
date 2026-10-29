@@ -19,6 +19,8 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 - **Claude in tabs.** Click **+**, press Ctrl+N, or right-click a folder and pick **New Claude session here**. Each tab runs Claude's own interface, unchanged.
 - **Open with nook.** In Explorer, right-click a folder, or the empty space inside one, and pick **Open with nook**.
 - **A file browser for the whole disk**, with pins, breadcrumbs, back and forward, and a typed path bar. Right-click a file to cut, copy, rename, or delete it. A deleted file goes to the Recycle Bin, or on Linux to the trash.
+- **Quick open.** Ctrl+P finds any file in the open tab's repository, or its folder outside one, by a few letters of its name. Files you opened lately come first. Enter opens it, Shift+Enter adds its path to Claude's prompt, and Alt+Enter shows it in the file browser. Type `:` and a number to go to a line.
+- **A command palette.** F1, or `>` in quick open, runs any of nook's commands by name.
 - **Paths into the prompt.** Drag a file from the sidebar or from Explorer into the terminal to add its path to your prompt.
 - **Pasted screenshots.** Ctrl+V pastes a screenshot straight into Claude. Hover `[Image #N]` to see the image, and click it to open it.
 - **Pictures in the transcript.** Each image you paste shows under your prompt, and each image or SVG Claude reads shows under the `Read`.
@@ -38,6 +40,8 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 | Shift+Enter | New line in the prompt |
 | Ctrl+C | Copy the selection. With nothing selected, Claude gets it. |
 | Ctrl+N | New Claude session in the file browser's folder |
+| Ctrl+P | Quick open: find a file, `>` for commands, `:` for a line |
+| F1 | Run a command |
 | Ctrl+Tab, Ctrl+Shift+Tab | Next or previous tab |
 | Ctrl+S | Save the open file |
 | Ctrl+F | Find and replace in the editor |

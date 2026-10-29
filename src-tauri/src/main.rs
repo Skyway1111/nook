@@ -4,6 +4,7 @@
 mod commands;
 mod git;
 mod history;
+mod index;
 #[cfg_attr(not(windows), path = "priority_unix.rs")]
 mod priority;
 mod pty;
@@ -441,6 +442,7 @@ fn main() {
             theme::install_theme_zip,
             theme::zip_holds_theme,
             list_dir,
+            index::index_files,
             file_stamp,
             path_kinds,
             read_text,
