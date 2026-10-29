@@ -5,6 +5,7 @@ import { startTerminal } from './terminal.js'
 import { startViewer } from './viewer.js'
 import { ICON, kind, same, basename } from './files.js'
 import { $, el, openMenu } from './ui.js'
+import { claudeWith } from './launch.js'
 import { watchSessions, wanting } from './sessions.js'
 
 const win = getCurrentWindow()
@@ -68,6 +69,12 @@ export function startTabs({ settings, onShow, onSessions }) {
     watched: tab => tab === active && document.hasFocus(),
     onChange: (tab, view, report) => {
       tab.el.dataset.mark = view.mark
+      // A session that moved, as into the worktree `claude --worktree` makes, takes its tab's git panel along.
+      if (report.root && !same(report.root, tab.path)) {
+        tab.path = report.root
+        tab.label.textContent = tab.label.textContent.replace(tab.name, (tab.name = basename(report.root)))
+        if (tab === active) onShow(tab)
+      }
       tab.el.title = describe(tab, view, report)
       if (view.attention) win.requestUserAttention(UserAttentionType.Informational).catch(() => {})
       retitle()
@@ -100,16 +107,16 @@ export function startTabs({ settings, onShow, onSessions }) {
     else if (active === tab) show(tabs[Math.min(i, tabs.length - 1)])
   }
 
-  async function openClaude(cwd) {
-    const folder = basename(cwd)
-    const tab = add('claude', folder, cwd)
+  /** A Claude tab in `cwd`, its command given Claude's flags `args`, such as `['--continue']`. */
+  async function openClaude(cwd, args = []) {
+    const tab = add('claude', basename(cwd), cwd)
     tab.view.classList.add('claude')
     const host = tab.view.appendChild(el('div', { className: 'xterm-host' }))
     show(tab) // the terminal measures its size, so it starts visible
     tab.terminal = await startTerminal(host, {
       cwd,
-      command: settings.command,
-      onTitle: t => { tab.label.textContent = t ? `${folder} · ${t}` : folder },
+      command: claudeWith(settings.command, args),
+      onTitle: t => { tab.label.textContent = t ? `${tab.name} · ${t}` : tab.name },
       onExit: () => close(tab),
     })
     if (!tabs.includes(tab)) tab.terminal.close() // closed while its shell started

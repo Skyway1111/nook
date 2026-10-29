@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod git;
+mod history;
 #[cfg_attr(not(windows), path = "priority_unix.rs")]
 mod priority;
 mod pty;
@@ -393,6 +394,7 @@ fn main() {
             pty::pty_close,
             pty::pty_state,
             pty::pty_states,
+            history::claude_sessions,
             pty::pty_command,
             pty::session_image,
         ])
