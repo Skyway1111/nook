@@ -143,7 +143,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
       return render()
     }
     const { createEditor } = await editing()
-    editor = createEditor(name, text, changed)
+    editor = createEditor(name, text, changed, autosave ? {} : { status: { eol: () => eol } })
     saved = editor.state.doc
     changed()
     paint('text', [editor.dom, ...(page ? [page, toggle] : []), bar])
