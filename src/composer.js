@@ -60,6 +60,7 @@ export function startComposer(term, host, id) {
   let shown = {} // what each part of the card shows
   let geo = null // the screen's box inside the host, measured on resize
   let held = null // the rows of the frame xterm holds while a resize waits for Claude's redraw
+  let tall = 0 // the card's height as last laid out, 0 while it or its tab is hidden
   let report = '' // the mod's last report, as JSON
   let state = {} // ...and parsed
   let chips = ''
@@ -225,6 +226,10 @@ export function startComposer(term, host, id) {
    * above the card. A frame xterm holds through a resize keeps its bottom row on the screen's bottom row. */
   function layout() {
     if (!geo) return
+    if (card.offsetHeight !== tall) {
+      tall = card.offsetHeight
+      card.dispatchEvent(new Event('nook-card', { bubbles: true })) // the wallpaper stands its scene on the card
+    }
     const h = geo.height / term.rows
     const snap = px => Math.round(px * devicePixelRatio) / devicePixelRatio
     const hold = held == null ? 0 : snap((term.rows - held) * h)
@@ -236,7 +241,7 @@ export function startComposer(term, host, id) {
     }
     const below = shown.block * h
     rows.style.clipPath = `inset(0 0 ${below + hold}px 0)`
-    const shift = snap(card.offsetHeight - below)
+    const shift = snap(tall - below)
     screen.style.transform = shift ? `translateY(${-shift}px)` : ''
     follow()
   }

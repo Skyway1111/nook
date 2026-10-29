@@ -72,7 +72,14 @@ addEventListener('blur', () => { menu.hidden = true })
 let previewing = null
 export function showPreview(path, x, y) {
   previewing = path
-  previewImg.onload = () => { if (previewing === path) { preview.hidden = false; place(preview, x, y) } }
+  previewImg.onload = () => {
+    if (previewing !== path) return
+    previewImg.style.width = ''
+    preview.hidden = false
+    // An SVG sized only by its viewBox has no width of its own, and would leave the box empty.
+    if (!previewImg.offsetWidth) previewImg.style.width = '320px'
+    place(preview, x, y)
+  }
   previewImg.src = convertFileSrc(path)
 }
 export function hidePreview() {

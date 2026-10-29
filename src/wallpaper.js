@@ -10,16 +10,18 @@ import { el } from './ui.js'
 
 const FRAME_MS = 100 // ten frames a second. Characters step from cell to cell, so more frames would only cost.
 const SPEEDS = [.25, 3] // --wallpaper-speed's range. Below 1 the frames slow with the scene, so a slower scene costs less.
-const REST_MS = 600 // after a key or a resize, the wallpaper holds still this long, so their repaints never wait on a frame
+const ECHO_MS = 50 // after a key, the next frame waits this long, so the key's echo never waits on a frame
+const REST_MS = 600 // after a resize, the wallpaper holds still this long
 const THUMB_PX = 4 // the picker's thumbnails draw their cells this many pixels high
 const SETTLE_MS = 100 // while the pane resizes, the last bitmap stretches; it redraws at the new size once this long passes without one, as backdrops.js does
 const still = matchMedia('(prefers-reduced-motion: reduce)')
 
 /** Sizes `canvas` to a CSS box of `width` x `height` at the screen's pixel density, and fits cells to it: `size`
  * pixels high in font `family`, each a whole number of device pixels, so a cell's copy never blurs or leaves a
- * seam. Returns `{ ctx, w, h, cols, rows }` in device pixels, the context drawing in them, and `tiles`, a fresh
- * glyph atlas in `colors`. The last column and row may run past the canvas's edge. */
-function fit(canvas, width, height, size, family, colors) {
+ * seam. The last row ends `floor` CSS pixels above the bottom edge. Returns `{ ctx, w, h, cols, rows }` in device
+ * pixels, the context drawing in them from the first row's top, and `tiles`, a fresh glyph atlas in `colors`.
+ * The last column may run past the canvas's edge. */
+function fit(canvas, width, height, size, family, colors, floor = 0) {
   const dpr = devicePixelRatio || 1
   canvas.width = Math.max(1, Math.round(width * dpr))
   canvas.height = Math.max(1, Math.round(height * dpr))
@@ -28,7 +30,10 @@ function fit(canvas, width, height, size, family, colors) {
   ctx.font = font
   const w = Math.max(1, Math.round(ctx.measureText('M').width || size * dpr * 0.6))
   const h = Math.max(1, Math.ceil(size * dpr))
-  return { ctx, w, h, cols: Math.ceil(canvas.width / w), rows: Math.ceil(canvas.height / h), tiles: atlas(w, h, font, colors) }
+  const base = canvas.height - Math.round(floor * dpr)
+  const rows = Math.max(1, Math.floor(base / h))
+  ctx.translate(0, base - rows * h)
+  return { ctx, w, h, cols: Math.ceil(canvas.width / w), rows, tiles: atlas(w, h, font, colors) }
 }
 
 const ATLAS_COLS = 32 // tiles a row of the atlas holds
@@ -101,7 +106,8 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   let focused = document.hasFocus() // the wallpaper moves only while nook's window has focus
   let cells = null // the canvas's context, cells, and glyph atlas, from fit, while a scene shows
   let onCanvas = null, spare = null // the grid on the canvas, and one to draw the next frame into
-  let lastInput = -Infinity, lastFrame = -Infinity, raf = 0
+  let floor = 0 // the scene stands this many CSS pixels above the pane's bottom, on the composer card
+  let quiet = -Infinity, lastFrame = -Infinity, raf = 0 // no frame draws before `quiet`, after a key or a resize
   let picker = null // the open picker's { focus, restyle, tick, close }
   const held = new Map() // a picker slider's value, by variable, shown until theme.css carries it
 
@@ -119,7 +125,16 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
       return
     }
     const { width, height } = pane.getBoundingClientRect()
-    cells = fit(canvas, width, height, look.size, look.family, look.colors)
+    floor = stand()
+    cells = fit(canvas, width, height, look.size, look.family, look.colors, floor)
+  }
+
+  /** The top of the tallest composer card showing, above the pane's bottom. While none shows, as in Claude's
+   * menus, the scene stands where it stood. */
+  function stand() {
+    let top = Infinity
+    for (const card of pane.querySelectorAll('.composer')) if (card.offsetHeight) top = Math.min(top, card.getBoundingClientRect().top)
+    return top < Infinity ? Math.max(0, Math.round(pane.getBoundingClientRect().bottom - top)) : floor
   }
 
   /** Draws the frame at `now`, touching only the cells that changed since the last one. */
@@ -132,14 +147,14 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
     onCanvas = g
   }
 
-  // One loop serves the pane and the picker's thumbnails. It stops while nothing moves, and rests after a key.
+  // One loop serves the pane and the picker's thumbnails. It stops while nothing moves, and waits out a key's echo.
   // A timer wakes it once a frame, and the frame draws in the next animation frame, so the page isn't asked
   // for an animation frame sixty times a second to draw ten.
   let timer = 0
   function schedule() {
     if (timer || raf || (!live() && !picker) || still.matches) return
     const now = performance.now()
-    const wait = Math.max(0, frameMs() - (now - lastFrame), REST_MS - (now - lastInput))
+    const wait = Math.max(0, frameMs() - (now - lastFrame), quiet - now)
     timer = setTimeout(() => {
       timer = 0
       if (!raf) raf = requestAnimationFrame(frame)
@@ -148,7 +163,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   function frame(now) {
     raf = 0
     if (!live() && !picker) return
-    if (now - lastFrame >= frameMs() - 4 && now - lastInput >= REST_MS) {
+    if (now - lastFrame >= frameMs() - 4 && now >= quiet) {
       lastFrame = now
       if (live()) draw(now)
       picker?.tick(clock(now))
@@ -199,13 +214,17 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   }
 
   let settle = 0
-  new ResizeObserver(() => {
-    if (!cells) return
-    lastInput = performance.now() // and holds still, as after a key
+  const resettle = () => {
     clearTimeout(settle)
     settle = setTimeout(() => { measure(); if (shown()) draw() }, SETTLE_MS)
+  }
+  new ResizeObserver(() => {
+    if (!cells) return
+    quiet = performance.now() + REST_MS
+    resettle()
   }).observe(pane)
-  addEventListener('keydown', () => { if (!picker) lastInput = performance.now() }, true)
+  pane.addEventListener('nook-card', () => { if (cells && stand() !== floor) resettle() })
+  addEventListener('keydown', () => { if (!picker) quiet = Math.max(quiet, performance.now() + ECHO_MS) }, true)
   document.addEventListener('visibilitychange', update)
   addEventListener('focus', () => { focused = true; update() })
   addEventListener('blur', () => { focused = false; update() })
