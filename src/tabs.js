@@ -213,15 +213,17 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     return tab
   }
 
-  // The Claude sessions open now, saved as they change, so the next start can reopen them.
-  let saved = ''
+  // The Claude sessions open now, saved as they change, so the next start can reopen them. Compared with
+  // what settings.json holds, so a start that changes nothing writes nothing before its terminal spawns.
+  const said = list => JSON.stringify(list.map(s => [s.dir, s.id, s.prompt || '', !!s.active]))
+  let saved = said(settings.sessions ?? [])
   function save() {
     const list = tabs.filter(t => t.type === 'claude').map(t => {
       const report = sessions.report(t) ?? {}
       const id = report.session ?? t.resume?.id
       return id && { dir: t.cwd, id, prompt: report.prompt || t.resume?.prompt || '', active: t === active || undefined }
     }).filter(Boolean)
-    const text = JSON.stringify(list)
+    const text = said(list)
     if (text !== saved) onSessionsOpen?.((saved = text, list))
   }
 
