@@ -234,6 +234,20 @@ fn file_stamp(path: String) -> Option<String> {
     Some(format!("{:?} {}", meta.modified().ok()?, meta.len()))
 }
 
+/// What each path names: 0 nothing, 1 a file, 2 a folder. A Claude tab asks about the paths in a row
+/// of its text once the mouse rests on it, and links those that exist.
+#[tauri::command(async)]
+fn path_kinds(paths: Vec<String>) -> Vec<u8> {
+    paths
+        .iter()
+        .map(|p| match fs::metadata(p) {
+            Ok(m) if m.is_dir() => 2,
+            Ok(_) => 1,
+            Err(_) => 0,
+        })
+        .collect()
+}
+
 /// Saves a file tab and keeps the file's BOM. Writes nothing and returns false when the file no
 /// longer holds `base`, the text the tab last read; with no `base` it overwrites.
 #[tauri::command(async)]
@@ -375,6 +389,7 @@ fn main() {
             theme::zip_holds_theme,
             list_dir,
             file_stamp,
+            path_kinds,
             read_text,
             write_text,
             create_path,

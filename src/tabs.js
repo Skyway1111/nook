@@ -13,7 +13,7 @@ const strip = $('tabs')
 const pane = $('pane')
 
 /** `settings.command` is what each new Claude tab runs. */
-export function startTabs({ settings, onShow, onSessions }) {
+export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
   const tabs = []
   let active = null
   let claude = null // the Claude tab shown last: where paths go while a file tab is showing
@@ -116,6 +116,8 @@ export function startTabs({ settings, onShow, onSessions }) {
     tab.terminal = await startTerminal(host, {
       cwd,
       command: claudeWith(settings.command, args),
+      home,
+      openPath: (path, kind, line, col) => (kind === 'dir' ? openFolder(path) : openFile(path, line, col)),
       onTitle: t => { tab.label.textContent = t ? `${tab.name} · ${t}` : tab.name },
       onExit: () => close(tab),
     })
@@ -127,18 +129,21 @@ export function startTabs({ settings, onShow, onSessions }) {
    * optionally `focus`, `close`, and a file's `dirty` and `save`. */
   function openView(type, name, path, start) {
     const open = tabs.find(t => t.type === type && same(t.path, path))
-    if (open) return show(open)
+    if (open) return show(open), open
     const tab = add(type, name, path)
     tab.viewer = { focus: () => tab.view.focus(), ...start(tab.view, tab) }
     show(tab)
+    return tab
   }
 
-  function openFile(path) {
+  /** Opens a file in a tab, at `line` and `col` when given. */
+  function openFile(path, line, col) {
     const name = basename(path)
-    openView(kind({ name }), name, path, (view, tab) => startViewer(view, path, {
+    const tab = openView(kind({ name }), name, path, (view, tab) => startViewer(view, path, {
       openFile,
       onDirty: dirty => tab.el.classList.toggle('dirty', dirty),
     }))
+    if (line) tab.viewer.reveal?.({ line, col })
   }
 
   const focus = () => (active?.terminal ?? active?.viewer)?.focus()

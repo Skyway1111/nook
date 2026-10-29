@@ -90,6 +90,8 @@ files = startFiles({
 const git = startGit({ openView: (...args) => tabs.openView(...args), openFile, insertPath })
 tabs = startTabs({
   settings,
+  home,
+  openFolder: dir => { document.body.classList.remove('files-hidden'); files.go(dir) },
   onShow: tab => {
     files.mark(tab.viewer ? tab.path : '')
     wallpaper.show(!tab.viewer)

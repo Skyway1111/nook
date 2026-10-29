@@ -61,6 +61,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
   let eol // the file's line ending. The editor holds \n and saves with this.
   let editor, saved // the editor, and its text as last read or written
   let dirty = false
+  let target // { line, col } to show once the text has loaded
   const bar = el('p', { className: 'bar', hidden: true })
   // Markdown's rendered page, and the button that swaps it for the source.
   const page = /\.(md|markdown)$/i.test(path) && el('div', { className: 'markdown', tabIndex: -1 })
@@ -127,8 +128,20 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
     saved = editor.state.doc
     changed()
     paint('text', [editor.dom, ...(page ? [page, toggle] : []), bar])
-    if (page) preview(previewing)
+    if (page) preview(previewing && !target)
     if (document.activeElement === view) focus()
+    if (target) reveal(target)
+  }
+
+  /** Shows `line` and `col` in the source, now or once the text loads. */
+  async function reveal({ line, col }) {
+    target = { line, col }
+    if (!editor) return
+    target = null
+    if (previewing) preview(false)
+    const { goto } = await editing()
+    goto(editor, line, col)
+    editor.focus()
   }
 
   /** Rereads the file. A buffer with unsaved edits stays as it is unless `discard`. */
@@ -193,6 +206,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
     refresh: () => refresh(),
     save: () => save(),
     dirty: () => dirty,
+    reveal,
     /** Replaces the text with `f(text)` as one edit, once the file has loaded. */
     edit: f => serial(() => {
       const text = editor?.state.doc.toString()

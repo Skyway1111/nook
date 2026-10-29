@@ -521,3 +521,9 @@ svg.defs { position: absolute; width: 0; height: 0; }
 [hidden] { display: none !important; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* The hint beside a path link in a Claude tab. */
+.link-hint {
+  position: fixed; z-index: 30; pointer-events: none; padding: 3px 8px; border-radius: 6px;
+  font: .8rem var(--font-ui); color: var(--ink-1); background: var(--raised); border: 1px solid var(--line);
+}
