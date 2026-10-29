@@ -259,7 +259,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
 
   let search // the find bar, loaded with its addon the first time it opens
   function find() {
-    search ??= import('./search.js').then(m => m.startSearch(term, host))
+    search ??= import('./search.js').then(m => m.startSearch(term, host, send))
     search.then(s => s.open())
   }
   const turns = startTurns(term, send)
