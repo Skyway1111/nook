@@ -89,15 +89,19 @@ async function pngSize($, path) {
 /** The folder Claude saves the session's nth pasted image to, as <n>.png. nook's `session_image` reads it from the report. */
 async function imagesDir($) {
   const slug = (await $.session.root()).replace(/[^a-zA-Z0-9]/g, '-')
-  return `${await $.env.get('TEMP')}\\claude\\${slug}\\${await $.session.id()}\\images`
+  const temp = (await $.env.get('NOOK_CLAUDE_TEMP')) || `${await $.env.get('TEMP')}\\claude`
+  return [temp, slug, await $.session.id(), 'images'].join(sep(temp))
 }
+
+/** The separator `path` is written with: Windows' backslash, or a slash. */
+const sep = path => (path.includes('\\') ? '\\' : '/')
 
 /** The images pasted into a prompt, as [path, size]. */
 async function pasted($, text) {
   const dir = await imagesDir($)
   const pictures = []
   for (const n of new Set(Array.from(text.matchAll(/\[Image #(\d+)\]/g), m => m[1]))) {
-    const path = `${dir}\\${n}.png`
+    const path = `${dir}${sep(dir)}${n}.png`
     if (!(await $.fs.exists(path))) continue
     if (!sizes.has(path)) sizes.set(path, pngSize($, path).catch(() => UNKNOWN)) // past 4 MiB, $.fs.read refuses
     pictures.push([path, await sizes.get(path)])

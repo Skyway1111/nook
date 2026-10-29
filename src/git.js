@@ -3,6 +3,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { $, el, openMenu, openPicker, dragPath } from './ui.js'
 import { ICON, basename } from './files.js'
+import { path as paths } from './paths.js'
 
 const panel = $('git')
 const list = $('git-list')
@@ -27,8 +28,8 @@ const SYNC = {
 const PATHSPEC = ['--pathspec-from-file=-', '--pathspec-file-nul']
 /** The last segment of a git path; an untracked folder keeps its trailing slash. */
 const leaf = rel => rel.slice(rel.lastIndexOf('/', rel.length - 2) + 1)
-/** A git path as a Windows path under `root`. */
-const abs = (root, rel) => root + '\\' + rel.replace(/\/$/, '').replaceAll('/', '\\')
+/** A git path as a path under `root`. */
+const abs = (root, rel) => paths.fromSlashes(root, rel)
 
 export function startGit({ openView, openFile, insertPath }) {
   let want = null // the active tab's path

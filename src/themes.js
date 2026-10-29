@@ -4,6 +4,7 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import preview from './nook.jpg'
 import { $, el } from './ui.js'
+import { path as paths } from './paths.js'
 
 /** nook's Claude theme, from its mod (src-tauri/mod/themes/nook.json), as Claude's settings name it. */
 const NOOK = 'custom:nook:nook'
@@ -11,7 +12,7 @@ const label = name => name.replace(/[-_]+/g, ' ').replace(/(^|\s)\p{L}/gu, c => 
 
 /** `save` patches settings.json, and `reread` applies the theme it names. */
 export function startThemes({ configDir, home, settings, save, reread }) {
-  const dir = `${configDir}\\themes`
+  const dir = paths.join(configDir, 'themes')
   const gallery = $('settings-themes')
   const follow = $('settings-follow')
   const note = $('settings-theme-note')
@@ -43,7 +44,7 @@ export function startThemes({ configDir, home, settings, save, reread }) {
     const names = listed.filter(e => e.dir && !e.name.startsWith('.')).map(e => e.name).sort((a, b) => a.localeCompare(b))
     const add = el('button', { className: 'theme add', title: 'Install a theme from a .zip', onclick: () => picker.click() })
     add.innerHTML = '<i class="icon">&#xE710;</i><span>Install…</span>'
-    const shot = name => `${convertFileSrc(`${dir}\\${name}\\screenshot.png`)}?v=${launched}.${installs.get(name) ?? 0}`
+    const shot = name => `${convertFileSrc(paths.join(dir, name, 'screenshot.png'))}?v=${launched}.${installs.get(name) ?? 0}`
     gallery.replaceChildren(card(null, preview), ...names.map(n => card(n, shot(n))), add)
     mark(active)
     follow.checked = (await claudeTheme()) === NOOK
@@ -63,7 +64,7 @@ export function startThemes({ configDir, home, settings, save, reread }) {
   }
 
   async function drop(name) {
-    if (!(await invoke('recycle', { path: `${dir}\\${name}` }))) return
+    if (!(await invoke('recycle', { path: paths.join(dir, name) }))) return
     if (name === active) await use(null)
     await show()
   }
@@ -88,7 +89,7 @@ export function startThemes({ configDir, home, settings, save, reread }) {
 
   // Claude reads its theme from the `theme` key of ~/.claude/settings.json, which its /theme writes.
   // nook writes only that key, and only over the text it read, so a change Claude made meanwhile stands.
-  const claudePath = `${home}\\.claude\\settings.json`
+  const claudePath = paths.join(home, '.claude', 'settings.json')
   async function claudeSettings() {
     const text = await invoke('read_text', { path: claudePath }).catch(() => '') // none yet: Claude's defaults
     return [text, text.trim() ? JSON.parse(text) : {}]

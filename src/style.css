@@ -26,7 +26,9 @@ button {
 }
 button:disabled { opacity: .3; }
 
-.icon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-size: 12px; font-style: normal; }
+/* Windows draws icons with Segoe; elsewhere nook-icons.woff2 has the same characters (scripts/icons.py). */
+@font-face { font-family: "nook icons"; src: url(./fonts/nook-icons.woff2); }
+.icon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "nook icons"; font-size: 12px; font-style: normal; }
 
 /* Titlebar */
 #titlebar { display: flex; align-items: center; gap: 2px; min-width: 0; }
@@ -263,7 +265,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .check {
   flex: none; display: grid; place-items: center; width: 14px; height: 14px;
   border: 1px solid var(--ink-3); border-radius: 3px;
-  font: 9px "Segoe Fluent Icons", "Segoe MDL2 Assets"; color: var(--bg);
+  font: 9px "Segoe Fluent Icons", "Segoe MDL2 Assets", "nook icons"; color: var(--bg);
 }
 .check:hover { border-color: var(--ink-1); }
 .check:is([data-state=on], [data-state=mixed]) { background: var(--accent); border-color: var(--accent); }

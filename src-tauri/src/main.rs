@@ -2,8 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod git;
+#[cfg_attr(not(windows), path = "priority_unix.rs")]
 mod priority;
 mod pty;
+#[cfg_attr(not(windows), path = "shell_unix.rs")]
 mod shell;
 mod theme;
 
@@ -12,7 +14,6 @@ use serde_json::{Map, Value};
 use std::{
     fs,
     io::Write,
-    os::windows::{fs::MetadataExt, process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Mutex,
@@ -32,9 +33,13 @@ pub fn err(e: impl std::fmt::Display) -> String {
 /// Runs a console tool, feeding it `input`, with no console window: without the flag, the release
 /// build flashes one for each. Ok is its output; Err is what it said went wrong.
 pub fn run(cmd: &mut Command, input: Option<&str>) -> Result<String, String> {
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     let mut child = cmd
-        .creation_flags(CREATE_NO_WINDOW)
         .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -74,10 +79,10 @@ struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".into());
-        let under = |d: &str| format!("{home}\\{d}");
+        let home = home_dir();
+        let under = |d: &str| Path::new(&home).join(d).to_string_lossy().into_owned();
         Self {
-            command: ["powershell", "-NoLogo", "-NoExit", "-Command", "claude"].map(String::from).into(),
+            command: DEFAULT_COMMAND.map(String::from).into(),
             gpu: false,
             pinned: vec![under("Desktop"), under("Downloads"), under("Documents"), home.clone()],
             last_dir: home,
@@ -88,6 +93,18 @@ impl Default for Settings {
             claude_theme: None,
         }
     }
+}
+
+/// What a Claude tab runs until settings.json says otherwise: Claude, then the shell it ran in.
+#[cfg(windows)]
+const DEFAULT_COMMAND: [&str; 5] = ["powershell", "-NoLogo", "-NoExit", "-Command", "claude"];
+#[cfg(not(windows))]
+const DEFAULT_COMMAND: [&str; 3] = ["bash", "-lc", "claude; exec bash -l"];
+
+const HOME_VAR: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+
+fn home_dir() -> String {
+    std::env::var(HOME_VAR).unwrap_or_else(|_| if cfg!(windows) { "C:\\" } else { "/" }.into())
 }
 
 fn config_dir(app: &AppHandle) -> PathBuf {
@@ -125,7 +142,7 @@ fn boot(app: AppHandle) -> Boot {
         Ok(s) => (s, None),
         Err(e) => (Settings::default(), Some(e)),
     };
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let home = std::env::var(HOME_VAR).unwrap_or_default();
     Boot { settings, error, config_dir: config_dir(&app), home }
 }
 
@@ -155,22 +172,37 @@ struct Entry {
     dir: bool,
 }
 
-/// Directory listing; `""` lists drive roots. Skips what Explorer hides (hidden/system attributes).
+/// Directory listing; `""` lists drive roots, or on Linux the root. Skips what the file manager hides:
+/// on Windows the hidden and system attributes, and on Linux names that start with a dot.
 #[tauri::command(async)]
 fn list_dir(path: String) -> Result<Vec<Entry>, String> {
     if path.is_empty() {
+        if cfg!(not(windows)) {
+            return Ok(vec![Entry { name: "/".into(), dir: true }]);
+        }
         let drives = ('C'..='Z').map(|c| format!("{c}:\\")).filter(|d| Path::new(d).exists());
         return Ok(drives.map(|name| Entry { name, dir: true }).collect());
     }
-    const HIDDEN_OR_SYSTEM: u32 = 0x2 | 0x4;
     let entries = fs::read_dir(&path).map_err(err)?.flatten().filter_map(|e| {
         let meta = e.metadata().ok()?;
-        (meta.file_attributes() & HIDDEN_OR_SYSTEM == 0).then(|| Entry {
+        (!hidden(&e, &meta)).then(|| Entry {
             name: e.file_name().to_string_lossy().into_owned(),
             dir: meta.is_dir() || (meta.is_symlink() && e.path().is_dir()),
         })
     });
     Ok(entries.collect())
+}
+
+#[cfg(windows)]
+fn hidden(_: &fs::DirEntry, meta: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const HIDDEN_OR_SYSTEM: u32 = 0x2 | 0x4;
+    meta.file_attributes() & HIDDEN_OR_SYSTEM != 0
+}
+
+#[cfg(not(windows))]
+fn hidden(e: &fs::DirEntry, _: &fs::Metadata) -> bool {
+    e.file_name().as_encoded_bytes().starts_with(b".")
 }
 
 const BOM: &[u8] = b"\xEF\xBB\xBF";
@@ -344,11 +376,12 @@ mod tests {
 
     #[test]
     fn opens_a_folder_explorer_passes() {
-        let here = env!("CARGO_MANIFEST_DIR").replace('/', "\\");
+        let here = if cfg!(windows) { env!("CARGO_MANIFEST_DIR").replace('/', "\\") } else { env!("CARGO_MANIFEST_DIR").into() };
         assert_eq!(dir_arg(&here), Some(here.clone()));
     }
 
     #[test]
+    #[cfg(windows)]
     fn repairs_a_drive_root_whose_quote_was_escaped() {
         assert_eq!(dir_arg("C:\""), Some("C:\\".into()));
         assert_eq!(dir_arg("C:\" "), Some("C:\\".into()));
@@ -357,6 +390,7 @@ mod tests {
     #[test]
     fn rejects_a_missing_folder() {
         assert_eq!(dir_arg(r"C:\does\not\exist"), None);
+        assert_eq!(dir_arg("/does/not/exist"), None);
     }
 
     #[test]
