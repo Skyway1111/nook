@@ -343,11 +343,11 @@ fn render_on_the_cpu_unless_gpu() {
 static STARTED: OnceLock<Instant> = OnceLock::new();
 
 /// Prints a timing for `bench/linux.mjs`, which starts nook with `NOOK_BENCH` set: `ms`, or without it, the
-/// milliseconds since nook started.
+/// milliseconds since nook started, and then the milliseconds since nook started either way.
 #[tauri::command]
 fn bench(event: String, ms: Option<f64>) {
-    let ms = ms.unwrap_or_else(|| STARTED.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0));
-    println!("bench {event} {ms:.1}");
+    let now = STARTED.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
+    println!("bench {event} {:.1} {now:.1}", ms.unwrap_or(now));
 }
 
 fn main() {
@@ -360,6 +360,10 @@ fn main() {
     tauri::Builder::default()
         .manage(pty::Sessions::default())
         .setup(|app| {
+            let bench = std::env::var_os("NOOK_BENCH").is_some();
+            if bench {
+                self::bench("mark:setup".into(), None);
+            }
             let settings = read_settings(app.handle()).unwrap_or_default();
             priority::keep_typing_path_elevated(settings.command.first().map_or("", String::as_str));
             // `nook <dir>` opens there; otherwise in the last session's folder.
@@ -382,7 +386,7 @@ fn main() {
                 .initialization_script(format!(
                     "window.NOOK_CWD = {}; window.NOOK_BENCH = {};",
                     serde_json::to_string(&start)?,
-                    std::env::var_os("NOOK_BENCH").is_some()
+                    bench
                 ))
                 // The settings drawer's font pickers list installed fonts through queryLocalFonts().
                 .on_permission_request(|_, kind| match kind {
@@ -390,6 +394,9 @@ fn main() {
                     _ => PermissionResponse::Default,
                 })
                 .build()?;
+            if bench {
+                self::bench("mark:window".into(), None);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
