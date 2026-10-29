@@ -35,6 +35,7 @@ button:disabled { opacity: .3; }
 #titlebar > button, .lead > button { flex: none; width: 32px; height: 28px; border-radius: 6px; color: var(--ink-3); }
 #titlebar > button:hover, .lead > button:hover { background: var(--hover); color: var(--ink-1); }
 #titlebar > button.on { background: var(--hover); color: var(--ink-1); }
+#titlebar > #launch { width: 18px; margin-left: -4px; font-size: 10px; }
 /* As wide as the file browser, so the tabs start where the pane does. */
 .lead { flex: none; display: flex; align-items: center; align-self: stretch; width: var(--files-width); padding-left: 4px; }
 body.files-hidden .lead { width: auto; }

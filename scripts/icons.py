@@ -45,6 +45,8 @@ ICONS = {
     0xE7A7: "arrow_undo",
     0xE7AC: "apps",  # OpenWith
     0xE7C4: "window_multiple",  # TaskView: the sessions dashboard
+    0xE768: "play",  # continue the last session
+    0xE81C: "history",  # resume a saved session
     0xE838: "folder_open",
     0xE890: "eye",  # View: preview
     0xE895: "arrow_sync",
@@ -67,6 +69,7 @@ ICONS = {
     0xEB9F: "image",
     0xEDA2: "hard_drive",
     0xF000: "document_text",
+    0xF003: "branch_fork",  # nook's own: a session in a git worktree
 }
 
 UPM = 1000  # font units to the em; an icon's 20px box fills it, as a Segoe icon does

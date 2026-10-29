@@ -34,7 +34,7 @@ test('a turn works, runs its tools, notes the files it wrote, and goes idle', as
   const reports: Record<string, unknown>[] = []
   nook(on, reports)
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
-  expect(last(reports)).toMatchObject({ status: 'idle', turns: 0, session: 'abc' })
+  expect(last(reports)).toMatchObject({ status: 'idle', turns: 0, session: 'abc', root: '/work' })
 
   await $.turn.start({ text: 'Fix the tab strip\nand more', turnId: 't1' })
   expect(last(reports)).toMatchObject({ status: 'working', prompt: 'Fix the tab strip' })

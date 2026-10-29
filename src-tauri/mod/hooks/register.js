@@ -145,7 +145,7 @@ export function register(on) {
       await setStatus($, file, 'idle', { turns: 0, touched: [], prompt: '' })
       // /clear starts a new session, with an empty context and a new images folder.
       const tick = async () => report($, file, {
-        ...(await take($, requests)), context: (await $.session.usage()).context, images: await imagesDir($), session: await $.session.id(), ...(await model($)),
+        ...(await take($, requests)), context: (await $.session.usage()).context, images: await imagesDir($), session: await $.session.id(), root: await $.session.root(), ...(await model($)),
       })
       await tick()
       $.clock.every(250, () => tick().catch(() => {})) // a failed tick leaves the last report standing

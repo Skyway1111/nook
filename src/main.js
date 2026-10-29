@@ -6,14 +6,15 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { startTabs } from './tabs.js'
-import { startFiles, quote } from './files.js'
+import { startFiles, quote, ICON } from './files.js'
 import { startGit } from './git.js'
 import { startSettings } from './settings.js'
 import { bytes } from './palette.js'
 import { holdBackdrops } from './backdrops.js'
 import { startWallpaper } from './wallpaper.js'
 import { startDashboard } from './dashboard.js'
-import { $ } from './ui.js'
+import { $, openMenu, openPicker } from './ui.js'
+import { SAFE, worktreeName, since } from './launch.js'
 
 const win = getCurrentWindow()
 if (window.NOOK_BENCH) import('./bench.js').then(m => m.startBench())
@@ -128,6 +129,34 @@ dashboard = startDashboard($('pane'), {
 })
 $('new-tab').onclick = newSession
 $('new-tab').onmouseenter = () => { $('new-tab').title = `New Claude session in ${here()}` }
+// The chevron by + starts Claude other ways: continuing or resuming a session saved for this folder, or in a
+// git worktree of its own, so sessions working side by side don't edit the same checkout.
+const launch = args => tabs.openClaude(here(), args)
+$('launch').onclick = () => {
+  const { left, bottom } = $('launch').getBoundingClientRect()
+  const at = { clientX: left, clientY: bottom + 4 }
+  openMenu(at, [
+    ['New session', ICON.claude, newSession],
+    ['Continue last session', ICON.play, () => launch(['--continue'])],
+    ['Resume a session…', ICON.history, () => resume(at)],
+    ['New session in a worktree…', ICON.worktree, () => worktree(at)],
+  ])
+}
+async function resume(at) {
+  const saved = await invoke('claude_sessions', { dir: here() }).catch(() => [])
+  openPicker(at, saved.length ? 'Resume a session' : 'No saved sessions in this folder', query => {
+    const q = query.toLowerCase()
+    return saved
+      .filter(s => !q || `${s.title ?? ''} ${s.prompt}`.toLowerCase().includes(q))
+      .map(s => [`${s.title ?? s.prompt} · ${since(s.modified)}`, ICON.history, () => launch(['--resume', s.id])])
+  })
+}
+function worktree(at) {
+  const name = worktreeName()
+  openPicker(at, `Worktree name (${name})`, query => SAFE.test(query || name)
+    ? [[`Start Claude in worktree ${query || name}`, ICON.worktree, () => launch(['--worktree', query || name])]]
+    : [['Letters, digits, dots, dashes and underscores only', '', () => {}]])
+}
 $('toggle-git').onclick = () => { document.body.classList.toggle('git-hidden'); git.refresh(); tabs.focus() }
 
 $('open-config').onclick = drawer.toggle
