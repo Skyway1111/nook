@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { follow, wanting, ago, modelName, summary } from './sessions.js'
+import { follow, wanting, ago, modelName, summary, answeredReport, ANSWERS } from './sessions.js'
 
 const run = (steps, view) => steps.map(([report, watched]) => (view = follow(view, report, watched)))
 
@@ -63,4 +63,14 @@ test('summary counts sessions by what they do', () => {
   assert.equal(summary(['working', 'working', 'waiting', '']), '2 working · 1 waiting on you')
   assert.equal(summary(['', '']), '2 idle')
   assert.equal(summary(['done']), '1 done')
+})
+
+test('an answered prompt reads as working until the session reports again', () => {
+  const waiting = { status: 'waiting', since: 5, activity: 'Bash · npm test' }
+  assert.deepEqual(answeredReport(waiting, 5), { status: 'working', since: 5, activity: 'Bash · npm test' })
+  assert.equal(answeredReport(waiting, undefined), waiting)
+  assert.equal(answeredReport({ ...waiting, since: 9 }, 5).status, 'waiting') // asked again since
+  assert.equal(answeredReport({ status: 'idle', since: 5 }, 5).status, 'idle')
+  assert.ok(['Enter', 'NumpadEnter', 'Escape', 'Digit2', 'Numpad1'].every(k => ANSWERS.test(k)))
+  assert.ok(!['ArrowDown', 'KeyY', 'Digit0', 'Tab'].some(k => ANSWERS.test(k)))
 })
