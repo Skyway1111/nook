@@ -540,6 +540,26 @@ export function searchParts(call, root) {
   return parts
 }
 
+const SITES = 3 // the most sites a web search's row names
+
+/** What a finished web search found, as row parts: how many results, and the sites they came from. */
+export function webParts(call) {
+  const { tool, output } = call
+  if (tool !== 'WebSearch' || call.isRunning || call.isErrored || call.isInterrupted) return null
+  if (!Array.isArray(output?.results)) return null
+  const hits = output.results.flatMap(r => (Array.isArray(r?.content) ? r.content : []))
+  if (!hits.length) return [['no results', null]]
+  const sites = [...new Set(hits.map(h => {
+    try {
+      return new URL(h.url).hostname.replace(/^www\./, '')
+    } catch {
+      return ''
+    }
+  }).filter(Boolean))]
+  const more = sites.length > SITES ? `, and ${sites.length - SITES} more` : ''
+  return [[plural(hits.length, 'result'), null], ...(sites.length ? [[`${sites.slice(0, SITES).join(', ')}${more}`, null]] : [])]
+}
+
 const SEARCH = /^(?:rg|grep|egrep|fgrep|ag|ack|find|fd|git\s+grep)\b/ // commands whose output lists what they found
 
 /** What a lone search command run through Bash found (`grep -rn x src`, `find . -name '*.rs'`), as row
@@ -712,11 +732,11 @@ export function register(on) {
       : tool === 'Write' && /\.svg$/i.test(input.file_path ?? '') && !e.props.isRunning && !e.props.isErrored ? svgSize(String(input.content ?? '')) ?? UNKNOWN : null
     return size ? withPictures($, e, await next(e), [[input.file_path, size]]) : next(e)
   })
-  // A shell command's result, drawn alone under its row.
+  // A shell command's or web search's result, drawn alone under its row.
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const { tool, tool_use_id, output, isErrored, isExpanded } = e.props
-    if (tool !== 'Bash' || isExpanded) return next(e)
-    const parts = outcome(output, isErrored, times.get(tool_use_id))
+    if ((tool !== 'Bash' && tool !== 'WebSearch') || isExpanded) return next(e)
+    const parts = tool === 'Bash' ? outcome(output, isErrored, times.get(tool_use_id)) : webParts(e.props)
     const pictures = (await made.get(tool_use_id)) ?? []
     if (!parts && !pictures.length) return next(e)
     const { Box, Text } = $.ui.resolve(e)
@@ -730,8 +750,8 @@ export function register(on) {
     const root = await $.session.root().catch(() => '')
     const rows = []
     for (const call of e.props.calls) {
-      const found = searchParts(call, root)
-      if (found) rows.push(found)
+      const found = searchParts(call, root) ?? webParts(call)
+      if (found) rows.push(call.tool === 'WebSearch' ? [[`"${cut(String(call.input?.query ?? ''), 30)}"`, null], ...found] : found)
       if (call.tool !== 'Bash' || call.isRunning || call.isInterrupted) continue
       const command = String(call.input?.command ?? '').split('\n')[0]
       const parts = (!call.isErrored && shellSearch(command, call.output, root)) || outcome(call.output, call.isErrored, times.get(call.tool_use_id))
