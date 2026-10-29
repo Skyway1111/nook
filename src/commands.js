@@ -4,10 +4,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { ICON } from './files.js'
 import { path as paths } from './paths.js'
 
-export function appCommands({ tabs, files, git, drawer, wallpaper, openQuick, quickPrompts, newSession, insertPath, home, banner, welcome }) {
+export function appCommands({ tabs, files, git, drawer, wallpaper, openQuick, quickPrompts, findInFiles, newSession, insertPath, home, banner, welcome }) {
   const active = () => tabs.active()
   const claude = () => active()?.terminal ?? null
-  const file = () => (active()?.viewer && active().type !== 'diff' ? active().path : null)
+  const file = () => (active()?.viewer?.dirty ? active().path : null) // a file tab, the only kind that saves
   const toggle = cls => () => { document.body.classList.toggle(cls); if (cls === 'git-hidden') git.refresh(); tabs.focus() }
   const copy = text => navigator.clipboard.writeText(text).catch(banner)
   return () => [
@@ -41,6 +41,7 @@ export function appCommands({ tabs, files, git, drawer, wallpaper, openQuick, qu
     { title: 'Go to line…', keys: 'Ctrl+P, then :', icon: '\uE8D2', when: file, run: () => openQuick(':') },
     { title: 'Go to symbol in file…', keys: 'Ctrl+Shift+O', icon: '\uE943', when: () => active()?.viewer?.outline, run: () => openQuick('@') },
     { title: 'Find text in files…', keys: 'Ctrl+P, then %', icon: '\uE721', run: () => openQuick('%') },
+    { title: 'Find and replace in files…', keys: 'Ctrl+Shift+H', icon: '\uE721', run: () => findInFiles(true) },
     { title: 'Save file', keys: 'Ctrl+S', icon: '\uE74E', when: file, run: () => active().viewer.save() },
     { title: 'Show file in file browser', icon: ICON.explorer, when: file, run: () => files.reveal(file()) },
     { title: 'Copy file path', icon: ICON.copy, when: file, run: () => copy(file()) },

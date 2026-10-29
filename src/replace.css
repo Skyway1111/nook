@@ -1,0 +1,47 @@
+/* Loaded with replace.js, so a search tab's rules cost nothing until one opens. */
+
+/* Search tabs: the find, replace and file boxes over the status line and the matches, grouped by file. */
+.view.replace { display: flex; flex-direction: column; overflow: hidden; font-family: var(--font-ui); }
+.replace-bar { display: grid; gap: 6px; padding: 12px 12px 8px; border-bottom: 1px solid var(--line); }
+.replace-bar .line { display: flex; gap: 6px; align-items: center; }
+.replace-bar input {
+  flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 10px; font: .93rem var(--font-term); color: var(--ink-1);
+  background: var(--raised); border: 1px solid transparent; border-radius: 6px; outline: none; user-select: text;
+}
+.replace-bar input.files { font-family: var(--font-ui); }
+.replace-bar input:focus { border-color: var(--accent); }
+.replace-bar input::placeholder { color: var(--ink-3); font-family: var(--font-ui); }
+.replace-bar .opts { display: flex; padding: 2px; border-radius: 7px; background: var(--raised); }
+.replace-bar .opt { width: 30px; height: 24px; border-radius: 6px; font: 600 .82rem var(--font-term); color: var(--ink-3); }
+.replace-bar .opt.on { background: var(--accent); color: var(--bg); }
+.replace-bar .go { flex: none; height: 28px; padding: 0 12px; border-radius: 6px; font: .9rem var(--font-ui); color: var(--bg); background: var(--accent); white-space: nowrap; }
+.replace-bar .go:disabled { color: var(--ink-3); background: var(--raised); }
+.view.replace .status { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 6px 12px; font-size: .88rem; color: var(--ink-3); }
+.view.replace .status .link { color: var(--accent); font: inherit; text-decoration: underline; }
+.view.replace .results { flex: 1; overflow: auto; padding-bottom: 12px; outline: none; }
+.view.replace .file .head {
+  display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 8px 0 12px; font-size: .93rem; color: var(--ink-1);
+  white-space: nowrap; cursor: default;
+}
+.view.replace .file .head .dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-3); font-size: .86rem; }
+.view.replace .file .head .count {
+  margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 9px; text-align: center; font-size: .78rem;
+  line-height: 18px; color: var(--ink-2); background: var(--raised);
+}
+.view.replace .file.shut .match { display: none; }
+.view.replace .match {
+  display: flex; align-items: center; gap: 10px; height: 24px; padding: 0 8px 0 34px; font: .88rem var(--font-term);
+  color: var(--ink-2); white-space: pre; cursor: pointer;
+}
+.view.replace :is(.head, .match):hover { background: var(--hover); }
+.view.replace .match .num { flex: none; min-width: 4ch; text-align: right; color: var(--ink-3); }
+.view.replace .match .text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.view.replace mark { color: var(--ink-1); background: color-mix(in oklch, var(--ansi-yellow) 32%, transparent); border-radius: 2px; }
+.view.replace mark.gone { text-decoration: line-through; background: color-mix(in oklch, var(--ansi-red) 26%, transparent); }
+.view.replace ins { text-decoration: none; color: var(--ink-1); background: color-mix(in oklch, var(--ansi-green) 28%, transparent); border-radius: 2px; }
+.view.replace .drop { flex: none; width: 20px; height: 20px; border-radius: 4px; color: var(--ink-3); font-size: .7rem; visibility: hidden; }
+.view.replace :is(.head, .match):hover .drop { visibility: visible; }
+.view.replace .drop:hover { color: var(--ink-1); background: var(--raised); }
+.view.replace .out :is(mark, ins, .text), .view.replace .file.out .head b { opacity: .45; }
+.view.replace .out mark.gone { text-decoration: none; }
+.view.replace .out ins { display: none; }

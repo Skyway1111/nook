@@ -11,7 +11,7 @@ export const ICON = {
   claude: '', pin: '', unpin: '', add: '', copy: '', open: '', explorer: '',
   cut: '', paste: '', rename: '', delete: '', folder: '', openWith: '', properties: '',
   theme: '', play: '', history: '', worktree: '', merge: '', stash: '±',
-  prompt: '', send: '', save: '', split: '', close: '',
+  prompt: '', send: '', save: '', split: '', close: '', search: '',
 }
 export const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i
 const CODE = /\.(js|mjs|cjs|ts|tsx|jsx|py|ipynb|rs|go|c|h|cpp|hpp|cs|java|kt|rb|lua|gd|sh|ps1|bat|css|scss|html|json|jsonc|toml|ya?ml|xml|sql)$/i

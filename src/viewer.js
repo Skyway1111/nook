@@ -371,6 +371,8 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     reveal,
     /** Quick open's `@`, or null before the text has loaded. */
     outline: () => (editor ? outline() : null),
+    /** The text selected in the editor, or ''. */
+    selection: () => (editor ? editor.state.sliceDoc(editor.state.selection.main.from, editor.state.selection.main.to) : ''),
     /** Replaces the text with `f(text)` as one edit, once the file has loaded. */
     edit: f => serial(() => {
       const text = editor?.state.doc.toString()

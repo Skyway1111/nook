@@ -311,6 +311,10 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     /** Every Claude tab with its session's view and newest report, in strip order. */
     sessions: () => tabs.filter(t => t.terminal).map(tab => ({ tab, view: sessions.view(tab), report: sessions.report(tab) ?? {} })),
     openView,
+    /** The paths of files with unsaved edits in a tab. */
+    unsaved: () => tabs.filter(t => t.viewer?.dirty?.()).map(t => t.path),
+    /** Has every file tab reread its file, as after files change on disk. */
+    refreshFiles: () => { for (const t of tabs) if (t.viewer?.dirty) t.viewer.refresh() },
     focus,
     cycle,
     /** The tab in front: `{ type, name, path, viewer }`, where a Claude tab has no viewer. */
