@@ -115,8 +115,10 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
   }
   // An edit in any app reaches every window within a second: to theme.css, to the theme in use, to a
   // picture or font either names, or a pick of another theme. Once the editor holds theme.css, it reads it.
+  let firstRun = false
   async function reread() {
-    const read = await invoke('read_theme')
+    const { first, ...read } = await invoke('read_theme')
+    firstRun ||= first
     apply({ ...read, css: (box ? null : read.css) ?? theme.css })
     box?.refresh()
   }
@@ -190,5 +192,8 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
     /** Installs the theme in a folder or .zip, uses it, and shows it in the drawer. */
     installTheme: path => { if (drawer.hidden) open(); return themes.install(path) },
     setVariable,
+    /** Whether this launch is nook's first, which seeded theme.css. */
+    firstRun,
+    themes,
   }
 }

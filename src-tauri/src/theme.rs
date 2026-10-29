@@ -33,13 +33,16 @@ pub struct Theme {
     pack: Option<String>,
     /// When a file beside either theme.css last changed, such as a picture or font it names.
     stamp: u64,
+    /// Whether this read seeded theme.css: nook's first run, when it shows its welcome.
+    first: bool,
 }
 
 #[tauri::command(async)]
 pub fn read_theme(app: AppHandle) -> Theme {
     let dir = config_dir(&app);
     let path = dir.join("theme.css");
-    if !path.exists() {
+    let first = !path.exists();
+    if first {
         let _ = fs::create_dir_all(&dir).and_then(|()| fs::write(&path, THEME_SEED));
         // First run: install the themes that ship beside nook.
         let themes = dir.join("themes");
@@ -52,7 +55,7 @@ pub fn read_theme(app: AppHandle) -> Theme {
     let pack_dir = name.as_ref().map(|n| dir.join("themes").join(n));
     let pack = pack_dir.as_ref().and_then(|d| read(&d.join("theme.css")));
     let stamp = newest_change(&dir).max(pack_dir.map_or(0, |d| newest_change(&d)));
-    Theme { css: read(&path), name, pack, stamp }
+    Theme { css: read(&path), name, pack, stamp, first }
 }
 
 /// The newest change to an entry of `dir`, in milliseconds since the epoch. settings.json and

@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { ICON } from './files.js'
 import { path as paths } from './paths.js'
 
-export function appCommands({ tabs, files, git, drawer, openQuick, quickPrompts, newSession, insertPath, home, banner }) {
+export function appCommands({ tabs, files, git, drawer, openQuick, quickPrompts, newSession, insertPath, home, banner, welcome }) {
   const active = () => tabs.active()
   const file = () => (active()?.viewer && active().type !== 'diff' ? active().path : null)
   const toggle = cls => () => { document.body.classList.toggle(cls); if (cls === 'git-hidden') git.refresh(); tabs.focus() }
@@ -19,6 +19,8 @@ export function appCommands({ tabs, files, git, drawer, openQuick, quickPrompts,
     { title: 'Toggle git panel', icon: ICON.diff, run: toggle('git-hidden') },
     { title: 'Open settings', icon: '\uE713', run: drawer.toggle },
     { title: 'Pick a wallpaper', icon: '\uE771', run: () => document.getElementById('toggle-wallpaper').click() },
+    { title: 'Make a theme from a picture…', icon: '\uEB9F', run: drawer.themes.fromPicture },
+    { title: 'Show the welcome', icon: '\uE790', run: welcome },
     { title: 'Go to file…', keys: 'Ctrl+P', icon: ICON.file, run: () => openQuick('') },
     { title: 'Go to line…', keys: 'Ctrl+P, then :', icon: '\uE8D2', when: file, run: () => openQuick(':') },
     { title: 'Save file', keys: 'Ctrl+S', icon: '\uE74E', when: file, run: () => active().viewer.save() },
