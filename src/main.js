@@ -124,7 +124,32 @@ if (error) banner(`Using default settings. ${error}`)
 const tabFolder = () => {
   const tab = tabs.active()
   if (!tab) return files.current() || cwd
-  return tab.type === 'claude' || tab.type === 'diff' || tab.type === 'review' ? tab.path : paths.parent(tab.path) || files.current() || cwd
+  return ['claude', 'diff', 'review', 'search'].includes(tab.type) ? tab.path : paths.parent(tab.path) || files.current() || cwd
+}
+
+// Ctrl+Shift+F (outside a Claude tab, where it finds in Claude's output) and Ctrl+Shift+H open the search tab, which
+// finds across the folder's files and replaces. One tab at a time; it loads on first use.
+let searchTab = null
+function findInFiles(replacing = false) {
+  const text = tabs.active()?.viewer?.selection?.() ?? ''
+  if (!searchTab?.viewer) {
+    const dir = tabFolder()
+    searchTab = tabs.openView('search', 'Search', dir, view => {
+      const search = import('./replace.js').then(m => m.startReplace(view, {
+        dir,
+        openFile,
+        unsaved: tabs.unsaved,
+        refresh: tabs.refreshFiles,
+      }))
+      return {
+        refresh: () => search.then(s => s.refresh()),
+        focus: () => search.then(s => s.focus()),
+        open: (text, replacing) => search.then(s => s.open(text, replacing)),
+        close: () => { searchTab = null },
+      }
+    })
+  } else tabs.show(searchTab)
+  searchTab.viewer.open(text.includes('\n') ? '' : text, replacing)
 }
 // nook's welcome: on the first run, and from the command palette after.
 function welcome() {
@@ -145,6 +170,7 @@ const openQuick = () => {
       newSession: () => tabs.openClaude(here()),
       openQuick: prefix => openQuick().then(q => q.open(prefix)),
       quickPrompts,
+      findInFiles,
       welcome,
     }),
     gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
@@ -326,6 +352,10 @@ addEventListener('keydown', e => {
   if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyE') {
     e.preventDefault()
     files.focus()
+  }
+  if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'KeyH' || (e.code === 'KeyF' && !tabs.active()?.terminal))) {
+    e.preventDefault()
+    findInFiles(e.code === 'KeyH')
   }
 })
 // The file browser's git colors come from the panel's status, which isn't read while the panel is hidden.

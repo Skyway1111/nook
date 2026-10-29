@@ -9,6 +9,7 @@ mod notify;
 #[cfg_attr(not(windows), path = "priority_unix.rs")]
 mod priority;
 mod pty;
+mod replace;
 mod search;
 #[cfg_attr(not(windows), path = "shell_unix.rs")]
 mod shell;
@@ -516,6 +517,9 @@ fn main() {
             list_dir,
             index::index_files,
             search::search_text,
+            replace::find_in_files,
+            replace::replace_in_files,
+            replace::undo_replace,
             file_stamp,
             path_kinds,
             peek_lines,
