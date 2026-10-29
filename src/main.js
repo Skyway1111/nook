@@ -246,6 +246,8 @@ dashboard = startDashboard($('pane'), {
   showChanges: path => git.changes(path),
   review: ({ tab, report }) => git.review(report.root || tab.path, report.touched ?? [], `${tab.name} · Claude's changes`),
   send: (tab, text) => tabs.prompt(tab, text),
+  queue: (tab, text) => tabs.then(tab, text),
+  unqueue: tab => tabs.unqueue(tab),
   answer: (tab, allow) => tabs.answer(tab, allow),
   fanOut,
   worktree: {
