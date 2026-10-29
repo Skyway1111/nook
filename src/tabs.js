@@ -6,7 +6,7 @@ import { startViewer } from './viewer.js'
 import { ICON, kind, same, basename } from './files.js'
 import { $, el, openMenu } from './ui.js'
 import { claudeWith } from './launch.js'
-import { watchSessions, wanting } from './sessions.js'
+import { watchSessions, wanting, ANSWERS } from './sessions.js'
 
 const win = getCurrentWindow()
 const strip = $('tabs')
@@ -115,6 +115,8 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
     const tab = add('claude', basename(cwd), cwd)
     tab.view.classList.add('claude')
     const host = tab.view.appendChild(el('div', { className: 'xterm-host' }))
+    // A key that answers Claude's question clears the tab's waiting mark at once, not when the tool ends.
+    host.addEventListener('keydown', e => ANSWERS.test(e.code) && sessions.answered(tab), true)
     show(tab) // the terminal measures its size, so it starts visible
     tab.terminal = await startTerminal(host, {
       cwd,

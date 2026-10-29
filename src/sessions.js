@@ -24,6 +24,14 @@ export function follow(view, report = {}, watched = false) {
   return { mark, turns, attention }
 }
 
+/** Keys that answer what Claude asks: Enter picks, Escape declines, and a digit picks that option. */
+export const ANSWERS = /^(Enter|NumpadEnter|Escape|Digit[1-9]|Numpad[1-9])$/
+
+/** The report as nook shows it. Claude's mod reports a session waiting until the tool it asked about has
+ * finished, so once the user answers, the wait they answered (its `since`) reads as working. */
+export const answeredReport = (report, answered) =>
+  answered != null && report.status === 'waiting' && report.since === answered ? { ...report, status: 'working' } : report
+
 /** How many sessions want the user: waiting on them, or done since they last looked. */
 export const wanting = views => views.filter(v => v.mark === 'waiting' || v.mark === 'done').length
 
@@ -69,10 +77,12 @@ export function watchSessions({ invoke, tabs, watched, onChange }) {
           return // caught mid-write; the next poll reads it whole
         }
       }
-      const view = follow(was.view, report, watched(tab))
+      const answered = report.status === 'waiting' ? was.answered : undefined // a new wait is a new question
+      const shown = answeredReport(report, answered)
+      const view = follow(was.view, shown, watched(tab))
       const changed = texts[i] !== was.text || !was.view || view.mark !== was.view.mark || view.attention
-      seen.set(tab, { view, text: texts[i] ?? was.text, report })
-      if (changed) onChange(tab, view, report)
+      seen.set(tab, { view, text: texts[i] ?? was.text, report, answered })
+      if (changed) onChange(tab, view, shown)
     })
   }
   const timer = setInterval(() => poll().catch(() => {}), 1000)
@@ -80,7 +90,14 @@ export function watchSessions({ invoke, tabs, watched, onChange }) {
     /** Looks again now, as when the user switches tabs or focuses the window. */
     poll: () => poll().catch(() => {}),
     view: tab => seen.get(tab)?.view,
-    report: tab => seen.get(tab)?.report,
+    report: tab => { const s = seen.get(tab); return s && answeredReport(s.report, s.answered) },
+    /** The user answered what `tab`'s session waits on: that wait reads as working from now on. */
+    answered(tab) {
+      const s = seen.get(tab)
+      if (s?.view?.mark !== 'waiting') return
+      s.answered = s.report.since
+      poll().catch(() => {})
+    },
     stop: () => clearInterval(timer),
   }
 }
