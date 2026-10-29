@@ -64,3 +64,75 @@ test('a session nook did not start reports nothing', async ($, on) => {
   await $.turn.start({ text: 'x', turnId: 't1' })
   expect(reports).toEqual([])
 })
+
+import { errorLine, outcome, testCounts } from './register.js'
+
+test('a test run reads as its own summary says, summed over cargo crates', () => {
+  expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
+  expect(testCounts('# tests 93\n# pass 93\n# fail 0\n')).toEqual({ passed: 93, failed: 0 })
+  expect(testCounts('ℹ pass 12\nℹ fail 2\n')).toEqual({ passed: 12, failed: 2 })
+  expect(testCounts('Tests:       2 failed, 91 passed, 93 total\n')).toEqual({ passed: 91, failed: 2 })
+  expect(testCounts('      Tests  2 failed | 91 passed (93)\n')).toEqual({ passed: 91, failed: 2 })
+  expect(testCounts('===== 1 failed, 40 passed, 1 error in 1.23s =====')).toEqual({ passed: 40, failed: 2 })
+  expect(testCounts('  91 passing (2s)\n  2 failing\n')).toEqual({ passed: 91, failed: 2 })
+  expect(testCounts('\x1b[32m# pass 5\x1b[0m\n')).toEqual({ passed: 5, failed: 0 })
+  expect(testCounts('total 12\ndrwxr-xr-x src\n')).toBeNull()
+})
+
+test('a failure names its error line, with a Rust error\'s place', () => {
+  expect(errorLine('   Compiling nook\nerror[E0308]: mismatched types\n  --> src/main.rs:42:5\n   |\n')).toBe('error[E0308]: mismatched types at src/main.rs:42:5')
+  expect(errorLine('src/app.ts(3,5): error TS2322: Type \'string\' is not assignable\n')).toBe("src/app.ts(3,5): error TS2322: Type 'string' is not assignable")
+  expect(errorLine('Traceback (most recent call last):\n  File "a.py", line 1\n    x()\nNameError: name \'x\' is not defined\n')).toBe("NameError: name 'x' is not defined")
+  expect(errorLine('fatal: not a git repository\n')).toBe('fatal: not a git repository')
+  expect(errorLine('all good\n')).toBeNull()
+})
+
+test('the outcome line: counts, an error Claude does not already show, and a slow run\'s time', () => {
+  expect(outcome({ stdout: '# pass 93\n# fail 0\n', stderr: '' }, false, 900)).toEqual([['✓ 93 passed', 'success']])
+  expect(outcome({ stdout: 'ℹ pass 91\nℹ fail 2\n', stderr: '' }, true, 14200)).toEqual([['✗ 2 failed, 91 passed', 'error'], ['took 14s', null]])
+  const long = ['Exit code 101', ...Array.from({ length: 30 }, (_, i) => `   Compiling crate${i}`), 'error[E0425]: cannot find value `x`', '  --> src/lib.rs:3:5'].join('\n')
+  expect(outcome(long, true, 75000)).toEqual([['↳ error[E0425]: cannot find value `x` at src/lib.rs:3:5', 'error'], ['took 1m 15s', null]])
+  expect(outcome('Exit code 128\nfatal: not a git repository', true, 100)).toBeNull() // Claude shows it already
+  expect(outcome({ stdout: 'ok', stderr: '' }, false, 3500)).toEqual([['took 3.5s', null]])
+  expect(outcome({ stdout: 'ok', stderr: '' }, false, 200)).toBeNull()
+  expect(outcome({ stdout: 'ok', stderr: '' }, false, undefined)).toBeNull()
+})
+
+test('a shell command\'s result gets the line under it, on every surface, and not in the full transcript', async ($, on) => {
+  let now = 0
+  on('clock.now', () => ({ value: (now += 6000) }))
+  on('tool.call', () => ({ result: { stdout: '# pass 93\n# fail 0\n', stderr: '' } }))
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'engine' }))
+  await $.tool.call({ tool: 'Bash', command: 'npm test', tool_use_id: 'b1' })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    for (const isExpanded of [false, true]) {
+      const ui = await $.ui.mount({
+        plugin: 'nook', surface, component: 'ToolResult', requestId: 'b1',
+        props: { tool_use_id: 'b1', tool: 'Bash', output: { stdout: '# pass 93\n# fail 0\n', stderr: '' }, isErrored: false, isExpanded },
+      })
+      expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
+      const line = await ui.find({ type: 'Text', text: /passed/ })
+      if (isExpanded) expect(line).toBeFalsy()
+      else expect(line?.text).toContain('✓ 93 passed · took 6.0s')
+      await ui.unmount()
+    }
+  }
+})
+
+test('a folded run of commands lists each one that has something to say, and unfolded lists none', async ($, on) => {
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'Ran 3 shell commands' }))
+  const calls = [
+    { tool_use_id: 'g1', tool: 'Bash', input: { command: 'npm test' }, isRunning: false, isErrored: true, isInterrupted: false, output: 'Exit code 1\nℹ pass 10\nℹ fail 2' },
+    { tool_use_id: 'g2', tool: 'Bash', input: { command: 'ls' }, isRunning: false, isErrored: false, isInterrupted: false, output: { stdout: 'a b', stderr: '' } },
+    { tool_use_id: 'g3', tool: 'Bash', input: { command: 'cargo test' }, isRunning: true, isErrored: false, isInterrupted: false },
+  ]
+  for (const isExpanded of [false, true]) {
+    const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'ToolGroup', requestId: 'grp', props: { calls, isActive: false, isExpanded } })
+    const line = await ui.find({ type: 'Text', text: /failed/ })
+    if (isExpanded) expect(line).toBeFalsy()
+    else expect(line?.text).toBe('npm test · ✗ 2 failed, 10 passed')
+    expect(await ui.find({ type: 'Text', text: /^ls/ })).toBeFalsy()
+    expect(await ui.find({ type: 'Text', text: /cargo/ })).toBeFalsy()
+    await ui.unmount()
+  }
+})

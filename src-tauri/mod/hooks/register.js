@@ -1,6 +1,6 @@
 // Tells nook's composer what to show beside Claude's prompt, runs the two commands its menus send, and
-// draws pictures in the transcript. Every hook passes its event on unchanged, and the two render hooks add
-// pictures under Claude's own drawing. The mod writes the session's model, effort, effort levels, context
+// draws pictures in the transcript. Every hook passes its event on unchanged, and the render hooks add
+// pictures under Claude's own drawing, and under a shell command's result the line that says how it went. The mod writes the session's model, effort, effort levels, context
 // fill, pasted images' folder, and what the session is doing as JSON to NOOK_STATE, and reads requests from
 // the .cmd file beside it: { command, args, at }.
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
@@ -13,6 +13,11 @@ const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) // the too
 const ASKS = new Set(['AskUserQuestion', 'ExitPlanMode']) // the tools that wait on the person
 const TOUCHED = 200 // the most files a report lists
 const sizes = new Map() // a pasted image's path -> its size, as a promise
+const TAIL = 64 * 1024 // the end of a command's output that its outcome is read from
+const SLOW = 3000 // ms past which a command's outcome line says how long it took
+const TIMES = 500 // the most commands whose run time is kept
+const times = new Map() // a Bash call's tool_use_id -> ms it ran
+const GROUP_ROWS = 6 // the most outcome rows under a folded run of calls
 let state = { efforts: LEVELS }
 let wrote = ''
 let handled = '' // the last request run, so each runs once
@@ -121,6 +126,81 @@ async function pasted($, text) {
   return pictures
 }
 
+/** The passed and failed counts a test runner's own summary gives, summed over every summary of the first
+ * runner found (cargo prints one per crate), or null when the output holds none. */
+export function testCounts(text) {
+  const lines = text.slice(-TAIL).split('\n')
+  const count = (part, word) => Number(new RegExp(`(\\d+) ${word}`).exec(part)?.[1] ?? 0)
+  const runners = [
+    // cargo: test result: ok. 26 passed; 0 failed; 0 ignored
+    [/^test result: \w+\. (.*)/, m => [count(m[1], 'passed'), count(m[1], 'failed')]],
+    // node --test, TAP and spec: # pass 93, ℹ fail 0
+    [/^(?:#|ℹ) (pass|fail) (\d+)$/, m => (m[1] === 'pass' ? [Number(m[2]), 0] : [0, Number(m[2])])],
+    // jest: Tests:       2 failed, 91 passed, 93 total
+    [/^Tests:\s+(.*\d+ total)/, m => [count(m[1], 'passed'), count(m[1], 'failed')]],
+    // vitest: Tests  2 failed | 91 passed (93)
+    [/^\s*Tests\s+(.*)\(\d+\)/, m => [count(m[1], 'passed'), count(m[1], 'failed')]],
+    // pytest: ===== 2 failed, 91 passed in 1.23s =====
+    [/^=+ (.*(?:passed|failed).*) in [\d.]+s/, m => [count(m[1], 'passed'), count(m[1], 'failed') + count(m[1], 'errors?')]],
+    // mocha: 91 passing, 2 failing
+    [/^\s*(\d+) (passing|failing)\b/, m => (m[2] === 'passing' ? [Number(m[1]), 0] : [0, Number(m[1])])],
+  ]
+  for (const [pattern, read] of runners) {
+    let found = null
+    for (const line of lines) {
+      const m = pattern.exec(line.replace(/\x1b\[[\d;]*m/g, ''))
+      if (!m) continue
+      const [passed, failed] = read(m)
+      found = { passed: (found?.passed ?? 0) + passed, failed: (found?.failed ?? 0) + failed }
+    }
+    if (found) return found
+  }
+  return null
+}
+
+const ERROR = /^(?:error(?:\[E\d+\])?:|.*\berror TS\d+:|\w*Error:|\w+Exception:|npm ERR!|fatal:|FAIL\b|thread '.*' panicked|panic:)/
+
+/** The line of a failed command's output that says what went wrong, with a Rust error's `-->` place, or
+ * null when no line looks like one. A Python traceback names its error last; everything else first. */
+export function errorLine(text) {
+  const lines = text.slice(-TAIL).split('\n').map(l => l.replace(/\x1b\[[\d;]*m/g, '').trimEnd())
+  const traceback = lines.findIndex(l => l.startsWith('Traceback '))
+  const at = traceback >= 0 ? lines.findLastIndex(l => /^\w+(Error|Exception)\b/.test(l)) : lines.findIndex(l => ERROR.test(l.trimStart()))
+  if (at < 0) return null
+  const place = lines.slice(at + 1, at + 3).map(l => /^\s*--> (\S+)/.exec(l)?.[1]).find(Boolean)
+  return lines[at].trim() + (place ? ` at ${place}` : '')
+}
+
+/** One outcome row under Claude's own, its parts dim unless they carry a color. */
+function outcomeRow(Box, Text, parts) {
+  const runs = parts.flatMap(([text, color], i) => [
+    ...(i ? [Text({ dimColor: true, children: ' · ' })] : []),
+    Text(color ? { color, children: text } : { dimColor: true, children: text }),
+  ])
+  return Box({ paddingLeft: INDENT, children: [Text({ wrap: 'truncate-end', children: runs })] })
+}
+
+/** How long a command ran, as `14s` or `1m 12s`. */
+const took = ms => (ms < 60000 ? `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`)
+
+/** The line under a finished shell command that says how it went: a test run's counts, a failure's error,
+ * and the time a slow one took. Each is [text, theme color]; null when there is nothing to add. */
+export function outcome(output, isErrored, ms) {
+  const text = typeof output === 'string' ? output : [output?.stdout, output?.stderr].filter(Boolean).join('\n')
+  const parts = []
+  const tests = text ? testCounts(text) : null
+  if (tests?.failed) parts.push([`✗ ${tests.failed} failed, ${tests.passed} passed`, 'error'])
+  else if (tests) parts.push([`✓ ${tests.passed} passed`, 'success'])
+  else if (isErrored && text) {
+    const line = errorLine(text)
+    // Claude shows the first lines of a failure itself.
+    const shown = text.split('\n').slice(0, 4).map(l => l.trim())
+    if (line && !shown.includes(line)) parts.push([`↳ ${line.slice(0, 200)}`, 'error'])
+  }
+  if (ms >= SLOW) parts.push([`took ${took(ms)}`, null])
+  return parts.length ? parts : null
+}
+
 // What the session is doing: `status` is working, waiting (on the person), or idle, since `since`;
 // `activity` the tool running, `prompt` the main turn's first line, `agents` the subagents running,
 // `turns` the main turns finished, and `touched` the files Claude wrote, newest last.
@@ -188,6 +268,15 @@ export function register(on) {
       await setStatus($, file, state.status === 'idle' ? 'idle' : 'working', { touched }).catch(() => {})
     }
   })
+  // How long each shell command ran, for the line under its result.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (!e.tool_use_id) return next(e)
+    const start = await $.clock.now()
+    const result = await next(e)
+    times.set(e.tool_use_id, (await $.clock.now()) - start)
+    if (times.size > TIMES) times.delete(times.keys().next().value)
+    return result
+  })
   // A permission prompt: the session waits on the person until the call runs or the turn ends.
   on('classic.PermissionRequest', async ($, e, next) => {
     const result = await next(e)
@@ -213,6 +302,31 @@ export function register(on) {
     const { tool, input, output } = e.props
     const size = tool === 'Read' ? readSize(input.file_path, output) : null
     return size ? withPictures($, e, await next(e), [[input.file_path, size]]) : next(e)
+  })
+  // A shell command's result, drawn alone under its row.
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+    const { tool, tool_use_id, output, isErrored, isExpanded } = e.props
+    const parts = tool === 'Bash' && !isExpanded ? outcome(output, isErrored, times.get(tool_use_id)) : null
+    if (!parts) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    return Box({ flexDirection: 'column', children: [await next(e), outcomeRow(Box, Text, parts)] })
+  })
+  // A run of calls Claude folds into one line, such as `Ran 2 shell commands`: under it, each finished
+  // command that has something to say, by its own words.
+  on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
+    if (e.props.isExpanded) return next(e)
+    const rows = []
+    for (const call of e.props.calls) {
+      if (call.tool !== 'Bash' || call.isRunning || call.isInterrupted) continue
+      const parts = outcome(call.output, call.isErrored, times.get(call.tool_use_id))
+      const command = String(call.input?.command ?? '').split('\n')[0]
+      if (parts) rows.push([[command.length > 40 ? `${command.slice(0, 39)}…` : command, null], ...parts])
+    }
+    if (!rows.length) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const shown = rows.slice(0, GROUP_ROWS).map(parts => outcomeRow(Box, Text, parts))
+    if (rows.length > GROUP_ROWS) shown.push(outcomeRow(Box, Text, [[`and ${rows.length - GROUP_ROWS} more`, null]]))
+    return Box({ flexDirection: 'column', children: [await next(e), ...shown] })
   })
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     const pictures = e.props.text.includes('[Image #') ? await pasted($, e.props.text) : []
