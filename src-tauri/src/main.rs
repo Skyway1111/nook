@@ -19,10 +19,10 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Mutex, OnceLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tauri::{
-    webview::{PermissionKind, PermissionResponse},
+    webview::{PageLoadEvent, PermissionKind, PermissionResponse},
     AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 
@@ -381,6 +381,16 @@ fn main() {
                 .inner_size(1280.0, 820.0)
                 .min_inner_size(520.0, 320.0)
                 .decorations(false)
+                // The window shows once its page has loaded. Shown sooner, it asks the webview for a frame
+                // before the web process can draw one: WebKitGTK then holds both processes for its 500 ms
+                // timeout, which every open waited out at first, and two in five still did when the window
+                // showed as the page started to load.
+                .visible(false)
+                .on_page_load(|window, payload| {
+                    if matches!(payload.event(), PageLoadEvent::Finished) {
+                        let _ = window.show();
+                    }
+                })
                 .background_color(tauri::window::Color(20, 18, 28, 255))
                 .additional_browser_args(&format!("{WRY_ARGS}{gpu}"))
                 .initialization_script(format!(
@@ -394,6 +404,14 @@ fn main() {
                     _ => PermissionResponse::Default,
                 })
                 .build()?;
+            // Should the page never start, the window shows anyway.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(3));
+                if let Some(window) = handle.get_webview_window("main").filter(|w| matches!(w.is_visible(), Ok(false))) {
+                    let _ = window.show();
+                }
+            });
             if bench {
                 self::bench("mark:window".into(), None);
             }
