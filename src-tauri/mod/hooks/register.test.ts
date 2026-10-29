@@ -65,7 +65,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { errorLine, outcome, readPaths, searchParts, shellSearch, summary, testCounts } from './register.js'
+import { errorLine, failingTests, outcome, readPaths, searchParts, shellSearch, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -236,4 +236,16 @@ test('a picture a command wrote shows under it: one it names, or a new one in th
   expect(images.map(i => i.props.source.file)).toEqual(['/work/out/chart.svg', '/work/plot.png'])
   expect(images.map(i => [i.props.columns, i.props.rows])).toEqual([[40, 10], [53, 20]])
   await ui.unmount()
+})
+
+test('a failed test run names the tests that failed', () => {
+  expect(failingTests('running 3 tests\ntest a::ok ... ok\ntest a::adds ... FAILED\ntest b::splits ... FAILED\n\nfailures:\n')).toEqual(['a::adds', 'b::splits'])
+  expect(failingTests('ok 1 - adds 0\nnot ok 11 - rounds down\n  ---\nnot ok 12 - splits # TODO\n# fail 2\n')).toEqual(['rounds down', 'splits'])
+  expect(failingTests('\x1b[31m✖ rounds down (1.2ms)\x1b[39m\n✔ adds 1 (0.1ms)\n✖ failing tests:\n\n✖ rounds down (1.2ms)\n')).toEqual(['rounds down'])
+  expect(failingTests('  ● math › rounds down\n\n    expect(received)\n')).toEqual(['math › rounds down'])
+  expect(failingTests(' FAIL  src/a.test.ts > math > rounds\n   × rounds 3ms\n')).toEqual(['rounds'])
+  expect(failingTests('FAILED tests/test_math.py::test_rounds - assert 3 == 2\nFAILED tests/test_math.py::test_splits\n')).toEqual(['test_rounds', 'test_splits'])
+  expect(failingTests('all good\n')).toEqual([])
+  const tap = Array.from({ length: 5 }, (_, i) => `not ok ${i + 1} - case ${i}`).join('\n') + '\n# pass 7\n# fail 5\n'
+  expect(outcome(tap, true, 0)).toEqual([['✗ 5 failed, 7 passed', 'error'], ['case 0, case 1, case 2, and 2 more', null]])
 })
