@@ -5,9 +5,11 @@
 // The header names the account's rate limits. It draws only while open, and then redraws when a report changes
 // and once a second for the clocks, so a closed dashboard costs nothing. Its prompt box sends one prompt to
 // every ticked session at once, which starts ticked when it sits between turns, or starts it in several new
-// sessions, each in a git worktree of its own.
+// sessions, each in a git worktree of its own. A card for a session in a worktree says how much it changed
+// there, and between turns offers to keep it: its changes staged in the main checkout.
 import { el } from './ui.js'
 import { ago, modelName, summary, cannotSend, pickedAtFirst, asking, planLine, fill, FULL, money, limits } from './sessions.js'
+import { isWorktree, changeLine } from './keep.js'
 
 const FILES = 4 // the files a card lists
 const STEPS = 12 // the most steps a plan draws
@@ -15,14 +17,29 @@ const WORDS = { working: 'Working', waiting: 'Waiting on you', done: 'Done', '':
 
 /** `list()` gives `[{ tab, view, report }]` for every Claude tab, `open(tab)` shows one, `newSession()`
  * starts another, `send(tab, text)` sends one a prompt, and `review(session)` opens all it changed. `button` toggles the dashboard; `onClose` hears
- * it close. */
-export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, answer, fanOut, onClose }) {
+ * it close. `worktree.stat(root)` says what a worktree changed, and `worktree.keep(tab, report)` stages that in its
+ * main checkout. */
+export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, answer, fanOut, worktree, onClose }) {
   let box = null
   let timer = 0
   let at = 0 // the card the arrow keys are on
   let ticks = new WeakMap() // the sessions you ticked or unticked; the rest go by pickedAtFirst
   let said = '', saidAt = 0 // what the dashboard last did, such as "Sent to 2 sessions", which the header says for a moment
   const picked = ({ tab, view, report }) => !cannotSend(view, report) && (ticks.get(tab) ?? pickedAtFirst(view, report))
+  // What each worktree changed, by its root and the turn it's on, so a card asks git once per turn, not per draw.
+  const stats = new Map()
+  function changes(report) {
+    const key = `${report.turns}|${report.since}`
+    const known = stats.get(report.root)
+    if (known?.key === key) return known.stat
+    stats.set(report.root, { key, stat: null })
+    worktree.stat(report.root).then(stat => {
+      if (stats.get(report.root)?.key !== key) return
+      stats.set(report.root, { key, stat })
+      render()
+    }, () => {})
+    return null
+  }
   const outside = e => { if (!box?.contains(e.target) && !button?.contains(e.target)) close() }
 
   function card({ tab, view, report }, i) {
@@ -76,16 +93,19 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
       meter.title = `${(report.context.tokens ?? 0).toLocaleString()} of ${report.context.window.toLocaleString()} tokens of context`
     }
     const files = report.touched?.length ?? 0
+    // A worktree's own count, against where it left the main checkout, says more than the files Claude wrote.
+    const tree = !busy && worktree && isWorktree(report.root) ? changes(report) : null
     const facts = [
       modelName(report.model),
       full != null && `${full}% context`,
       money(report.cost),
       report.agents && `${report.agents} subagent${report.agents > 1 ? 's' : ''}`,
-      files && `${files} file${files > 1 ? 's' : ''} changed`,
+      tree ? changeLine(tree) : files && `${files} file${files > 1 ? 's' : ''} changed`,
       report.turns && `${report.turns} turn${report.turns > 1 ? 's' : ''}`,
       !busy && report.took >= 1000 && `took ${ago(report.took)}`,
     ].filter(Boolean)
     c.querySelector('footer').textContent = facts.join(' · ')
+    if (tree?.files) c.querySelector('.files').append(el('span', { className: 'file keep', textContent: 'Keep', title: `Bring this worktree's changes into ${tree.main}, staged, to look over and commit there` }))
     // A session filling up can be compacted from here, where Enter would send the command.
     if (full >= FULL && !why && !busy) c.querySelector('.files').append(el('span', { className: 'file act', textContent: 'Compact', title: 'Run /compact: Claude sums up the conversation so far, to free its context' }))
     // Every file Claude wrote in one diff, then the newest few, each opening its own.
@@ -100,6 +120,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
       if (e.target.closest('.pick')) return tick(i)
       if (e.target.closest('.asks .file')) return decide(tab, e.target.closest('.act') != null)
       if (e.target.closest('.act')) return compact(tab)
+      if (e.target.closest('.keep')) return keepIt(tab, report)
       const file = e.target.closest('.file')
       close()
       if (file?.classList.contains('review')) review({ tab, view, report })
@@ -156,6 +177,14 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
   function compact(tab) {
     send(tab, '/compact')
     say(`Compacting ${tab.name}`)
+  }
+
+  function keepIt(tab, report) {
+    say(`Keeping ${tab.name}`)
+    worktree.keep(tab, report).then(({ main }) => {
+      stats.clear()
+      say(`Kept ${tab.name}: staged in ${main.split(/[\\/]/).pop()}`)
+    }, () => say(`Didn't keep ${tab.name}`))
   }
 
   /** How many new sessions the fan-out starts, 1 to 8. */
