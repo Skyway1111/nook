@@ -377,6 +377,9 @@ export function startComposer(term, host, id) {
       : (state.efforts ?? []).map(l => [l, l === state.effort ? CHECK : '', pick('effort', l)]))
   })
 
+  // A Run pressed under a shell block in Claude's reply: typed as Claude's ! command, without Enter. One the
+  // tab reported before this poll first read it is old, and isn't typed again.
+  let ran
   const poll = setInterval(async () => {
     if (!host.offsetWidth) return
     const text = await invoke('pty_state', { id })
@@ -387,6 +390,13 @@ export function startComposer(term, host, id) {
     } catch {
       return // caught mid-write; the next poll reads it whole
     }
+    const run = state.run
+    if (report && run?.at && run.at !== ran && typeof run.command === 'string') {
+      term.input('!')
+      term.paste(run.command)
+      term.focus()
+    }
+    ran = run?.at
     report = text
     render()
   }, 500)
