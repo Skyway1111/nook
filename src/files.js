@@ -7,7 +7,7 @@ import { gitMarks } from './gitmarks.js'
 
 const { SEP, TOP, isRoot, join, parent, normalize, within: under } = paths
 export const ICON = {
-  dir: '', file: '', image: '', code: '', doc: '', drive: '', diff: '±',
+  dir: '', file: '', image: '', code: '', doc: '', drive: '', diff: '±', review: '±',
   claude: '', pin: '', unpin: '', add: '', copy: '', open: '', explorer: '',
   cut: '', paste: '', rename: '', delete: '', folder: '', openWith: '', properties: '',
   theme: '', play: '', history: '', worktree: '', merge: '', stash: '±',

@@ -60,7 +60,7 @@ body.blurred .brand, body.blurred #tabs, body.blurred .caption { opacity: .5; }
 .tab > .icon { flex: none; width: 14px; text-align: center; }
 /* A file kind's icon, in the tab strip and the file browser. `i` leaves out the tab's close button. */
 .tab.claude > i.icon { color: var(--icon-claude); }
-.tab.diff > i.icon { color: var(--icon-diff); }
+.tab:is(.diff, .review) > i.icon { color: var(--icon-diff); }
 :is(.tab, .row).image i.icon { color: var(--icon-image); }
 :is(.tab, .row).code i.icon { color: var(--icon-code); }
 :is(.tab, .row).doc i.icon { color: var(--icon-doc); }
@@ -167,6 +167,7 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .sessions .session .files:empty { display: none; }
 .sessions .session .file { padding: 1px 7px; border-radius: 5px; font-size: .78rem; background: var(--hover); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
 .sessions .session .file:hover { background: var(--line); color: var(--ink-1); }
+.sessions .session .file.review { flex: none; color: var(--accent); }
 .sessions .mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .sessions [data-mark=working] .mark { background: var(--session-working); }
 .sessions [data-mark=waiting] .mark { background: var(--session-waiting); }

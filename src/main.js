@@ -118,7 +118,7 @@ if (error) banner(`Using default settings. ${error}`)
 const tabFolder = () => {
   const tab = tabs.active()
   if (!tab) return files.current() || cwd
-  return tab.type === 'claude' || tab.type === 'diff' ? tab.path : paths.parent(tab.path) || files.current() || cwd
+  return tab.type === 'claude' || tab.type === 'diff' || tab.type === 'review' ? tab.path : paths.parent(tab.path) || files.current() || cwd
 }
 // nook's welcome: on the first run, and from the command palette after.
 function welcome() {
@@ -195,6 +195,7 @@ dashboard = startDashboard($('pane'), {
   open: tab => tabs.show(tab),
   newSession,
   showChanges: path => git.changes(path),
+  review: ({ tab, report }) => git.review(report.root || tab.path, report.touched ?? [], `${tab.name} · Claude's changes`),
   send: (tab, text) => tabs.prompt(tab, text),
   onClose: () => tabs.focus(),
 })
