@@ -1,8 +1,9 @@
 // The file browser: anywhere on disk, not scoped to the session's folder.
 import { invoke } from '@tauri-apps/api/core'
 import { $, el, openMenu, showPreview, hidePreview, dragPath } from './ui.js'
+import { path as paths } from './paths.js'
 
-const SEP = '\\'
+const { SEP, TOP, isRoot, join, parent, normalize, within: under } = paths
 export const ICON = {
   dir: '', file: '', image: '', code: '', doc: '', drive: '', diff: '±',
   claude: '', pin: '', unpin: '', add: '', copy: '', open: '', explorer: '',
@@ -19,22 +20,7 @@ const compare = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base
 const listing = path => invoke('list_dir', { path }).then(es => es.sort((a, b) => b.dir - a.dir || compare(a.name, b.name)))
 
 export const quote = p => (/\s/.test(p) ? `"${p}"` : p)
-export const same = (a, b) => a.toLowerCase() === b.toLowerCase()
-const isRoot = p => /^[a-z]:\\$/i.test(p)
-const under = (p, dir) => same(p, dir) || p.toLowerCase().startsWith(dir.toLowerCase() + SEP)
-const join = (dir, name) => (dir === '' ? name : dir.endsWith(SEP) ? dir + name : dir + SEP + name)
-export const basename = p => (p === '' ? 'This PC' : isRoot(p) ? p.slice(0, 2) : p.slice(p.lastIndexOf(SEP) + 1))
-/** Parent folder; drive roots lead to '' (the drive list), which has no parent. */
-function parent(p) {
-  if (p === '') return null
-  if (isRoot(p)) return ''
-  const i = p.lastIndexOf(SEP)
-  return i === 2 ? p.slice(0, 3) : p.slice(0, i)
-}
-function normalize(p) {
-  p = p.trim().replace(/^"(.*)"$/, '$1').replaceAll('/', SEP).replace(/\\+$/, '').replace(/^[a-z]:/, d => d.toUpperCase())
-  return /^[A-Z]:$/.test(p) ? p + SEP : p
-}
+export const { same, basename } = paths
 
 function row(path, entryKind, label) {
   const li = el('li', { className: `row ${entryKind}`, innerHTML: `<i class="icon">${ICON[entryKind]}</i><span></span>` })
@@ -68,7 +54,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     try {
       entries = await listing(path)
     } catch (e) {
-      say(`Can't open ${path || 'This PC'}: ${e}`)
+      say(`Can't open ${path || TOP}: ${e}`)
       return false
     }
     if (from === 'nav' && cur !== null && path !== cur) {
@@ -108,15 +94,15 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   function renderCrumbs() {
     const parts = []
     let base
-    if (cur === '') parts.push(['This PC', ''])
+    if (cur === '') parts.push([TOP, ''])
     else {
       const underHome = home && under(cur, home)
-      base = underHome ? home : cur.slice(0, 3)
-      parts.push([underHome ? '~' : cur.slice(0, 2), base])
+      base = underHome ? home : paths.root(cur)
+      parts.push([underHome ? '~' : basename(base), base])
       for (const seg of cur.slice(base.length).split(SEP).filter(Boolean)) parts.push([seg, (base = join(base, seg))])
     }
     crumbs.replaceChildren(...parts.flatMap(([label, path], i) => {
-      const b = el('button', { textContent: label, title: i < parts.length - 1 ? path || 'This PC' : 'Type a path' })
+      const b = el('button', { textContent: label, title: i < parts.length - 1 ? path || TOP : 'Type a path' })
       // The current folder's crumb falls through to the path bar's click: edit the path.
       if (i < parts.length - 1) b.onclick = e => { e.stopPropagation(); go(path) }
       return i ? [el('i', { className: 'icon sep', textContent: '' }), b] : [b]
@@ -168,11 +154,11 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     input.onblur = () => finish(true)
     // A handler property that returns false cancels the key, so this one returns nothing.
     input.onkeydown = e => { if (e.key === 'Enter' || e.key === 'Escape') finish(e.key === 'Enter') }
-    // Explorer refuses these as they're typed.
+    // The file system refuses these, so they're refused as they're typed.
     input.addEventListener('beforeinput', e => {
-      if (/[\\/:*?"<>|]/.test(e.data ?? '')) {
+      if (paths.badName.test(e.data ?? '')) {
         e.preventDefault()
-        say('A name can\'t contain \\ / : * ? " < > |')
+        say(paths.badNameMessage)
       }
     })
   }
@@ -205,7 +191,9 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   function menuFor(path, isDir, row, pasteable, theme) {
     const copy = ['Copy path', ICON.copy, () => navigator.clipboard.writeText(path)]
     const add = ['Add to prompt', ICON.add, () => insertPath(path)]
-    const properties = ['Properties', ICON.properties, () => invoke('open_path', { path, verb: 'properties' })]
+    // Linux has no shared Properties sheet or Open with dialog to show.
+    const properties = paths.windows ? [['Properties', ICON.properties, () => invoke('open_path', { path, verb: 'properties' })]] : []
+    const explorer = paths.fileManager
     const edits = [
       ...(row ? [[
         ['Cut', ICON.cut, () => invoke('copy_files', { paths: [path], cut: true }).catch(say)],
@@ -219,8 +207,8 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
       return [
         ...edits,
         ['Open with default app', ICON.open, () => invoke('open_path', { path })],
-        ['Open with…', ICON.openWith, () => invoke('open_path', { path, verb: 'openas' })], add, null,
-        copy, ['Show in Explorer', ICON.explorer, () => invoke('reveal', { path })], properties,
+        ...(paths.windows ? [['Open with…', ICON.openWith, () => invoke('open_path', { path, verb: 'openas' })]] : []), add, null,
+        copy, [`Show in ${explorer}`, ICON.explorer, () => invoke('reveal', { path })], ...properties,
       ]
     }
     const isPinned = pins.some(p => same(p, path))
@@ -229,7 +217,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
       ['New Claude session here', ICON.claude, () => newSession(path)],
       [isPinned ? 'Unpin' : 'Pin to sidebar', isPinned ? ICON.unpin : ICON.pin, () => togglePin(path)],
       ...(pasteable ? [['Paste', ICON.paste, () => paste(path)]] : []), null,
-      add, copy, ['Open in Explorer', ICON.explorer, () => invoke('open_path', { path })], properties,
+      add, copy, [`Open in ${explorer}`, ICON.explorer, () => invoke('open_path', { path })], ...properties,
     ]
   }
 

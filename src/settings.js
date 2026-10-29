@@ -6,6 +6,7 @@ import defaults from './theme.css?raw'
 import { startViewer } from './viewer.js'
 import { $, el, openPicker } from './ui.js'
 import { startThemes } from './themes.js'
+import { path as paths } from './paths.js'
 
 const drawer = $('settings')
 const pack = $('pack') // the installed theme in use, just before...
@@ -31,7 +32,7 @@ function setVar(css, name, value) {
  * theme.css, so a theme's pictures and fonts travel with it. `stamp` changes the URL when one of them
  * changes, so the webview loads it again. */
 const files = (css, dir, stamp) => css.replace(/url\(\s*(["']?)(?!(?:https?|data|blob):|#)([^"')]+)\1\s*\)/gi,
-  (_, q, path) => `url("${convertFileSrc(/^[a-z]:[\\/]/i.test(path) ? path : `${dir}\\${path}`)}?v=${stamp}")`)
+  (_, q, path) => `url("${convertFileSrc(paths.isAbsolute(path) ? path : paths.join(dir, path))}?v=${stamp}")`)
 
 const family = stack => stack.split(',')[0].trim().replace(/^["']|["']$/g, '')
 const stack = (name, mono) => `"${name.replaceAll('"', '')}", ${mono ? 'monospace' : 'system-ui, sans-serif'}`
@@ -39,7 +40,7 @@ const stack = (name, mono) => `"${name.replaceAll('"', '')}", ${mono ? 'monospac
 // Installed font families, listed once the first picker asks: queryLocalFonts needs that click.
 let fonts
 async function installed() {
-  const faces = await queryLocalFonts().catch(() => [])
+  const faces = (await globalThis.queryLocalFonts?.().catch(() => [])) ?? [] // WebKitGTK has none
   const names = [...new Set(['Libron', ...faces.map(f => f.family).sort((a, b) => a.localeCompare(b))])]
   const ctx = el('canvas').getContext('2d')
   const width = text => ctx.measureText(text).width
@@ -82,7 +83,7 @@ const KNOBS = [
 
 /** Opens the drawer's controls over `configDir`'s theme.css and `settings`, which it keeps current. */
 export async function startSettings({ configDir, settings, home, onRestyle, onClose, showFolder }) {
-  const path = `${configDir}\\theme.css`
+  const path = paths.join(configDir, 'theme.css')
   let theme = {} // `read_theme`'s: the user's CSS, the installed theme in use, and their stamp
   let shown = '' // ...as it was last applied
   let box // theme.css in an editor, once the drawer first opens. From then on it applies every change.
@@ -106,7 +107,7 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
     const key = JSON.stringify(theme)
     if (key === shown) return
     shown = key
-    pack.textContent = theme.pack == null ? '' : files(theme.pack, `${configDir}\\themes\\${theme.name}`, theme.stamp)
+    pack.textContent = theme.pack == null ? '' : files(theme.pack, paths.join(configDir, 'themes', theme.name), theme.stamp)
     style.textContent = files(theme.css ?? '', configDir, theme.stamp)
     onRestyle()
     for (const show of knobs) show()
@@ -159,6 +160,15 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
       : [row('Not signed in', 'Sign in', () => github(['login']))]))
   }
 
+  /** Sets variable `name` to `value` in the user's theme.css: through the editor once it holds the file, and
+   * otherwise straight to disk, only over the text just read, so an edit made meanwhile stands. */
+  async function setVariable(name, value) {
+    if (box) return box.edit(text => setVar(text, name, value))
+    const text = await invoke('read_text', { path }).catch(() => '') // none yet
+    if (!(await invoke('write_text', { path, text: setVar(text, name, value), base: text }))) throw new Error('theme.css changed meanwhile. Try again.')
+    await reread()
+  }
+
   function open() {
     drawer.hidden = false
     box ??= startViewer($('settings-css'), path, { openFile: () => {}, onDirty: () => {}, onText: css => apply({ ...theme, css }), autosave: true })
@@ -179,5 +189,6 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
     toggle: () => (drawer.hidden ? open() : close()),
     /** Installs the theme in a folder or .zip, uses it, and shows it in the drawer. */
     installTheme: path => { if (drawer.hidden) open(); return themes.install(path) },
+    setVariable,
   }
 }

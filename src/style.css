@@ -26,7 +26,9 @@ button {
 }
 button:disabled { opacity: .3; }
 
-.icon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-size: 12px; font-style: normal; }
+/* Windows draws icons with Segoe; elsewhere nook-icons.woff2 has the same characters (scripts/icons.py). */
+@font-face { font-family: "nook icons"; src: url(./fonts/nook-icons.woff2); }
+.icon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "nook icons"; font-size: 12px; font-style: normal; }
 
 /* Titlebar */
 #titlebar { display: flex; align-items: center; gap: 2px; min-width: 0; }
@@ -101,6 +103,22 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .xterm-host .scrollbar.vertical { anchor-name: --gutter; }
 /* xterm draws its own themed scrollbar; hide the native one underneath. */
 .xterm .xterm-viewport { background: transparent !important; scrollbar-width: none; }
+
+/* The living wallpaper: a canvas under the open tab, drawn by wallpaper.js. The tabs' views come after it. */
+.wallpaper { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: var(--wallpaper-opacity); }
+/* Its picker, over the top of the pane. */
+.wallpapers {
+  position: absolute; z-index: 6; top: 10px; left: 50%; translate: -50% 0; max-width: calc(100% - 24px);
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-radius: 12px; outline: none;
+  background: var(--bg); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.wallpapers header { display: flex; align-items: baseline; gap: 16px; font-size: .86rem; color: var(--ink-3); white-space: nowrap; }
+.wallpapers header b { flex: 1; font-weight: 600; color: var(--ink-1); }
+.wallpapers .cards { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 8px; padding: 2px; }
+.wallpapers .card { flex: none; display: flex; flex-direction: column; gap: 5px; width: 120px; font-size: .86rem; color: var(--ink-3); text-align: left; outline: none; }
+.wallpapers .card canvas { width: 120px; height: 68px; border-radius: 7px; border: 1px solid var(--line); background: var(--term-bg); }
+.wallpapers .card.at { color: var(--ink-1); }
+.wallpapers .card.at canvas { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 
 /* Pictures over Claude's transcript, laid out in percents of the screen by pictures.js. */
 .pictures { position: absolute; inset: 0; pointer-events: none; }
@@ -247,7 +265,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .check {
   flex: none; display: grid; place-items: center; width: 14px; height: 14px;
   border: 1px solid var(--ink-3); border-radius: 3px;
-  font: 9px "Segoe Fluent Icons", "Segoe MDL2 Assets"; color: var(--bg);
+  font: 9px "Segoe Fluent Icons", "Segoe MDL2 Assets", "nook icons"; color: var(--bg);
 }
 .check:hover { border-color: var(--ink-1); }
 .check:is([data-state=on], [data-state=mixed]) { background: var(--accent); border-color: var(--accent); }

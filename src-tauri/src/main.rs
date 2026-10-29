@@ -2,8 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod git;
+#[cfg_attr(not(windows), path = "priority_unix.rs")]
 mod priority;
 mod pty;
+#[cfg_attr(not(windows), path = "shell_unix.rs")]
 mod shell;
 mod theme;
 
@@ -12,10 +14,10 @@ use serde_json::{Map, Value};
 use std::{
     fs,
     io::Write,
-    os::windows::{fs::MetadataExt, process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
+    time::Instant,
 };
 use tauri::{
     webview::{PermissionKind, PermissionResponse},
@@ -32,9 +34,13 @@ pub fn err(e: impl std::fmt::Display) -> String {
 /// Runs a console tool, feeding it `input`, with no console window: without the flag, the release
 /// build flashes one for each. Ok is its output; Err is what it said went wrong.
 pub fn run(cmd: &mut Command, input: Option<&str>) -> Result<String, String> {
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     let mut child = cmd
-        .creation_flags(CREATE_NO_WINDOW)
         .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -74,10 +80,10 @@ struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".into());
-        let under = |d: &str| format!("{home}\\{d}");
+        let home = home_dir();
+        let under = |d: &str| Path::new(&home).join(d).to_string_lossy().into_owned();
         Self {
-            command: ["powershell", "-NoLogo", "-NoExit", "-Command", "claude"].map(String::from).into(),
+            command: DEFAULT_COMMAND.map(String::from).into(),
             gpu: false,
             pinned: vec![under("Desktop"), under("Downloads"), under("Documents"), home.clone()],
             last_dir: home,
@@ -88,6 +94,18 @@ impl Default for Settings {
             claude_theme: None,
         }
     }
+}
+
+/// What a Claude tab runs until settings.json says otherwise: Claude, then the shell it ran in.
+#[cfg(windows)]
+const DEFAULT_COMMAND: [&str; 5] = ["powershell", "-NoLogo", "-NoExit", "-Command", "claude"];
+#[cfg(not(windows))]
+const DEFAULT_COMMAND: [&str; 3] = ["bash", "-lc", "claude; exec bash -l"];
+
+const HOME_VAR: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+
+fn home_dir() -> String {
+    std::env::var(HOME_VAR).unwrap_or_else(|_| if cfg!(windows) { "C:\\" } else { "/" }.into())
 }
 
 fn config_dir(app: &AppHandle) -> PathBuf {
@@ -125,7 +143,7 @@ fn boot(app: AppHandle) -> Boot {
         Ok(s) => (s, None),
         Err(e) => (Settings::default(), Some(e)),
     };
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let home = std::env::var(HOME_VAR).unwrap_or_default();
     Boot { settings, error, config_dir: config_dir(&app), home }
 }
 
@@ -155,22 +173,37 @@ struct Entry {
     dir: bool,
 }
 
-/// Directory listing; `""` lists drive roots. Skips what Explorer hides (hidden/system attributes).
+/// Directory listing; `""` lists drive roots, or on Linux the root. Skips what the file manager hides:
+/// on Windows the hidden and system attributes, and on Linux names that start with a dot.
 #[tauri::command(async)]
 fn list_dir(path: String) -> Result<Vec<Entry>, String> {
     if path.is_empty() {
+        if cfg!(not(windows)) {
+            return Ok(vec![Entry { name: "/".into(), dir: true }]);
+        }
         let drives = ('C'..='Z').map(|c| format!("{c}:\\")).filter(|d| Path::new(d).exists());
         return Ok(drives.map(|name| Entry { name, dir: true }).collect());
     }
-    const HIDDEN_OR_SYSTEM: u32 = 0x2 | 0x4;
     let entries = fs::read_dir(&path).map_err(err)?.flatten().filter_map(|e| {
         let meta = e.metadata().ok()?;
-        (meta.file_attributes() & HIDDEN_OR_SYSTEM == 0).then(|| Entry {
+        (!hidden(&e, &meta)).then(|| Entry {
             name: e.file_name().to_string_lossy().into_owned(),
             dir: meta.is_dir() || (meta.is_symlink() && e.path().is_dir()),
         })
     });
     Ok(entries.collect())
+}
+
+#[cfg(windows)]
+fn hidden(_: &fs::DirEntry, meta: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const HIDDEN_OR_SYSTEM: u32 = 0x2 | 0x4;
+    meta.file_attributes() & HIDDEN_OR_SYSTEM != 0
+}
+
+#[cfg(not(windows))]
+fn hidden(e: &fs::DirEntry, _: &fs::Metadata) -> bool {
+    e.file_name().as_encoded_bytes().starts_with(b".")
 }
 
 const BOM: &[u8] = b"\xEF\xBB\xBF";
@@ -251,10 +284,43 @@ const INHERITED_SESSION_MARKERS: [&str; 10] = [
     "CLAUDE_CODE_MESSAGING_TOKEN",
 ];
 
+/// WebKitGTK composites with the GPU, and with `gpu` off nook renders on the CPU, as WebView2 does with
+/// `--disable-gpu`. It reads settings.json from where Tauri keeps it, before any thread exists to read the
+/// environment it sets. Software compositing costs far more: on Xvfb, a third of the memory and CPU go.
+#[cfg(target_os = "linux")]
+fn render_on_the_cpu_unless_gpu() {
+    const VAR: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".config")));
+    let gpu = config
+        .and_then(|dir| fs::read_to_string(dir.join("dev.nook.app").join("settings.json")).ok())
+        .and_then(|text| serde_json::from_str::<Settings>(&text).ok())
+        .is_some_and(|s| s.gpu);
+    if !gpu && std::env::var_os(VAR).is_none() {
+        std::env::set_var(VAR, "1");
+    }
+}
+
+/// When nook started, for `bench`.
+static STARTED: OnceLock<Instant> = OnceLock::new();
+
+/// Prints a timing for `bench/linux.mjs`, which starts nook with `NOOK_BENCH` set: `ms`, or without it, the
+/// milliseconds since nook started.
+#[tauri::command]
+fn bench(event: String, ms: Option<f64>) {
+    let ms = ms.unwrap_or_else(|| STARTED.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0));
+    println!("bench {event} {ms:.1}");
+}
+
 fn main() {
+    STARTED.get_or_init(Instant::now);
     for key in INHERITED_SESSION_MARKERS {
         std::env::remove_var(key); // before any thread exists
     }
+    #[cfg(target_os = "linux")]
+    render_on_the_cpu_unless_gpu();
     tauri::Builder::default()
         .manage(pty::Sessions::default())
         .setup(|app| {
@@ -267,7 +333,8 @@ fn main() {
                 .and_then(dir_arg)
                 .or(Some(settings.last_dir).filter(|d| Path::new(d).is_dir()))
                 .unwrap_or_else(|| Settings::default().last_dir);
-            // Browser args are fixed when the webview starts: a change to `gpu` takes a restart.
+            // Browser args, and on Linux the compositing mode, are fixed when the webview starts: a change
+            // to `gpu` takes a restart.
             let gpu = if settings.gpu { "" } else { " --disable-gpu" };
             WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("nook")
@@ -276,7 +343,11 @@ fn main() {
                 .decorations(false)
                 .background_color(tauri::window::Color(20, 18, 28, 255))
                 .additional_browser_args(&format!("{WRY_ARGS}{gpu}"))
-                .initialization_script(format!("window.NOOK_CWD = {};", serde_json::to_string(&start)?))
+                .initialization_script(format!(
+                    "window.NOOK_CWD = {}; window.NOOK_BENCH = {};",
+                    serde_json::to_string(&start)?,
+                    std::env::var_os("NOOK_BENCH").is_some()
+                ))
                 // The settings drawer's font pickers list installed fonts through queryLocalFonts().
                 .on_permission_request(|_, kind| match kind {
                     PermissionKind::LocalFonts => PermissionResponse::Allow,
@@ -293,6 +364,7 @@ fn main() {
         // A command without `async` runs on the main thread, where it would hold up the keystrokes queued
         // behind it. Only the PTY's writes, resizes, and closes and the shell's quick calls stay there.
         .invoke_handler(tauri::generate_handler![
+            bench,
             boot,
             settings,
             update_settings,
@@ -344,11 +416,12 @@ mod tests {
 
     #[test]
     fn opens_a_folder_explorer_passes() {
-        let here = env!("CARGO_MANIFEST_DIR").replace('/', "\\");
+        let here = if cfg!(windows) { env!("CARGO_MANIFEST_DIR").replace('/', "\\") } else { env!("CARGO_MANIFEST_DIR").into() };
         assert_eq!(dir_arg(&here), Some(here.clone()));
     }
 
     #[test]
+    #[cfg(windows)]
     fn repairs_a_drive_root_whose_quote_was_escaped() {
         assert_eq!(dir_arg("C:\""), Some("C:\\".into()));
         assert_eq!(dir_arg("C:\" "), Some("C:\\".into()));
@@ -357,6 +430,7 @@ mod tests {
     #[test]
     fn rejects_a_missing_folder() {
         assert_eq!(dir_arg(r"C:\does\not\exist"), None);
+        assert_eq!(dir_arg("/does/not/exist"), None);
     }
 
     #[test]

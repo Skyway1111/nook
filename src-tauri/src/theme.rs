@@ -41,7 +41,7 @@ pub fn read_theme(app: AppHandle) -> Theme {
     let path = dir.join("theme.css");
     if !path.exists() {
         let _ = fs::create_dir_all(&dir).and_then(|()| fs::write(&path, THEME_SEED));
-        // First run: install the themes that ship beside nook.exe.
+        // First run: install the themes that ship beside nook.
         let themes = dir.join("themes");
         if !themes.exists() {
             let _ = app.path().resource_dir().map(|bundled| copy_dir(&bundled.join("themes"), &themes));
@@ -97,7 +97,7 @@ pub async fn install_theme_zip(app: AppHandle, request: Request<'_>) -> Result<S
 /// Whether a .zip holds a theme: a theme.css at its top or in one folder inside.
 #[tauri::command]
 pub async fn zip_holds_theme(path: String) -> bool {
-    let Ok(Ok(list)) = spawn_blocking(move || tar(&["-tf"], Path::new(&path), None)).await else { return false };
+    let Ok(Ok(list)) = spawn_blocking(move || list_zip(Path::new(&path))).await else { return false };
     list.lines().any(|entry| {
         let parts: Vec<_> = entry.trim_end_matches('/').split('/').collect();
         parts.len() <= 2 && parts.last().is_some_and(|p| p.eq_ignore_ascii_case("theme.css"))
@@ -142,7 +142,7 @@ fn zipped(path: &Path) -> bool {
 
 fn unpack(src: &Path, to: &Path) -> Result<(), String> {
     if zipped(src) {
-        tar(&["-xf"], src, Some(to)).map(drop)
+        extract_zip(src, to)
     } else if src.is_dir() {
         copy_dir(src, to)
     } else {
@@ -173,25 +173,38 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs Windows' own tar on `zip`, which reads .zip files. Git's GNU tar, which may come first on
-/// PATH, doesn't. Ok is its output; Err is what it said went wrong.
-fn tar(args: &[&str], zip: &Path, into: Option<&Path>) -> Result<String, String> {
-    let mut cmd = Command::new(windows_tar());
-    cmd.args(args).arg(zip);
-    if let Some(dir) = into {
-        cmd.arg("-C").arg(dir);
-    }
-    crate::run(&mut cmd, None)
+/// The paths in a .zip, one a line. Windows' own tar reads .zip files; Git's GNU tar, which may come
+/// first on PATH, doesn't, so nook names System32's. Err is what it said went wrong.
+#[cfg(windows)]
+fn list_zip(zip: &Path) -> Result<String, String> {
+    crate::run(Command::new(windows_tar()).arg("-tf").arg(zip), None)
 }
 
+#[cfg(windows)]
+fn extract_zip(zip: &Path, into: &Path) -> Result<(), String> {
+    crate::run(Command::new(windows_tar()).arg("-xf").arg(zip).arg("-C").arg(into), None).map(drop)
+}
+
+#[cfg(windows)]
 fn windows_tar() -> PathBuf {
     let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
     Path::new(&root).join("System32").join("tar.exe")
 }
 
+/// The paths in a .zip, one a line, through Info-ZIP's unzip, which every desktop Linux ships.
+#[cfg(not(windows))]
+fn list_zip(zip: &Path) -> Result<String, String> {
+    crate::run(Command::new("unzip").arg("-Z1").arg(zip), None)
+}
+
+#[cfg(not(windows))]
+fn extract_zip(zip: &Path, into: &Path) -> Result<(), String> {
+    crate::run(Command::new("unzip").args(["-q", "-o"]).arg(zip).arg("-d").arg(into), None).map(drop)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{install, newest_change, tar, windows_tar};
+    use super::{install, list_zip, newest_change};
     use std::{
         fs,
         time::{Duration, UNIX_EPOCH},
@@ -234,12 +247,15 @@ mod tests {
         // A zipped folder, downloaded twice: the folder inside names it, not "dark-moon (1)".
         fs::write(src.join("theme.css"), b":root { --h: 200; }").unwrap();
         let zip = dir.join("dark-moon (1).zip");
-        let made = std::process::Command::new(windows_tar()).current_dir(&dir).args(["-a", "-cf"]).arg(&zip).arg("dark-moon").status();
+        #[cfg(windows)]
+        let made = std::process::Command::new(super::windows_tar()).current_dir(&dir).args(["-a", "-cf"]).arg(&zip).arg("dark-moon").status();
+        #[cfg(not(windows))]
+        let made = std::process::Command::new("zip").current_dir(&dir).args(["-qr"]).arg(&zip).arg("dark-moon").status();
         assert!(made.unwrap().success());
         assert_eq!(install(&themes, &zip, Some("ignored".into())), Ok("dark-moon".into()));
         assert_eq!(fs::read_to_string(themes.join("dark-moon").join("theme.css")).unwrap(), ":root { --h: 200; }");
         assert_eq!(fs::read_dir(&themes).unwrap().count(), 1); // nothing staged is left behind
-        assert!(tar(&["-tf"], &zip, None).unwrap().contains("dark-moon/theme.css"));
+        assert!(list_zip(&zip).unwrap().contains("dark-moon/theme.css"));
 
         fs::remove_file(src.join("theme.css")).unwrap();
         assert!(install(&themes, &src, None).is_err());

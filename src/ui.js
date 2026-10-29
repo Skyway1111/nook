@@ -1,5 +1,6 @@
 // The DOM helpers every view uses, and the floating UI: context menu, image preview, drag ghost.
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { path as paths } from './paths.js'
 
 export const $ = id => document.getElementById(id)
 export const el = (tag, props) => Object.assign(document.createElement(tag), props)
@@ -83,7 +84,7 @@ export function dragPath(downEvent, path, onDrop) {
     if (!dragging && Math.hypot(e.clientX - x0, e.clientY - y0) > 6) {
       dragging = true
       hidePreview()
-      ghost.textContent = path.slice(path.lastIndexOf('\\') + 1)
+      ghost.textContent = paths.basename(path)
       ghost.hidden = false
     }
     if (dragging) ghost.style.translate = `${e.clientX + 12}px ${e.clientY + 10}px`

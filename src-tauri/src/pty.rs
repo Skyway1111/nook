@@ -64,11 +64,26 @@ fn forget(id: u64) {
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 /// The user's plugin folders, then nook's mod, which loads beside them, never in place of them. A nook
-/// started from inside a nook session inherits that nook's mod, the `mod` beside its `nook.exe`, and
+/// started from inside a nook session inherits that nook's mod, the `mod` beside its `nook` program, and
 /// the first `nook` would load in place of this one.
+/// Where Claude Code keeps its sessions' temporary files, pasted images among them: `claude` in the temp
+/// folder on Windows, and elsewhere `claude-<uid>`, so users who share /tmp don't share it.
+fn claude_temp() -> PathBuf {
+    #[cfg(windows)]
+    let name = "claude".to_string();
+    #[cfg(not(windows))]
+    let name = {
+        use std::os::unix::fs::MetadataExt;
+        format!("claude-{}", std::fs::metadata("/proc/self").map_or(0, |m| m.uid()))
+    };
+    std::env::temp_dir().join(name)
+}
+
+const NOOK_EXE: &str = if cfg!(windows) { "nook.exe" } else { "nook" };
+
 fn plugin_dirs(inherited: &OsStr, nook_mod: PathBuf) -> Result<OsString, JoinPathsError> {
     let theirs = env::split_paths(inherited).filter(|d| {
-        !d.as_os_str().is_empty() && !(d.ends_with("mod") && d.with_file_name("nook.exe").is_file())
+        !d.as_os_str().is_empty() && !(d.ends_with("mod") && d.with_file_name(NOOK_EXE).is_file())
     });
     env::join_paths(theirs.chain([nook_mod]))
 }
@@ -102,6 +117,7 @@ pub fn pty_spawn(
     let inherited = std::env::var_os("CLAUDE_CODE_PLUGIN_DIRS").unwrap_or_default();
     cmd.env("CLAUDE_CODE_PLUGIN_DIRS", plugin_dirs(&inherited, nook_mod).map_err(err)?);
     cmd.env("NOOK_STATE", state_file(id));
+    cmd.env("NOOK_CLAUDE_TEMP", claude_temp()); // where the mod finds the session's pasted images
     let mut child = pair.slave.spawn_command(cmd).map_err(err)?;
     let mut reader = pair.master.try_clone_reader().map_err(err)?;
     let writer = pair.master.take_writer().map_err(err)?;
@@ -183,11 +199,12 @@ mod tests {
     fn keeps_the_users_plugins_and_drops_another_nooks_mod() {
         let other = std::env::temp_dir().join(format!("nook-plugin-dirs-{}", std::process::id()));
         fs::create_dir_all(other.join("mod")).unwrap();
-        fs::write(other.join("nook.exe"), b"").unwrap();
-        let inherited = format!(r"C:\plugins\mine;;{}", other.join("mod").display());
-        let dirs = plugin_dirs(OsStr::new(&inherited), r"C:\nook\mod".into()).unwrap();
-        assert_eq!(dirs, OsStr::new(r"C:\plugins\mine;C:\nook\mod"));
-        assert_eq!(plugin_dirs(OsStr::new(""), r"C:\nook\mod".into()).unwrap(), OsStr::new(r"C:\nook\mod"));
+        fs::write(other.join(super::NOOK_EXE), b"").unwrap();
+        let (mine, ours, sep) = if cfg!(windows) { (r"C:\plugins\mine", r"C:\nook\mod", ";") } else { ("/plugins/mine", "/nook/mod", ":") };
+        let inherited = format!("{mine}{sep}{sep}{}", other.join("mod").display());
+        let dirs = plugin_dirs(OsStr::new(&inherited), ours.into()).unwrap();
+        assert_eq!(dirs, OsStr::new(&format!("{mine}{sep}{ours}")));
+        assert_eq!(plugin_dirs(OsStr::new(""), ours.into()).unwrap(), OsStr::new(ours));
         fs::remove_dir_all(other).unwrap();
     }
 }

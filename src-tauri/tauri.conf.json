@@ -40,7 +40,8 @@
       "mod/hooks/hooks.json": "mod/hooks/hooks.json",
       "mod/hooks/register.js": "mod/hooks/register.js",
       "mod/themes/nook.json": "mod/themes/nook.json",
-      "../themes/": "themes/"
+      "../themes/": "themes/",
+      "../src/fonts/FluentIcons-LICENSE.txt": "FluentIcons-LICENSE.txt"
     },
     "windows": {
       "nsis": {

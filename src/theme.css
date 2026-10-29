@@ -95,4 +95,22 @@
   --claude-bashMessageBackgroundColor: color-mix(in oklch, var(--ansi-magenta) 12%, transparent);
   --claude-memoryBackgroundColor: color-mix(in oklch, var(--ansi-blue) 12%, transparent);
   --claude-selectionBg: var(--selection);
+
+  /* Living wallpaper: a scene drawn in characters behind Claude tabs, always moving. One of none, drift,
+     turtles, koi, jellyfish, boats, fireflies, or moonlit. The titlebar's wallpaper button writes your pick here. */
+  --wallpaper: none;
+  --wallpaper-opacity: .5; /* over --term-bg, under Claude's text */
+  --wallpaper-font-size: var(--term-font-size); /* the height of its cells */
+  /* The colors the scenes paint with. */
+  --wallpaper-faint: var(--ink-3); /* stars, ripples, and far-off things */
+  --wallpaper-ink: var(--ink-2);
+  --wallpaper-bright: var(--ink-1); /* cloud tops, the moon, and bubbles */
+  --wallpaper-accent: var(--accent);
+  --wallpaper-claude: var(--claude-clawd_body); /* Claude's mascot, in Moonlit */
+  --wallpaper-water: var(--ansi-blue);
+  --wallpaper-sea: var(--ansi-cyan);
+  --wallpaper-leaf: var(--ansi-green); /* turtles, lily pads, and grass */
+  --wallpaper-warm: var(--ansi-red); /* koi, and the lilies' flowers */
+  --wallpaper-light: var(--ansi-yellow); /* fireflies, and golden koi */
+  --wallpaper-glow: var(--ansi-magenta); /* jellyfish */
 }

@@ -113,11 +113,27 @@ Each of Claude's own colors is a `--claude-*` variable, named after Claude's col
 
 These variables apply only while **Claude's colors follow the theme** is on in the Settings drawer. Claude reads its theme when it starts, so open a new Claude tab after you turn it on. From then on, a change to a `--claude-*` variable recolors open tabs at once.
 
-## 8. Add a card picture
+## 8. Ship a living wallpaper
+
+nook can draw a scene in characters behind Claude tabs, always moving. Name one in `:root` to make it your theme's wallpaper:
+
+```css
+:root {
+  --wallpaper: fireflies; /* none, drift, turtles, koi, jellyfish, boats, fireflies, or moonlit */
+  --wallpaper-opacity: .4;
+  --wallpaper-light: #ffd98e; /* the fireflies */
+}
+```
+
+Each scene paints with a few roles, and each role takes its color from a `--wallpaper-<role>` variable: `faint`, `ink`, `bright`, `accent`, `claude`, `water`, `sea`, `leaf`, `warm`, `light`, and `glow`. By default they follow your `--ink-*` and `--ansi-*` colors, so most themes need none of them. `--wallpaper-font-size` sets the height of the scene's cells.
+
+A pick from the titlebar's brush goes into your own `theme.css`, so it applies over every theme's.
+
+## 9. Add a card picture
 
 Save a screenshot of nook in your theme as `screenshot.png` in `harbor`. The theme's card in the Settings drawer shows it, cropped to 3:2.
 
-## 9. Share it
+## 10. Share it
 
 Zip the `harbor` folder. In Explorer, right-click it and pick **Compress to ZIP file**. On Windows 10, pick **Send to**, then **Compressed (zipped) folder**. A .zip that holds the folder installs as a theme named after the folder.
 

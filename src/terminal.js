@@ -7,6 +7,7 @@ import { showPreview, hidePreview } from './ui.js'
 import { startComposer } from './composer.js'
 import { startPictures } from './pictures.js'
 import { ANSI, CLAUDE_SLOTS, slotVar, bytes } from './palette.js'
+import { WINDOWS } from './paths.js'
 
 const open = path => invoke('open_path', { path })
 const HOLD_MS = 500 // the longest xterm holds the last frame for Claude's redraw, once Claude has the size
@@ -104,8 +105,8 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
     allowTransparency: true,
     scrollback: 10000,
     cursorBlink: false, // a blinking cursor repaints twice a second, forever
-    // nook targets Windows 11, whose ConPTY reflows on resize (build >= 21376).
-    windowsPty: { backend: 'conpty', buildNumber: 22000 },
+    // On Windows 11, ConPTY reflows on resize (build >= 21376). A Linux PTY leaves reflow to xterm.
+    ...(WINDOWS && { windowsPty: { backend: 'conpty', buildNumber: 22000 } }),
     linkHandler: { activate: (_, uri) => open(uri) }, // OSC 8 hyperlinks
   })
   const fit = new FitAddon()
@@ -192,7 +193,7 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
 
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true
-    if (e.altKey && e.key === 'F4') return false // Windows closes the window
+    if (e.altKey && e.key === 'F4') return false // the system closes the window
     if (e.ctrlKey && e.key === 'Tab') return false // the tab strip cycles
     const ctrl = e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() // with Caps Lock on, Ctrl+C is 'C'
     if (ctrl === 'n') return false // the window opens a Claude tab
@@ -213,14 +214,15 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
     return true
   })
 
-  // A clipboard holding an image (and no text) becomes Claude Code's own image paste: Alt+V.
+  // A clipboard holding an image (and no text) becomes Claude Code's own image paste: Alt+V on Windows,
+  // Ctrl+V elsewhere.
   host.addEventListener('paste', e => {
     const data = e.clipboardData
     if (!data || data.types.includes('text/plain')) return
     if (![...data.items].some(item => item.type.startsWith('image/'))) return
     e.preventDefault()
     e.stopImmediatePropagation()
-    send('\x1bv')
+    send(WINDOWS ? '\x1bv' : '\x16')
   }, true)
 
   // [Image #N] → hover to preview, click to open. Images live where Claude Code saved them.

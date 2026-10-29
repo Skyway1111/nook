@@ -2,6 +2,7 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { IMAGE, basename } from './files.js'
 import { el } from './ui.js'
+import { path as paths } from './paths.js'
 
 const SCHEME = /^[a-z][\w+.-]*:/i
 // The only links that leave nook. ShellExecute on any other scheme from a file on disk can run anything.
@@ -11,11 +12,8 @@ const WEB = /^(https?|mailto):/i
 // or shadowing a `document` method with a named element.
 const SANITIZE = { sanitizer: { removeElements: ['style', 'meta', 'link', 'form'], removeAttributes: ['style', 'id', 'name'] } }
 
-/** `href` relative to the file at `from`, as a Windows path. */
-function resolve(href, from) {
-  const base = 'file:///' + from.split('\\').map(encodeURIComponent).join('/')
-  return decodeURIComponent(new URL(href, base).pathname.slice(1)).replaceAll('/', '\\')
-}
+/** `href` relative to the file at `from`, as a path. */
+const resolve = (href, from) => paths.fromUrl(new URL(href, paths.toUrl(from)).pathname)
 
 // Loaded on first use, so a Claude tab never waits on CodeMirror.
 const editing = () => import('./editor.js')
