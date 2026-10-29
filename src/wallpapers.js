@@ -494,6 +494,109 @@ export const SCENES = [
       }
     },
   },
+  {
+    id: 'petals',
+    name: 'Cherry blossoms',
+    draw(g, t) {
+      // A branch in bloom reaching in from the top right, its petals drifting down and across on the wind.
+      const reach = Math.round(Math.min(g.cols * 0.5, 56))
+      const bough = k => 1 + k * 0.2 + Math.sin(k * 0.21) * 1.2 // the branch's row, `k` cells in from the right
+      for (let k = 0; k < reach; k++) {
+        const dy = Math.round(bough(k + 1)) - Math.round(bough(k))
+        put(g, g.cols - 1 - k, bough(k), dy > 0 ? '/' : dy < 0 ? '\\' : '_', 'ink')
+        if (k % 11 === 6) { // a twig
+          put(g, g.cols - 1 - k, bough(k) + 1, '\\', 'ink')
+          put(g, g.cols - k, bough(k) + 2, '\\', 'ink')
+        }
+      }
+      for (let i = 0, n = Math.round(reach * 0.9); i < n; i++) {
+        const k = hash(46, i, 1) * reach
+        const x = g.cols - 1 - k + (hash(46, i, 2) - 0.5) * 5
+        const y = bough(k) + (hash(46, i, 3) - 0.4) * 3
+        const open = hash(46, i, 4, Math.floor(t / 9 + hash(46, i, 5) * 9)) < 0.8 // now and then a blossom closes
+        put(g, x, y, open ? (hash(46, i, 6) < 0.3 ? '@' : '*') : 'o', hash(46, i, 7) < 0.25 ? 'bright' : 'glow')
+      }
+      // Petals fall from under the branch and drift left, turning as they go.
+      for (let i = 0, n = many(g, 150, 8); i < n; i++) {
+        const speed = 1.4 + hash(47, i, 1) * 1.6
+        const lap = g.rows + 3
+        const fall = hash(47, i, 2) * lap + t * speed
+        const y = wrap(fall, lap) - 1
+        const start = g.cols * (0.45 + hash(47, i, 3, Math.floor(fall / lap)) * 0.65)
+        const x = start - y * (1.2 + hash(47, i, 4)) + Math.sin(t * 1.3 + hash(47, i, 5) * TAU) * 1.5
+        put(g, x, y, ".,`'"[Math.floor(t * 2.5 + hash(47, i, 6) * 4) % 4], 'glow')
+      }
+      // Fallen petals along the bottom.
+      for (let x = 0; x < g.cols; x++) if (hash(48, x) < 0.12) put(g, x, g.rows - 1, hash(48, x, 1) < 0.5 ? '.' : ',', 'glow')
+    },
+  },
+  {
+    id: 'tide',
+    name: 'Night sea',
+    draw(g, t) {
+      const horizon = Math.round(g.rows * 0.5)
+      stars(g, t, 49, 80, horizon / Math.max(1, g.rows) - 0.05)
+      // The moon, and its light on the water: a path of glints that widens toward you.
+      const mx = Math.round(g.cols * 0.68)
+      const my = Math.max(1, Math.round(horizon * 0.3))
+      stamp(g, mx - 2, my, [' .-. ', '(   )', " `-' "], 'bright')
+      for (let x = 0; x < g.cols; x++) put(g, x, horizon, hash(50, x) < 0.7 ? '_' : ' ', 'faint')
+      for (let y = horizon + 1; y < g.rows; y++) {
+        const depth = (y - horizon) / Math.max(1, g.rows - horizon)
+        const half = 1 + depth * 7
+        for (let x = Math.round(mx - half); x <= mx + half; x++) {
+          const glint = hash(51, x, y, Math.floor(t * 1.4 + hash(51, x, y) * 9))
+          if (glint < 0.45) put(g, x, y, glint < 0.12 ? '=' : '-', glint < 0.2 ? 'bright' : 'light')
+        }
+      }
+      // Swells that roll in, slower and fainter far out.
+      for (let i = 0, n = many(g, 100, 6); i < n; i++) {
+        const depth = hash(52, i, 1)
+        const y = horizon + 1 + Math.floor(depth * (g.rows - horizon - 1))
+        const len = 2 + Math.floor(depth * 6)
+        const x = wrap(hash(52, i, 2) * (g.cols + len) + t * (0.6 + depth * 2.2), g.cols + len) - len
+        for (let c = 0; c < len; c++) put(g, x + c, y, '~', depth > 0.6 ? 'sea' : depth > 0.25 ? 'water' : 'faint')
+      }
+    },
+  },
+  {
+    id: 'city',
+    name: 'City lights',
+    draw(g, t) {
+      stars(g, t, 53, 140, 0.4)
+      // A skyline of towers, their windows lit and dark as the night goes on.
+      const street = g.rows - 1
+      let x = 0
+      for (let b = 0; x < g.cols; b++) {
+        const w = 5 + Math.floor(hash(54, b, 1) * 8)
+        const tall = Math.round(g.rows * (0.22 + hash(54, b, 2) * 0.42))
+        const top = street - tall
+        for (let y = top + 1; y < street; y++) {
+          put(g, x, y, '|', 'ink')
+          put(g, x + w - 1, y, '|', 'ink')
+        }
+        for (let c = 1; c < w - 1; c++) put(g, x + c, top, '_', 'ink')
+        for (let wy = top + 2; wy < street - 1; wy += 2) {
+          for (let wx = x + 2; wx < x + w - 2; wx += 2) {
+            const lit = hash(55, wx, wy, Math.floor(t / (6 + hash(55, wx, wy) * 30) + hash(55, wx, wy, 1) * 9))
+            if (lit < 0.4) put(g, wx, wy, '#', lit < 0.06 ? 'accent' : 'light')
+          }
+        }
+        if (hash(54, b, 3) < 0.25 && tall > g.rows * 0.45) { // a mast with a light that blinks
+          put(g, x + Math.floor(w / 2), top - 1, '|', 'ink')
+          if (wrap(t + hash(54, b, 4) * 2, 2) < 0.5) put(g, x + Math.floor(w / 2), top - 2, '*', 'warm')
+        }
+        x += w + 1 + Math.floor(hash(54, b, 5) * 3)
+      }
+      // Cars along the street, white lights one way and red the other.
+      for (let i = 0, n = Math.max(2, Math.round(g.cols / 20)); i < n; i++) {
+        const right = i % 2 === 0
+        const pos = wrap(hash(56, i, 1) * (g.cols + 6) + t * (7 + hash(56, i, 2) * 6), g.cols + 6) - 3
+        put(g, right ? pos : g.cols - 1 - pos, street, right ? '>' : '<', right ? 'bright' : 'warm')
+        put(g, right ? pos - 1 : g.cols - pos, street, '=', 'faint')
+      }
+    },
+  },
 ]
 
 /** The scene named `id`, or undefined for none. */
