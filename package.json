@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "test": "node --test \"src/**/*.test.js\""
+    "test": "node --test \"src/**/*.test.js\"",
+    "bench:windows": "node bench/windows.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

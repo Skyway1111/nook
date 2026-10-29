@@ -38,6 +38,7 @@ import { spawn, execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
+import { f, median, quantile, table } from './stats.mjs'
 
 const flag = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i < 0 ? fallback : process.argv[i + 1] }
 const bins = flag('bin', new URL('../src-tauri/target/release/nook', import.meta.url).pathname).split(',').map(b => resolve(b))
@@ -50,9 +51,6 @@ const FLOODS = 3 // floods a session times
 for (const bin of bins) if (!existsSync(bin)) throw new Error(`no build at ${bin}`)
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-const sorted = xs => [...xs].filter(Number.isFinite).sort((a, b) => a - b)
-const median = xs => { const s = sorted(xs); return s.length ? s[Math.floor(s.length / 2)] : NaN }
-const quantile = (xs, q) => { const s = sorted(xs); return s.length ? s[Math.min(s.length - 1, Math.floor(q * s.length))] : NaN }
 
 // A display of our own, so the bench never touches a desktop.
 const display = `:${90 + Math.floor(Math.random() * 400)}`
@@ -320,25 +318,6 @@ const METRICS = [
   ['tuiResize', 'tui resize ms', 1, 2],
   ['tuiResizeP95', 'tui resize p95 ms', 1, 4],
 ]
-const RELATIVE = 0.05 // and a change must also exceed this share of base
-const SURE = 2.5 // and this many standard errors of the change, from how much each build's own numbers spread
-
-/** The standard deviation `xs` suggest: from their range when few, as the range of n draws runs to d2(n)
- * deviations, and from their interquartile range when there are enough that one outlier shouldn't set it. */
-function deviation(xs) {
-  const s = sorted(xs)
-  if (s.length < 2) return 0
-  if (s.length >= 8) return (quantile(s, 0.75) - quantile(s, 0.25)) / 1.349
-  const d2 = [0, 0, 1.128, 1.693, 2.059, 2.326, 2.534, 2.704][s.length]
-  return (s.at(-1) - s[0]) / d2
-}
-/** How far apart two builds' medians can land by chance: SURE standard errors of their difference. A
- * median of n has a standard error of about 1.25 deviations over the root of n. */
-function noise(a, b) {
-  const se = xs => (1.2533 * deviation(xs)) / Math.sqrt(Math.max(1, sorted(xs).length))
-  return SURE * Math.hypot(se(a), se(b))
-}
-
 const results = [] // { wallpaper, bin, opens, sessions: [], tui: [] }
 for (const wallpaper of wallpapers) {
   const run = scratch(wallpaper)
@@ -372,33 +351,13 @@ for (const wallpaper of wallpapers) {
 }
 xvfb.kill()
 
-const f = (n, d) => (Number.isFinite(n) ? n.toFixed(d) : '-')
 const values = (r, key) => (key === 'open' ? r.opens : (key.startsWith('tui') ? r.tui : r.sessions).map(s => s[key]))
-const cell = (r, key, d) => {
-  const xs = sorted(values(r, key))
-  return `${f(median(xs), d)} (${f(xs[0], d)}-${f(xs.at(-1), d)})`
-}
 let worse = 0
-const last = bins.length - 1 // the build under test; every earlier one is a base it must match or beat
 for (const wallpaper of wallpapers) {
   const mine = results.filter(r => r.wallpaper === wallpaper)
   console.log(`\nwallpaper ${wallpaper}: median (min-max) of ${runs} opens and ${sessions} sessions`)
   bins.forEach((b, i) => console.log(`  [${i}] ${b}`))
-  const bases = mine.slice(0, last)
-  console.log('metric'.padEnd(20) + mine.map((_, i) => `[${i}]`.padEnd(24)).join('') + bases.map((_, i) => `[${last}] vs [${i}]`.padEnd(30)).join(''))
-  for (const [key, label, d, floor] of METRICS) {
-    let line = label.padEnd(20) + mine.map(r => cell(r, key, d).padEnd(24)).join('')
-    const b = median(values(mine[last], key))
-    for (const base of bases) {
-      const a = median(values(base, key))
-      const delta = b - a
-      const bar = Math.max(floor, RELATIVE * Math.abs(a), noise(values(base, key), values(mine[last], key)))
-      const flagged = delta > bar
-      if (flagged) worse++
-      line += `${delta >= 0 ? '+' : ''}${f(delta, d)}${a ? ` (${delta >= 0 ? '+' : ''}${f((100 * delta) / a, 0)}%)` : ''} ±${f(bar, d)}${flagged ? ' WORSE' : ''}`.padEnd(30)
-    }
-    console.log(line.trimEnd())
-  }
+  worse += table(mine, METRICS, values)
   // Where an open's time goes: the median ms since nook started at which each step finished.
   const steps = ['setup', 'window', 'page', 'script', 'boot', 'settings', 'chrome', 'spawned', 'ready']
   for (const r of mine) {
