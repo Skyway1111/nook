@@ -667,7 +667,25 @@ svg.defs { position: absolute; width: 0; height: 0; }
 
 [hidden] { display: none !important; }
 
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+/* Motion: what opens over the window arrives in a short ease instead of popping in. Each plays once, as its
+   element appears, and costs nothing once it has settled. Transform only, never layout, and never translate,
+   which some of these use to center themselves. */
+@keyframes nook-fade { from { opacity: 0; } }
+@keyframes nook-drop { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes nook-rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes nook-slide { from { opacity: .4; transform: translateX(24px); } }
+#menu { animation: nook-fade 90ms ease-out; }
+:is(#quick, .wallpapers, .sessions) { animation: nook-drop 140ms cubic-bezier(.2, .8, .2, 1); }
+#welcome { animation: nook-rise 220ms cubic-bezier(.2, .8, .2, 1); }
+#settings { animation: nook-slide 160ms cubic-bezier(.2, .8, .2, 1); }
+
+/* Keyboard focus shows on anything that doesn't draw its own. */
+:where(button, [role="button"], .theme, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Numbers that change in place keep their width. */
+:is(.count, .sessions footer, .sessions .session .doing, #quick footer, #git-last) { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 
 /* The hint beside a path link in a Claude tab. */
 .link-hint {
