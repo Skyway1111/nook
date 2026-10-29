@@ -26,6 +26,16 @@ export function startBench() {
     const t = performance.now()
     shown(() => report('resize', performance.now() - t))
   })
+  // F8 reports where the composer's draft is on the screen, for bench/pixels.py to watch. xterm never sees it.
+  addEventListener('keydown', e => {
+    if (e.key !== 'F8') return
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    const draft = document.querySelector('.composer:not([hidden]) .draft')
+    const r = draft?.getBoundingClientRect()
+    const px = v => Math.round(v * devicePixelRatio)
+    report(r ? `draft:${px(r.left)},${px(r.top)},${px(r.width)},${px(r.height)}` : 'draft:none')
+  }, true)
   // diff: F9 opens the git panel's diff of every change; ms from the press to the frame that shows its lines
   probe('F9', 'git-diff', '.view.diff:not([hidden]) :is(.add, .del)', 'diff')
   // history: F8 opens the git panel's history; ms from the press to the frame that shows its commits

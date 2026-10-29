@@ -14,7 +14,8 @@
 //   history   with --repo: ms from asking for the history to the frame that shows its commits; - for a build
 //             without one
 //   tui       key echo, typing CPU, and resize again, in bench/tui.mjs, a stand-in for Claude's fullscreen
-//             view that redraws the whole screen for each key, as Claude does
+//             view that redraws the whole screen for each key, as Claude does. Its key echo is timed on the
+//             screen, by bench/pixels.py, until the composer's draft changes.
 // Every launch times its open. The first --sessions launches of each build also run the rest, and each number
 // is the median of those sessions, with the spread (min-max) beside it. Below the table, each build's open is
 // split into the steps it passes, as ms since nook started: its window built, the page began to load, the
@@ -28,7 +29,7 @@
 // noise. With --repo it runs in that repository instead, so the git panel and its diff tab are measured too;
 // bench/diffrepo.mjs makes a repository with a large diff for it. Xvfb has no GPU, so WebKit draws in software: compare numbers from the same machine, not with a
 // desktop's.
-// Needs Xvfb and xdotool, and a build: `npx tauri build --no-bundle`.
+// Needs Xvfb, xdotool and python3, and a build: `npx tauri build --no-bundle`.
 //   node bench/linux.mjs [--bin src-tauri/target/release/nook[,other...]] [--wallpapers none,koi] [--runs 7]
 //                        [--sessions 3] [--tui off] [--repo path] [--json out.json]
 import { spawn, execFileSync } from 'child_process'
@@ -80,6 +81,9 @@ function scratch(wallpaper, command = ['bash', '-c', SHELL]) {
   return { dir, env: { ...env, XDG_CONFIG_HOME: join(dir, 'config'), HOME: home } }
 }
 
+/** Whether a line from nook is `event`, or `event:` and what it carries. */
+const is = (line, event) => line.event === event || line.event.startsWith(`${event}:`)
+
 /** Starts nook. `ready` resolves to ms from the spawn until its first frame with text. */
 function launch(bin, run) {
   const started = performance.now()
@@ -101,11 +105,11 @@ function launch(bin, run) {
         continue
       }
       lines.push(item)
-      waiting.filter(w => w.event === event).forEach(w => w.resolve(item))
+      waiting.filter(w => is(item, w.event)).forEach(w => w.resolve(item))
     }
   })
   const next = (event, timeout = 30000, from = 0) => new Promise((resolve, reject) => {
-    const have = lines.slice(from).find(l => l.event === event)
+    const have = lines.slice(from).find(l => is(l, event))
     if (have) return resolve(have)
     const w = { event, resolve }
     waiting.push(w)
@@ -245,15 +249,29 @@ async function tuiSession(app) {
   xdotool('windowfocus', '--sync', win)
   xdotool('mousemove', '--window', win, String(W / 2), String(H / 2))
   await sleep(300)
+  // Keys echo into the composer's draft, timed on the screen: the page's own clock reads a frame as shown
+  // before WebKit hands it to the window, and how long that takes is part of what the composer costs.
   const from = app.lines.length
+  xdotool('key', 'F8')
+  const [x, y, w, h] = (await app.next('draft', 5000, from)).event.slice(6).split(',').map(Number)
+  const at = Object.fromEntries(xdotool('getwindowgeometry', '--shell', win).split('\n').map(l => l.split('=')))
+  let keys = []
   const typing = await load(app.child.pid, 10000, async () => {
-    for (let k = 0; k < 100; k++) {
-      xdotool('key', k % 10 === 9 ? 'Return' : 'a')
-      await sleep(100)
+    if (!(w > 0 && h > 0)) { // no composer: type all the same, untimed
+      for (let k = 0; k < 100; k++) {
+        xdotool('key', k % 10 === 9 ? 'Return' : 'a')
+        await sleep(100)
+      }
+      return
     }
+    const args = [new URL('pixels.py', import.meta.url).pathname, x + Number(at.X), y + Number(at.Y), w, h, 100]
+    const helper = spawn('python3', args.map(String), { env, stdio: ['ignore', 'pipe', 'inherit'] })
+    let out = ''
+    helper.stdout.on('data', d => (out += d))
+    await new Promise(r => helper.on('exit', r))
+    keys = out.trim() ? JSON.parse(out) : []
   })
   await sleep(300)
-  const keys = app.since(from, 'key')
   const { resize, resizeP95 } = await resizes(app, win, 40, 'resize')
   return { tuiKey: median(keys), tuiKeyP95: quantile(keys, 0.95), tuiTyping: typing, tuiResize: resize, tuiResizeP95: resizeP95 }
 }
