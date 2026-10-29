@@ -378,8 +378,9 @@ export function startComposer(term, host, id) {
   })
 
   // A Run pressed under a shell block in Claude's reply: typed as Claude's ! command, without Enter. One the
-  // tab reported before this poll first read it is old, and isn't typed again.
+  // tab reported before this poll first read it is old, and isn't typed again; nor is an old Review.
   let ran
+  let reviewed
   const poll = setInterval(async () => {
     if (!host.offsetWidth) return
     const text = await invoke('pty_state', { id })
@@ -397,6 +398,12 @@ export function startComposer(term, host, id) {
       term.focus()
     }
     ran = run?.at
+    // The band's Review, after a turn that edited files: nook opens those files' changes.
+    const review = state.review
+    if (report && review?.at && review.at !== reviewed && Array.isArray(review.files)) {
+      dispatchEvent(new CustomEvent('nook-review', { detail: { root: state.root, files: review.files } }))
+    }
+    reviewed = review?.at
     report = text
     render()
   }, 500)

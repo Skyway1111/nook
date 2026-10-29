@@ -11,7 +11,7 @@ const USAGE = {
 }
 
 /** A session that nook started, whose reports land in `reports`. */
-function nook(on, reports: Record<string, unknown>[], surfaces = ['terminal'], written: Record<string, string> = {}) {
+function nook(on, reports: Record<string, unknown>[], surfaces = ['terminal'], written: Record<string, string> = {}, results: Record<string, unknown> = {}) {
   on('env.get', (_, e) => ({ value: e.name === 'NOOK_STATE' ? STATE : '' }))
   on('session.surfaces', () => ({ value: surfaces }))
   on('clock.now', () => ({ value: 1000 }))
@@ -22,7 +22,7 @@ function nook(on, reports: Record<string, unknown>[], surfaces = ['terminal'], w
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('config.list', () => ({ value: [] }))
   on('settings.read', () => ({ value: {} }))
-  on('fs.read', () => ({ value: '' }))
+  on('fs.read', (_, e) => ({ value: written[e.path] ?? '' }))
   on('fs.write', (_, e) => {
     if (e.path === STATE) reports.push(JSON.parse(e.text))
     else written[e.path] = e.text
@@ -31,7 +31,7 @@ function nook(on, reports: Record<string, unknown>[], surfaces = ['terminal'], w
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
-  on('tool.call', () => ({ result: {} }))
+  on('tool.call', (_, e) => ({ result: results[e.tool_use_id] ?? {} }))
   on('classic.PermissionRequest', () => ({}))
   on('session.end', () => ({ sessionId: 'abc' }))
 }
@@ -137,7 +137,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { applyHunks, diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, svgSize, linkTarget, outcome, pictureLinks, readPaths, planned, replan, searchParts, shellSearch, spent, runnable, splitBlocks, splitCode, splitPictures, summary, testCounts } from './register.js'
+import { applyHunks, turnFiles, diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, svgSize, linkTarget, outcome, pictureLinks, readPaths, planned, replan, searchParts, shellSearch, spent, runnable, splitBlocks, splitCode, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -703,4 +703,51 @@ test('a finished edit has an Undo under its diff, which takes the edit out of it
     expect(await other.find({ type: 'Button' })).toBeFalsy()
     await other.unmount()
   }
+})
+
+test('a turn\'s edits read as each file\'s lines added and removed, and the files it made', () => {
+  const hunk = (lines: string[]) => ({ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines })
+  const files = turnFiles([
+    { path: '/w/a.js', hunks: [hunk([' x', '-y', '+Y', '+Z'])] },
+    { path: '/w/a.js', hunks: [hunk(['-q'])] },
+    { path: '/w/b.md', made: true },
+  ])
+  expect([...files]).toEqual([['/w/a.js', [2, 2, false]], ['/w/b.md', [0, 0, true]]])
+})
+
+test('after a turn that edited files, the band over the prompt says so, undoes the turn, and asks nook to review it', async ($, on) => {
+  const reports: Record<string, unknown>[] = []
+  const files: Record<string, string> = { '/work/a.txt': 'a\nB\nc\n', '/work/b.txt': 'x\nY\n' }
+  const toasts: string[] = []
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  const results: Record<string, unknown> = {
+    e1: { filePath: '/work/a.txt', structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, lines: [' a', '-b', '+B', ' c'] }] },
+    e2: { filePath: '/work/b.txt', structuredPatch: [{ oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: [' x', '-y', '+Y'] }] },
+    e3: { type: 'create', filePath: '/work/new.md', content: 'hi', structuredPatch: [], originalFile: null },
+  }
+  nook(on, reports, ['terminal'], files, results)
+  on('ui.render', ($, e) => $.ui.resolve(e).Box({})) // the engine's band, empty
+  await $.session.start({ cwd: '/work' })
+  await $.turn.start({ text: 'fix it', turnId: 't1' })
+  await $.tool.call({ tool: 'Edit', file_path: '/work/a.txt', old_string: 'b', new_string: 'B', tool_use_id: 'e1' })
+  await $.tool.call({ tool: 'Edit', file_path: '/work/b.txt', old_string: 'y', new_string: 'Y', tool_use_id: 'e2' })
+  await $.tool.call({ tool: 'Write', file_path: '/work/new.md', content: 'hi', tool_use_id: 'e3' })
+  await $.turn.complete({ turnId: 't1', answer: 'done', reason: 'end_turn' })
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AbovePrompt', requestId: 'band', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80, view: {} } })
+  expect((await ui.find({ type: 'Text', text: /Claude changed/ }))?.text).toBe('✎ Claude changed 3 files · +2 −2 1 new')
+  await ui.press({ key: 'turn:review' })
+  expect(last(reports)).toMatchObject({ review: { files: ['/work/a.txt', '/work/b.txt', '/work/new.md'] } })
+  await ui.press({ key: 'turn:undo' })
+  expect([files['/work/a.txt'], files['/work/b.txt']]).toEqual(['a\nb\nc\n', 'x\ny\n'])
+  expect(toasts.at(-1)).toBe('Undid the turn\'s edits; the new file it made stays')
+  expect((await ui.find({ type: 'Button', text: /turn/ }))?.props.label).toBe('↷ Redo turn')
+  await ui.press({ key: 'turn:undo' })
+  expect([files['/work/a.txt'], files['/work/b.txt']]).toEqual(['a\nB\nc\n', 'x\nY\n'])
+  // The next prompt clears the band.
+  await $.turn.start({ text: 'thanks', turnId: 't2' })
+  expect(await ui.find({ type: 'Text', text: /Claude changed/ })).toBeFalsy()
+  await ui.unmount()
 })
