@@ -68,56 +68,100 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     if (path !== cur) picked.clear()
     cur = path
     say('')
+    list.scrollTop = 0
     render(entries)
     renderCrumbs()
     renderPins()
-    list.scrollTop = 0
     return true
   }
+
+  // Only the rows near the screen exist, so a folder of 100,000 files opens and scrolls as one of 100 does. A
+  // spacer above and below them keeps the scrollbar true to the whole folder.
+  const ROW = 26 // px, as style.css draws .row
+  const WHOLE = 400 // a folder of up to this many entries is drawn whole
+  const OVERSCAN = 20
+  const [above, below] = [el('li', { className: 'spacer' }), el('li', { className: 'spacer' })]
+  let items = [] // the open folder's rows, in order: { path, kind, name }
+  let drawn = [-1, -1]
 
   function render(entries) {
     shown = JSON.stringify(entries)
     hidePreview()
-    const rows = entries.map(e => row(join(cur, e.name), cur === '' ? 'drive' : kind(e), e.name))
-    if (!rows.length) rows.push(el('li', { className: 'empty', textContent: 'Empty folder' }))
-    list.replaceChildren(...rows)
-    paintPicked()
-    mark(marked)
-    markClaude()
+    items = entries.map(e => ({ path: join(cur, e.name), kind: cur === '' ? 'drive' : kind(e), name: e.name }))
+    const here = new Set(items.map(i => i.path))
+    picked = new Set([...picked].filter(p => here.has(p)))
+    drawn = [-1, -1]
+    draw()
     syncNav()
   }
 
-  const byClaude = path => claude.some(t => same(t, path))
-  /** Marks each listed file Claude wrote, and each folder that holds one. */
-  function markClaude() {
-    for (const r of list.children) {
-      const path = r.dataset.path
-      if (!path) continue
-      const file = byClaude(path)
-      r.classList.toggle('claude-file', file)
-      r.classList.toggle('claude-dir', !file && r.matches('.dir, .drive') && claude.some(t => under(t, path)))
-      r.title = file ? `${path}\nChanged by Claude` : ''
+  /** Puts the rows of the open folder that are on screen, or near it, in the list. */
+  function draw() {
+    if (editing) return
+    let [start, end] = [0, items.length]
+    if (items.length > WHOLE) {
+      start = Math.max(0, Math.floor(list.scrollTop / ROW) - OVERSCAN)
+      end = Math.min(items.length, Math.ceil((list.scrollTop + list.clientHeight) / ROW) + OVERSCAN)
     }
+    if (start === drawn[0] && end === drawn[1]) return
+    drawn = [start, end]
+    hovered = null
+    const rows = items.slice(start, end).map(i => paint(row(i.path, i.kind, i.name)))
+    if (!items.length) rows.push(el('li', { className: 'empty', textContent: 'Empty folder' }))
+    above.style.height = `${start * ROW}px`
+    below.style.height = `${(items.length - end) * ROW}px`
+    list.replaceChildren(above, ...rows, below)
+  }
+  let queued = false
+  list.addEventListener('scroll', () => {
+    if (queued || items.length <= WHOLE) return
+    queued = true
+    requestAnimationFrame(() => { queued = false; draw() })
+  }, { passive: true })
+  new ResizeObserver(() => draw()).observe(list)
+
+  /** Scrolls the row at `index` into view, drawn, and returns it. */
+  function showRow(index, block = 'center') {
+    if (index < 0 || index >= items.length) return null
+    const top = index * ROW
+    if (top < list.scrollTop || top + ROW > list.scrollTop + list.clientHeight)
+      list.scrollTop = block === 'start' ? top : top - (list.clientHeight - ROW) / 2
+    draw()
+    return [...list.children].find(r => r.dataset.path === items[index].path) ?? null
   }
 
-  /** Shows the picked rows, and forgets picks that left the folder. */
+  /** Gives a newly drawn row the marks of its path: the open file, picked, and Claude's. */
+  function paint(r) {
+    const path = r.dataset.path
+    if (marked && same(path, marked)) r.classList.add('selected')
+    if (picked.has(path)) r.classList.add('picked')
+    claudeMark(r)
+    return r
+  }
+
+  const byClaude = path => claude.some(t => same(t, path))
+  function claudeMark(r) {
+    const path = r.dataset.path
+    if (!path) return
+    const file = claude.length > 0 && byClaude(path)
+    r.classList.toggle('claude-file', file)
+    r.classList.toggle('claude-dir', !file && claude.length > 0 && r.matches('.dir, .drive') && claude.some(t => under(t, path)))
+    r.title = file ? `${path}\nChanged by Claude` : ''
+  }
+  /** Marks each listed file Claude wrote, and each folder that holds one. */
+  const markClaude = () => { for (const r of list.children) claudeMark(r) }
+
+  /** Shows the picked rows. */
   function paintPicked() {
-    const here = new Set()
-    for (const r of list.children) {
-      const on = picked.has(r.dataset.path)
-      r.classList.toggle('picked', on)
-      if (on) here.add(r.dataset.path)
-    }
-    picked = here
+    for (const r of list.children) r.classList.toggle('picked', picked.has(r.dataset.path))
   }
 
   /** Ctrl+click adds or drops a row. Shift+click picks every row from the last one picked to this one. */
   function pick(r, range) {
-    const rows = [...list.querySelectorAll('.row')]
-    const from = rows.findIndex(x => x.dataset.path === anchor)
+    const from = items.findIndex(i => i.path === anchor)
     if (range && from >= 0) {
-      const to = rows.indexOf(r)
-      picked = new Set(rows.slice(Math.min(from, to), Math.max(from, to) + 1).map(x => x.dataset.path))
+      const to = items.findIndex(i => i.path === r.dataset.path)
+      picked = new Set(items.slice(Math.min(from, to), Math.max(from, to) + 1).map(i => i.path))
     } else {
       const p = r.dataset.path
       if (!picked.delete(p)) picked.add(p)
@@ -178,6 +222,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   /** Keeps the pins on a folder that was renamed to `to`, or deleted. */
   const moved = (from, to) => setPins(pins.flatMap(p => (!under(p, from) ? [p] : to ? [to + p.slice(from.length)] : [])))
 
+  let hovered = null
   let editing = false // a name box is open, so the listing holds still
   /** Swaps a row's label for a name box: Enter or a click elsewhere commits, Escape cancels. */
   function nameBox(li, name, commit) {
@@ -226,7 +271,13 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     const at = cur
     const li = row('', dir ? 'dir' : 'file', '')
     list.querySelector('.empty')?.remove()
-    list.insertBefore(li, dir ? list.firstChild : list.querySelector('.row:not(.dir)'))
+    // Atop the folders, or atop the files: the first row that isn't a folder, or the end.
+    const index = dir ? 0 : items.findIndex(i => i.kind !== 'dir')
+    if (index < 0) {
+      list.scrollTop = list.scrollHeight
+      draw()
+    }
+    list.insertBefore(li, showRow(index, 'start') ?? below)
     nameBox(li, '', name => invoke('create_path', { path: join(at, name), dir }).catch(say))
   }
 
@@ -362,7 +413,6 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     })
   }
 
-  let hovered = null
   list.addEventListener('mouseover', e => {
     const r = e.target.closest('.row')
     if (r === hovered) return
@@ -400,12 +450,24 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     input.onblur = renderCrumbs
   })
 
+  // The poll rereads the folder only when its change time moves, which adding, removing, or renaming an entry
+  // does, and for a few seconds after, since some file systems keep that time to the nearest 2 s. A full reread
+  // every 20 s catches what leaves the time alone, as a file turning hidden does.
+  let stamp = ''
+  let stampMoved = 0
+  let reread = 0
   /** Rereads the open folder and repaints it if it changed, or always when `force`. */
   async function sync(force = false) {
     if (editing || !cur) return
+    const at = cur
     try {
-      const entries = await listing(cur)
-      if (force || JSON.stringify(entries) !== shown) render(entries)
+      const now = Date.now()
+      const next = force ? '' : await invoke('file_stamp', { path: at })
+      if (next !== stamp) [stamp, stampMoved] = [next, now]
+      if (!force && next && now - stampMoved > 4500 && now - reread < 20_000) return
+      reread = now
+      const entries = await listing(at)
+      if (at === cur && !editing && (force || JSON.stringify(entries) !== shown)) render(entries)
     } catch {}
   }
   // Pick up files created while you work (by Claude, or anything else).
@@ -415,7 +477,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   async function reveal(path) {
     document.body.classList.remove('files-hidden')
     if (!(await go(parent(path)))) return
-    const r = [...list.children].find(r => same(r.dataset.path ?? '', path))
+    const r = showRow(items.findIndex(i => same(i.path, path)))
     r?.scrollIntoView({ block: 'center' })
     r?.animate([{ background: 'var(--accent)' }, {}], { duration: 900, easing: 'ease-out' })
   }

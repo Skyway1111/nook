@@ -208,25 +208,30 @@ fn list_dir(path: String) -> Result<Vec<Entry>, String> {
         return Ok(drives.map(|name| Entry { name, dir: true }).collect());
     }
     let entries = fs::read_dir(&path).map_err(err)?.flatten().filter_map(|e| {
-        let meta = e.metadata().ok()?;
-        (!hidden(&e, &meta)).then(|| Entry {
-            name: e.file_name().to_string_lossy().into_owned(),
-            dir: meta.is_dir() || (meta.is_symlink() && e.path().is_dir()),
-        })
+        Some(Entry { dir: shown_dir(&e)?, name: e.file_name().to_string_lossy().into_owned() })
     });
     Ok(entries.collect())
 }
 
+/// Whether a listed entry is a folder, or None if it's hidden. On Windows the listing already carries each
+/// entry's attributes, so its metadata costs nothing.
 #[cfg(windows)]
-fn hidden(_: &fs::DirEntry, meta: &fs::Metadata) -> bool {
+fn shown_dir(e: &fs::DirEntry) -> Option<bool> {
     use std::os::windows::fs::MetadataExt;
     const HIDDEN_OR_SYSTEM: u32 = 0x2 | 0x4;
-    meta.file_attributes() & HIDDEN_OR_SYSTEM != 0
+    let meta = e.metadata().ok()?;
+    (meta.file_attributes() & HIDDEN_OR_SYSTEM == 0).then(|| meta.is_dir() || (meta.is_symlink() && e.path().is_dir()))
 }
 
+/// Whether a listed entry is a folder, or None if its name starts with a dot. The entry's type comes with the
+/// listing, so only a symlink costs a stat, to see what it points at.
 #[cfg(not(windows))]
-fn hidden(e: &fs::DirEntry, _: &fs::Metadata) -> bool {
-    e.file_name().as_encoded_bytes().starts_with(b".")
+fn shown_dir(e: &fs::DirEntry) -> Option<bool> {
+    if e.file_name().as_encoded_bytes().starts_with(b".") {
+        return None;
+    }
+    let kind = e.file_type().ok()?;
+    Some(kind.is_dir() || (kind.is_symlink() && e.path().is_dir()))
 }
 
 const BOM: &[u8] = b"\xEF\xBB\xBF";
