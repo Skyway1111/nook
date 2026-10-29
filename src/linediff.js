@@ -190,3 +190,35 @@ export function lineChanges(before, after, limit = 1000) {
   flush()
   return out
 }
+
+/** The lines of `before` and `after` as rows `{ t: ' ' | '-' | '+', text, a, b }`, numbered from 1. */
+export function diffRows(before, after) {
+  const runs = diffLines(before, after) ?? [['-', before.length], ['+', after.length]]
+  const out = []
+  let a = 0
+  let b = 0
+  for (const [t, n] of runs) {
+    for (let k = 0; k < n; k++) {
+      if (t === '=') out.push({ t: ' ', text: after[b], a: ++a, b: ++b })
+      else if (t === '-') out.push({ t, text: before[a], a: ++a, b: '' })
+      else out.push({ t, text: after[b], a: '', b: ++b })
+    }
+  }
+  return out
+}
+
+/** The rows within `context` lines of a change, in runs: each run a list of rows, with the rows far from any change left out. */
+export function nearChanges(list, context = 3) {
+  const near = new Uint8Array(list.length)
+  list.forEach((r, i) => {
+    if (r.t === ' ') return
+    for (let k = Math.max(0, i - context); k <= Math.min(list.length - 1, i + context); k++) near[k] = 1
+  })
+  const out = []
+  list.forEach((r, i) => {
+    if (!near[i]) return
+    if (!near[i - 1] || !out.length) out.push([])
+    out.at(-1).push(r)
+  })
+  return out
+}
