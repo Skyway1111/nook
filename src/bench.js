@@ -19,4 +19,16 @@ export function startBench() {
     const t = performance.now()
     shown(() => report('resize', performance.now() - t))
   })
+  // diff: F9 opens the git panel's diff of every change; ms from the press to the frame that shows its lines
+  addEventListener('keydown', e => {
+    if (e.key !== 'F9') return
+    const t = performance.now()
+    const drawn = new MutationObserver(() => {
+      if (!document.querySelector('.view.diff:not([hidden]) :is(.add, .del)')) return
+      drawn.disconnect()
+      shown(() => report('diff', performance.now() - t))
+    })
+    drawn.observe(document.getElementById('pane'), { childList: true, subtree: true })
+    document.getElementById('git-diff').click()
+  }, true)
 }

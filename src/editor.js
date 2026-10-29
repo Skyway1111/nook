@@ -58,3 +58,17 @@ export async function highlight(code, lang) {
   highlightCode(code, language.parser.parse(code), classHighlighter, put, () => out.append('\n'))
   return out
 }
+
+/** `code`'s syntax tokens, line by line, in the language its file `name` implies: for each line a list of
+ * `[from, to, className]`. Null when language-data doesn't know the language. */
+export async function tokenize(code, name) {
+  const found = LanguageDescription.matchFilename(languages, name.replace(/\.[^.]*$/, ext => ext.toLowerCase()))
+  if (!found) return null
+  const { language } = await found.load()
+  const lines = [[]]
+  let at = 0
+  highlightCode(code, language.parser.parse(code), classHighlighter,
+    (text, className) => { if (className) lines.at(-1).push([at, at + text.length, className]); at += text.length },
+    () => { lines.push([]); at = 0 })
+  return lines
+}

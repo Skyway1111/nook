@@ -4,11 +4,15 @@
 //   idle    CPU, as % of one core, over 10 s with nothing happening
 //   typing  CPU over 10 s of typing a key every 100 ms
 //   memory  MB of PSS once idle
+//   diff    with --repo: ms from asking for the diff of every change to the frame that shows it, and the CPU
+//           seconds nook spends in the 5 s after, colors included
 // CPU and memory count nook and its WebKit processes, not the shell in its tab. The tab runs `cat` in a
-// folder outside any repository, so neither Claude nor the git panel's poll adds noise. Xvfb has no GPU, so
+// folder outside any repository, so neither Claude nor the git panel's poll adds noise. With --repo it runs
+// in that repository instead, so the git panel and its diff tab are measured too. Xvfb has no GPU, so
 // WebKit draws in software: compare numbers from the same machine, not with a desktop's.
 // Needs Xvfb and xdotool, and a build: `npx tauri build --no-bundle`. To compare two builds, run each:
 //   node bench/linux.mjs [--bin src-tauri/target/release/nook] [--wallpapers none,koi] [--runs 5] [--json out.json]
+//     [--repo path]   bench/diffrepo.mjs makes a repository with a large diff for it
 import { spawn, execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -18,6 +22,7 @@ const flag = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); 
 const bin = resolve(flag('bin', new URL('../src-tauri/target/release/nook', import.meta.url).pathname))
 const wallpapers = flag('wallpapers', 'none').split(',')
 const runs = Number(flag('runs', 5))
+const repo = flag('repo', null) && resolve(flag('repo'))
 const [W, H] = [1280, 820] // nook's own first size
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -43,7 +48,7 @@ function scratch(wallpaper) {
   mkdirSync(config, { recursive: true })
   mkdirSync(home)
   writeFileSync(join(config, 'settings.json'), JSON.stringify({
-    command: ['bash', '-c', "printf 'nook bench\\n'; exec cat"], lastDir: home, pinned: [],
+    command: ['bash', '-c', "printf 'nook bench\\n'; exec cat"], lastDir: repo ?? home, pinned: [],
   }))
   writeFileSync(join(config, 'theme.css'), `:root { --wallpaper: ${wallpaper}; }\n`)
   return { dir, env: { ...env, XDG_CONFIG_HOME: join(dir, 'config'), HOME: home } }
@@ -77,6 +82,7 @@ function launch(run) {
   return {
     child,
     lines,
+    next,
     ready: next('ready').then(l => l.at - started),
     stop: () => new Promise(r => { child.once('exit', r); child.kill('SIGTERM') }),
   }
@@ -164,6 +170,18 @@ for (const wallpaper of wallpapers) {
       }
       await sleep(500)
       const resizes = app.lines.slice(before).filter(l => l.event === 'resize').map(l => l.ms)
+      let diff = NaN
+      let diffCpu = NaN
+      if (repo) {
+        xdotool('windowsize', '--sync', win, String(W), String(H))
+        await sleep(1000)
+        const pids = processes(app.child.pid)
+        const c0 = cpu(pids)
+        xdotool('key', 'F9')
+        diff = (await app.next('diff')).ms
+        await sleep(5000)
+        diffCpu = cpu(pids) - c0
+      }
       await app.stop()
       results.push({
         wallpaper,
@@ -174,6 +192,8 @@ for (const wallpaper of wallpapers) {
         idle,
         typing,
         memory,
+        diff,
+        diffCpu,
       })
     }
   }
@@ -183,9 +203,10 @@ xvfb.kill()
 
 const f = (n, d = 1) => (Number.isFinite(n) ? n.toFixed(d) : '-')
 console.log(`nook bench: ${bin}`)
-console.log('wallpaper     open ms  resize ms (p95)  idle CPU %  typing CPU %  memory MB')
+console.log('wallpaper     open ms  resize ms (p95)  idle CPU %  typing CPU %  memory MB' + (repo ? '  diff ms  diff CPU s' : ''))
 for (const r of results) {
   console.log(`${r.wallpaper.padEnd(12)}  ${f(r.open, 0).padStart(7)}  ${f(r.resize).padStart(9)} (${f(r.resizeP95)})`.padEnd(43) +
-    `${f(r.idle).padStart(10)}  ${f(r.typing).padStart(12)}  ${f(r.memory, 0).padStart(9)}`)
+    `${f(r.idle).padStart(10)}  ${f(r.typing).padStart(12)}  ${f(r.memory, 0).padStart(9)}` +
+    (repo ? `  ${f(r.diff, 0).padStart(7)}  ${f(r.diffCpu, 2).padStart(10)}` : ''))
 }
 if (flag('json')) writeFileSync(flag('json'), JSON.stringify({ bin, runs, results }, null, 2))

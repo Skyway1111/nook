@@ -1,5 +1,6 @@
 // The git panel: the active tab's repository, its changes, branch, and commit box. Every action
-// is a git command run by git.rs, so hooks and credential helpers behave as in a terminal.
+// is a git command run by git.rs, so hooks and credential helpers behave as in a terminal. diff.js
+// draws the diff tabs it opens.
 import { invoke } from '@tauri-apps/api/core'
 import { $, el, openMenu, openPicker, dragPath } from './ui.js'
 import { ICON, basename } from './files.js'
@@ -153,11 +154,12 @@ export function startGit({ openView, openFile, insertPath }) {
 
   // Writes run one at a time: two at once collide on the index lock.
   let queue = Promise.resolve()
-  function act(args, input) {
-    const dir = s.root
+  let said = '' // what the last write that failed said
+  /** Runs a write in `dir`, the panel's repository unless given. Resolves to whether it worked. */
+  function act(args, input, dir = s.root) {
     const done = queue
       .then(() => invoke('git', { dir, args, input }))
-      .then(() => (say(''), true), e => (say(String(e)), false))
+      .then(() => (say(''), true), e => (say((said = String(e))), false))
     queue = done
     done.then(refresh)
     return done
@@ -175,10 +177,21 @@ export function startGit({ openView, openFile, insertPath }) {
     act([...args, ...PATHSPEC], paths.join('\0'))
   }
 
-  function openDiff(rel) {
-    const { root } = s
+  /** A diff tab of what changed under `rel` in the repository `status` describes; '' is all of it. */
+  function openDiff(status, rel) {
+    const { root } = status
     const path = rel ? abs(root, rel) : root
-    openView('diff', rel ? leaf(rel) : `${basename(root)} changes`, path, view => startDiff(view, root, rel, openFile))
+    // A diff tab's writes go through the same queue, in its own repository. It shows what a failure said.
+    const run = (args, input) => act(args, input, root).then(ok => ok || said)
+    const stage = (paths, on) => {
+      const args = on ? ['add', '-A'] : status.oid ? ['restore', '--staged'] : ['rm', '--cached', '-r', '-q']
+      return run([...args, ...PATHSPEC], paths.join('\0'))
+    }
+    openView('diff', rel ? leaf(rel) : `${basename(root)} changes`, path, view => {
+      // Loaded on first use, so it costs nothing at startup.
+      const diff = import('./diff.js').then(m => m.startDiff(view, { root, rel, openFile, run, stage }))
+      return { refresh: () => diff.then(d => d.refresh()) }
+    })
   }
 
   list.addEventListener('click', e => {
@@ -194,7 +207,7 @@ export function startGit({ openView, openFile, insertPath }) {
     } else if (group) {
       if (!collapsed.delete(group)) collapsed.add(group)
       render()
-    } else openDiff(path)
+    } else openDiff(s, path)
   })
   list.addEventListener('contextmenu', e => {
     const li = e.target.closest('li.change')
@@ -213,7 +226,7 @@ export function startGit({ openView, openFile, insertPath }) {
     const path = abs(s.root, li.dataset.path)
     dragPath(e, path, target => target?.closest('#pane') && insertPath(path))
   })
-  $('git-diff').onclick = () => openDiff('')
+  $('git-diff').onclick = () => openDiff(s, '')
   $('git-stage-all').onclick = () => stage(s.changes, s.changes.some(c => c.staged !== 'on'))
 
   $('git-branch').onclick = async e => {
@@ -297,7 +310,7 @@ export function startGit({ openView, openFile, insertPath }) {
       const status = await invoke('git_status', { path }).catch(() => null)
       if (!status?.root || !paths.within(path, status.root)) return openFile(path)
       const rel = path.slice(status.root.length).replace(/^[\\/]/, '').replaceAll(paths.SEP, '/')
-      openView('diff', leaf(rel), path, view => startDiff(view, status.root, rel, openFile))
+      openDiff(status, rel)
     },
     /** Follows the tab now showing: a Claude tab's folder, or an open file. */
     show(path) {
@@ -307,56 +320,4 @@ export function startGit({ openView, openFile, insertPath }) {
     },
     refresh,
   }
-}
-
-const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)/
-
-/** A diff tab: what changed under `rel` since the last commit, or across the repo when `rel` is ''. */
-function startDiff(view, root, rel, openFile) {
-  view.tabIndex = -1 // focusable, so the keyboard scrolls it
-  let shown
-
-  async function refresh() {
-    const text = await invoke('git_diff', { root, path: rel }).catch(e => `\\ ${e}`)
-    if (text === shown) return
-    shown = text
-    const top = view.scrollTop
-    const lines = render(text)
-    view.className = lines.length ? 'view diff' : 'view note'
-    view.replaceChildren(...(lines.length ? lines : [el('p', { textContent: 'No changes' })]))
-    view.scrollTop = top
-  }
-
-  function render(text) {
-    const out = []
-    let a = 0 // the next old line number
-    let b = 0 // the next new one
-    let header = false // between a file's `diff --git` and its first hunk
-    const num = n => el('i', { textContent: n })
-    const line = (kind, left, right, content) => {
-      const div = el('div', { className: kind })
-      div.append(num(left), num(right), content)
-      out.push(div)
-    }
-    for (const l of text.split('\n')) {
-      const hunk = l.startsWith('@@') && HUNK.exec(l)
-      if (l.startsWith('diff --git ')) {
-        header = true
-        const file = l.slice(l.lastIndexOf(' b/') + 3)
-        out.push(el('h3', { textContent: file, title: 'Open file', onclick: () => openFile(abs(root, file)) }))
-      } else if (hunk) {
-        header = false
-        a = +hunk[1]
-        b = +hunk[2]
-        line('hunk', '', '', hunk[3])
-      } else if (l[0] === '\\' || (header && l.startsWith('Binary files'))) line('meta', '', '', l.replace(/^\\ /, ''))
-      else if (header) continue
-      else if (l[0] === '+') line('add', '', b++, l.slice(1))
-      else if (l[0] === '-') line('del', a++, '', l.slice(1))
-      else if (l[0] === ' ') line('', a++, b++, l.slice(1))
-    }
-    return out
-  }
-
-  return { refresh }
 }
