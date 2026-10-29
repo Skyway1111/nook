@@ -65,7 +65,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { errorLine, outcome, testCounts } from './register.js'
+import { errorLine, outcome, readPaths, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -135,4 +135,19 @@ test('a folded run of commands lists each one that has something to say, and unf
     expect(await ui.find({ type: 'Text', text: /cargo/ })).toBeFalsy()
     await ui.unmount()
   }
+})
+
+test('a folded run of reads names its files, relative to the session, once each', async ($, on) => {
+  const read = (id: string, file_path: string, more = {}) => ({ tool_use_id: id, tool: 'Read', input: { file_path }, isRunning: false, isErrored: false, isInterrupted: false, ...more })
+  const calls = [read('r1', '/work/src/app.js'), read('r2', '/work/src/app.js'), read('r3', '/etc/hosts'), read('r4', '/work/x.js', { isErrored: true }), read('r5', '/work/y.js', { isRunning: true })]
+  expect(readPaths(calls, '/work')).toEqual(['src/app.js', '/etc/hosts'])
+  expect(readPaths(calls, 'C:\\work')).toEqual(['/work/src/app.js', '/etc/hosts'])
+  expect(readPaths([read('w', 'C:\\work\\src\\a.rs')], 'C:\\work\\')).toEqual(['src\\a.rs'])
+
+  on('session.root', () => ({ value: '/work' }))
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'Read 3 files' }))
+  const many = Array.from({ length: 10 }, (_, i) => read(`m${i}`, `/work/f${i}.js`))
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'ToolGroup', requestId: 'reads', props: { calls: many, isActive: false, isExpanded: false } })
+  expect((await ui.find({ type: 'Text', text: /f0\.js/ }))?.text).toBe('f0.js, f1.js, f2.js, f3.js, f4.js, f5.js, f6.js, f7.js, and 2 more')
+  await ui.unmount()
 })

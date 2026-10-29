@@ -2,3 +2,5 @@ node_modules/
 dist/
 src-tauri/target/
 src-tauri/gen/
+# Claude Code writes this beside a mod it loads, for its own types
+src-tauri/mod/tsconfig.json
