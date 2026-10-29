@@ -15,6 +15,7 @@ import { startWallpaper } from './wallpaper.js'
 import { $ } from './ui.js'
 
 const win = getCurrentWindow()
+if (window.NOOK_BENCH) import('./bench.js').then(m => m.startBench())
 const cwd = window.NOOK_CWD
 const banner = message => Object.assign($('banner'), { hidden: false, textContent: message })
 $('banner').onclick = () => { $('banner').hidden = true }

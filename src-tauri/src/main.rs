@@ -16,7 +16,8 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
+    time::Instant,
 };
 use tauri::{
     webview::{PermissionKind, PermissionResponse},
@@ -302,7 +303,19 @@ fn render_on_the_cpu_unless_gpu() {
     }
 }
 
+/// When nook started, for `bench`.
+static STARTED: OnceLock<Instant> = OnceLock::new();
+
+/// Prints a timing for `bench/linux.mjs`, which starts nook with `NOOK_BENCH` set: `ms`, or without it, the
+/// milliseconds since nook started.
+#[tauri::command]
+fn bench(event: String, ms: Option<f64>) {
+    let ms = ms.unwrap_or_else(|| STARTED.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0));
+    println!("bench {event} {ms:.1}");
+}
+
 fn main() {
+    STARTED.get_or_init(Instant::now);
     for key in INHERITED_SESSION_MARKERS {
         std::env::remove_var(key); // before any thread exists
     }
@@ -330,7 +343,11 @@ fn main() {
                 .decorations(false)
                 .background_color(tauri::window::Color(20, 18, 28, 255))
                 .additional_browser_args(&format!("{WRY_ARGS}{gpu}"))
-                .initialization_script(format!("window.NOOK_CWD = {};", serde_json::to_string(&start)?))
+                .initialization_script(format!(
+                    "window.NOOK_CWD = {}; window.NOOK_BENCH = {};",
+                    serde_json::to_string(&start)?,
+                    std::env::var_os("NOOK_BENCH").is_some()
+                ))
                 // The settings drawer's font pickers list installed fonts through queryLocalFonts().
                 .on_permission_request(|_, kind| match kind {
                     PermissionKind::LocalFonts => PermissionResponse::Allow,
@@ -347,6 +364,7 @@ fn main() {
         // A command without `async` runs on the main thread, where it would hold up the keystrokes queued
         // behind it. Only the PTY's writes, resizes, and closes and the shell's quick calls stay there.
         .invoke_handler(tauri::generate_handler![
+            bench,
             boot,
             settings,
             update_settings,
