@@ -79,6 +79,11 @@ struct Settings {
     claude_follows: bool,
     /// Claude's theme before nook set it, for when Claude stops following.
     claude_theme: Option<String>,
+    /// Whether the theme follows the system's light and dark: `day_theme` while it's light, `night_theme`
+    /// while it's dark. Each is a folder in `themes`, "" for nook's defaults, or None until one is picked.
+    light_dark: bool,
+    day_theme: Option<String>,
+    night_theme: Option<String>,
     /// Quick prompts, which Ctrl+Shift+P pastes into Claude's prompt. `{file}` is the file open last,
     /// `{folder}` the file browser's folder.
     prompts: Vec<Prompt>,
@@ -133,6 +138,9 @@ impl Default for Settings {
             theme: None,
             claude_follows: true,
             claude_theme: None,
+            light_dark: false,
+            day_theme: None,
+            night_theme: None,
             reopen_sessions: true,
             sessions: Vec::new(),
             prompts: PROMPTS.iter().map(|(name, text)| Prompt { name: name.to_string(), text: text.to_string() }).collect(),
