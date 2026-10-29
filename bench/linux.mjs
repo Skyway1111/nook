@@ -4,7 +4,7 @@
 //   key       ms from a key going down until the frame that shows its echo, over 100 keys (median and p95)
 //   scroll    ms from a wheel step until the frame that shows the scrolled rows, over 40 steps
 //   flood     ms from Enter until the frame that shows the last of 10,000 lines of output, and the
-//             longest gaps between frames meanwhile (p95 and max)
+//             longest gaps between frames meanwhile (p95 and max), each the median of three floods
 //   idle      CPU, as % of one core, over 10 s with nothing happening
 //   typing    CPU over 10 s of typing a key every 100 ms
 //   memory    MB of PSS once idle, and again after the flood fills the scrollback
@@ -22,15 +22,17 @@
 // script ran, and so on until the terminal's text showed.
 // With two builds or more, `--bin base,new` or `--bin baseline,main,new`, launches take turns between them, so
 // drift in the machine hits all alike, and the table ends with the change from each earlier build to the last.
-// A change worse than its noise floor is flagged, and the exit code is 1 if any is. Comparing against a fixed
-// baseline as well as main catches a slow drift that no single merge shows.
+// A change is flagged when it is worse than its noise, and the exit code is 1 if any is. Its noise, after the ±,
+// is the largest of the metric's floor, 5% of the base, and 2.5 standard errors of the change, from how much
+// each build's own sessions spread: a number that swings from session to session needs a bigger change to
+// count. Comparing against a fixed baseline as well as main catches a slow drift that no single merge shows.
 // CPU and memory count nook and its WebKit processes, not the shell in its tab. The tab runs a small bash loop
 // that echoes lines, in a folder outside any repository, so neither Claude nor the git panel's poll adds
 // noise. With --repo it runs in that repository instead, so the git panel and its diff tab are measured too;
 // bench/diffrepo.mjs makes a repository with a large diff for it. Xvfb has no GPU, so WebKit draws in software: compare numbers from the same machine, not with a
 // desktop's.
 // Needs Xvfb, xdotool and python3, and a build: `npx tauri build --no-bundle`.
-//   node bench/linux.mjs [--bin src-tauri/target/release/nook[,other...]] [--wallpapers none,koi] [--runs 7]
+//   node bench/linux.mjs [--bin src-tauri/target/release/nook[,other...]] [--wallpapers none,koi] [--runs 30]
 //                        [--sessions 3] [--tui off] [--repo path] [--json out.json]
 import { spawn, execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
@@ -40,10 +42,11 @@ import { join, resolve } from 'path'
 const flag = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i < 0 ? fallback : process.argv[i + 1] }
 const bins = flag('bin', new URL('../src-tauri/target/release/nook', import.meta.url).pathname).split(',').map(b => resolve(b))
 const wallpapers = flag('wallpapers', 'none').split(',')
-const runs = Number(flag('runs', 7))
+const runs = Number(flag('runs', 30))
 const sessions = Math.min(runs, Number(flag('sessions', 3)))
 const repo = flag('repo', null) && resolve(flag('repo'))
 const [W, H] = [1280, 820] // nook's own first size
+const FLOODS = 3 // floods a session times
 for (const bin of bins) if (!existsSync(bin)) throw new Error(`no build at ${bin}`)
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -201,18 +204,22 @@ async function session(app) {
   Object.assign(r, { key: median(keys), keyP95: quantile(keys, 0.95) })
   Object.assign(r, await resizes(app, win, 40, 'resize'))
 
-  // A flood of output fills the scrollback; then the wheel scrolls back through it.
-  xdotool('type', '--delay', '20', 'flood')
-  await sleep(200)
-  from = app.lines.length
-  xdotool('key', 'Return')
-  try {
-    r.flood = (await app.next('flood', 60000, from)).ms
-    await app.next('flood-frame-max', 5000, from)
-    r.floodFrameP95 = app.since(from, 'flood-frame-p95')[0]
-    r.floodFrameMax = app.since(from, 'flood-frame-max')[0]
-  } catch { r.flood = r.floodFrameP95 = r.floodFrameMax = NaN }
-  await sleep(1500)
+  // Floods of output fill the scrollback; then the wheel scrolls back through it. A flood paints in a handful
+  // of frames, so one slow frame moves its gaps by tens of ms: each number is the median of FLOODS floods.
+  const floods = []
+  for (let k = 0; k < FLOODS; k++) {
+    xdotool('type', '--delay', '20', 'flood')
+    await sleep(200)
+    from = app.lines.length
+    xdotool('key', 'Return')
+    try {
+      const ms = (await app.next('flood', 60000, from)).ms
+      await app.next('flood-frame-max', 5000, from)
+      floods.push({ ms, p95: app.since(from, 'flood-frame-p95')[0], max: app.since(from, 'flood-frame-max')[0] })
+    } catch {}
+    await sleep(1500)
+  }
+  Object.assign(r, { flood: median(floods.map(x => x.ms)), floodFrameP95: median(floods.map(x => x.p95)), floodFrameMax: median(floods.map(x => x.max)) })
   r.memoryFull = pss(processes(app.child.pid))
   from = app.lines.length
   for (let k = 0; k < 40; k++) {
@@ -299,10 +306,8 @@ const METRICS = [
   ['keyP95', 'key echo p95 ms', 1, 4],
   ['scroll', 'scroll ms', 1, 2],
   ['flood', 'flood ms', 0, 100],
-  // A flood paints in a handful of frames, so one slow frame moves these by tens of ms: 12 floods of one
-  // build spread from 57 to 203 ms.
-  ['floodFrameP95', 'flood frame p95 ms', 1, 50],
-  ['floodFrameMax', 'flood frame max ms', 0, 50],
+  ['floodFrameP95', 'flood frame p95 ms', 1, 20],
+  ['floodFrameMax', 'flood frame max ms', 0, 20],
   ['idle', 'idle CPU %', 1, 0.5],
   ['typing', 'typing CPU %', 1, 1.5],
   ['memory', 'memory MB', 0, 5],
@@ -316,6 +321,23 @@ const METRICS = [
   ['tuiResizeP95', 'tui resize p95 ms', 1, 4],
 ]
 const RELATIVE = 0.05 // and a change must also exceed this share of base
+const SURE = 2.5 // and this many standard errors of the change, from how much each build's own numbers spread
+
+/** The standard deviation `xs` suggest: from their range when few, as the range of n draws runs to d2(n)
+ * deviations, and from their interquartile range when there are enough that one outlier shouldn't set it. */
+function deviation(xs) {
+  const s = sorted(xs)
+  if (s.length < 2) return 0
+  if (s.length >= 8) return (quantile(s, 0.75) - quantile(s, 0.25)) / 1.349
+  const d2 = [0, 0, 1.128, 1.693, 2.059, 2.326, 2.534, 2.704][s.length]
+  return (s.at(-1) - s[0]) / d2
+}
+/** How far apart two builds' medians can land by chance: SURE standard errors of their difference. A
+ * median of n has a standard error of about 1.25 deviations over the root of n. */
+function noise(a, b) {
+  const se = xs => (1.2533 * deviation(xs)) / Math.sqrt(Math.max(1, sorted(xs).length))
+  return SURE * Math.hypot(se(a), se(b))
+}
 
 const results = [] // { wallpaper, bin, opens, sessions: [], tui: [] }
 for (const wallpaper of wallpapers) {
@@ -363,16 +385,17 @@ for (const wallpaper of wallpapers) {
   console.log(`\nwallpaper ${wallpaper}: median (min-max) of ${runs} opens and ${sessions} sessions`)
   bins.forEach((b, i) => console.log(`  [${i}] ${b}`))
   const bases = mine.slice(0, last)
-  console.log('metric'.padEnd(20) + mine.map((_, i) => `[${i}]`.padEnd(24)).join('') + bases.map((_, i) => `[${last}] vs [${i}]`.padEnd(22)).join(''))
+  console.log('metric'.padEnd(20) + mine.map((_, i) => `[${i}]`.padEnd(24)).join('') + bases.map((_, i) => `[${last}] vs [${i}]`.padEnd(30)).join(''))
   for (const [key, label, d, floor] of METRICS) {
     let line = label.padEnd(20) + mine.map(r => cell(r, key, d).padEnd(24)).join('')
     const b = median(values(mine[last], key))
     for (const base of bases) {
       const a = median(values(base, key))
       const delta = b - a
-      const flagged = delta > Math.max(floor, RELATIVE * Math.abs(a))
+      const bar = Math.max(floor, RELATIVE * Math.abs(a), noise(values(base, key), values(mine[last], key)))
+      const flagged = delta > bar
       if (flagged) worse++
-      line += `${delta >= 0 ? '+' : ''}${f(delta, d)}${a ? ` (${delta >= 0 ? '+' : ''}${f((100 * delta) / a, 0)}%)` : ''}${flagged ? ' WORSE' : ''}`.padEnd(22)
+      line += `${delta >= 0 ? '+' : ''}${f(delta, d)}${a ? ` (${delta >= 0 ? '+' : ''}${f((100 * delta) / a, 0)}%)` : ''} ±${f(bar, d)}${flagged ? ' WORSE' : ''}`.padEnd(30)
     }
     console.log(line.trimEnd())
   }

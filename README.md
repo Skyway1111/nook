@@ -98,7 +98,7 @@ npm test         # the frontend's tests: the wallpapers' scenes and both systems
 cd src-tauri; cargo test
 ```
 
-On Linux, `node bench/linux.mjs --bin <nook> --wallpapers none,koi` measures a release build: open time and where it goes, resize, key echo, scroll, and output flood times, idle and typing CPU, and memory. Give it two builds, `--bin <base>,<new>`, and it alternates their launches and flags each number that got worse than its noise. It needs Xvfb, xdotool and python3. In bench/tui.mjs, a stand-in for Claude's fullscreen view, key echo is timed on the screen, by the pixels of the composer's draft.
+On Linux, `node bench/linux.mjs --bin <nook> --wallpapers none,koi` measures a release build: open time and where it goes, resize, key echo, scroll, and output flood times, idle and typing CPU, and memory. Give it two builds, `--bin <base>,<new>`, and it alternates their launches and flags each number that got worse than its noise, printed after the ± beside each change: a number that swings from session to session needs a bigger change to count. It needs Xvfb, xdotool and python3. In bench/tui.mjs, a stand-in for Claude's fullscreen view, key echo is timed on the screen, by the pixels of the composer's draft.
 
 Before a build you publish, run `$env:RUSTFLAGS = "--remap-path-prefix=$env:USERPROFILE=~"`. Without it, `nook.exe` holds your home folder's path in each of its dependencies' source paths.
 
