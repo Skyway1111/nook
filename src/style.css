@@ -34,6 +34,7 @@ button:disabled { opacity: .3; }
 #titlebar { display: flex; align-items: center; gap: 2px; min-width: 0; }
 #titlebar > button, .lead > button { flex: none; width: 32px; height: 28px; border-radius: 6px; color: var(--ink-3); }
 #titlebar > button:hover, .lead > button:hover { background: var(--hover); color: var(--ink-1); }
+#titlebar > button.on { background: var(--hover); color: var(--ink-1); }
 /* As wide as the file browser, so the tabs start where the pane does. */
 .lead { flex: none; display: flex; align-items: center; align-self: stretch; width: var(--files-width); padding-left: 4px; }
 body.files-hidden .lead { width: auto; }
@@ -126,6 +127,36 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .wallpapers .card canvas { width: 120px; height: 68px; border-radius: 7px; border: 1px solid var(--line); background: var(--term-bg); }
 .wallpapers .card.at { color: var(--ink-1); }
 .wallpapers .card.at canvas { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+/* The sessions dashboard, over the pane: a card for each Claude tab. */
+.sessions {
+  position: absolute; z-index: 6; inset: 10px 12px auto; max-height: calc(100% - 20px); overflow: auto;
+  display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 12px; outline: none;
+  background: var(--bg); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.sessions > header { display: flex; align-items: center; gap: 14px; font-size: .86rem; color: var(--ink-3); white-space: nowrap; }
+.sessions > header b { font-weight: 600; font-size: .95rem; color: var(--ink-1); }
+.sessions > header .count { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.sessions > header .new { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; color: var(--ink-2); }
+.sessions > header .new:hover { background: var(--hover); color: var(--ink-1); }
+.sessions .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.sessions .session {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px; border-radius: 9px; text-align: left;
+  background: var(--raised); border: 1px solid var(--line); color: var(--ink-2); font-size: .86rem; outline: none;
+}
+.sessions .session:hover { border-color: var(--ink-3); }
+.sessions .session.at { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.sessions .session header { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.sessions .session .state { color: var(--ink-1); font-weight: 600; white-space: nowrap; }
+.sessions .session .where { flex: 1; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
+.sessions .session p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessions .session .prompt { color: var(--ink-1); }
+.sessions .session .doing { font-family: var(--font-term); font-size: .8rem; color: var(--ink-3); min-height: 1.2em; }
+.sessions .session footer { font-size: .78rem; color: var(--ink-3); }
+.sessions .mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.sessions [data-mark=working] .mark { background: var(--session-working); }
+.sessions [data-mark=waiting] .mark { background: var(--session-waiting); }
+.sessions [data-mark=done] .mark { background: var(--session-done); }
 
 /* Pictures over Claude's transcript, laid out in percents of the screen by pictures.js. */
 .pictures { position: absolute; inset: 0; pointer-events: none; }

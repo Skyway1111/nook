@@ -44,6 +44,7 @@ ICONS = {
     0xE790: "color",  # a theme
     0xE7A7: "arrow_undo",
     0xE7AC: "apps",  # OpenWith
+    0xE7C4: "window_multiple",  # TaskView: the sessions dashboard
     0xE838: "folder_open",
     0xE890: "eye",  # View: preview
     0xE895: "arrow_sync",

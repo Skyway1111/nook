@@ -12,6 +12,7 @@ import { startSettings } from './settings.js'
 import { bytes } from './palette.js'
 import { holdBackdrops } from './backdrops.js'
 import { startWallpaper } from './wallpaper.js'
+import { startDashboard } from './dashboard.js'
 import { $ } from './ui.js'
 
 const win = getCurrentWindow()
@@ -24,7 +25,7 @@ addEventListener('unhandledrejection', e => banner(String(e.reason)))
 
 const { settings, error, configDir, home } = await invoke('boot')
 
-let tabs, files, wallpaper
+let tabs, files, wallpaper, dashboard
 const rebake = holdBackdrops([document.body, ...['pane', 'files', 'git'].map($)])
 const drawer = await startSettings({
   configDir,
@@ -92,6 +93,7 @@ tabs = startTabs({
     wallpaper.show(!tab.viewer)
     git.show(tab.path)
   },
+  onSessions: () => dashboard?.refresh(),
 })
 if (error) banner(`Using default settings. ${error}`)
 
@@ -104,6 +106,13 @@ getCurrentWebview().onDragDropEvent(e => {
 const here = () => files.current() || cwd
 $('toggle-files').onclick = () => { document.body.classList.toggle('files-hidden'); tabs.focus() }
 const newSession = () => tabs.openClaude(here())
+dashboard = startDashboard($('pane'), {
+  button: $('toggle-sessions'),
+  list: () => tabs.sessions(),
+  open: tab => tabs.show(tab),
+  newSession,
+  onClose: () => tabs.focus(),
+})
 $('new-tab').onclick = newSession
 $('new-tab').onmouseenter = () => { $('new-tab').title = `New Claude session in ${here()}` }
 $('toggle-git').onclick = () => { document.body.classList.toggle('git-hidden'); git.refresh(); tabs.focus() }
