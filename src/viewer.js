@@ -1,5 +1,5 @@
-// A file tab: a picture, audio or video, a PDF, or text in an editor. Markdown, CSV and TSV, and SVG open
-// rendered and toggle to their source. previews.js draws all but Markdown, and loads when one first opens.
+// A file tab: a picture, audio or video, a PDF, or text in an editor. Markdown, CSV and TSV, SVG, and HTML
+// with no script open rendered and toggle to their source. previews.js draws all but Markdown, and loads when one first opens.
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { IMAGE, basename } from './files.js'
 import { el, openMenu } from './ui.js'
@@ -21,7 +21,7 @@ const editing = () => import('./editor.js')
 const previews = () => import('./previews.js')
 
 /** Text files that open rendered, by how they're drawn. */
-const RENDERED = [[/\.(md|markdown)$/i, 'markdown'], [/\.(csv|tsv)$/i, 'sheet'], [/\.svg$/i, 'svg']]
+const RENDERED = [[/\.(md|markdown)$/i, 'markdown'], [/\.(csv|tsv)$/i, 'sheet'], [/\.svg$/i, 'svg'], [/\.html?$/i, 'html']]
 // Shown without reading them as text. Kept here, beside IMAGE, so a Claude tab's code loads no more.
 const MEDIA = /\.(mp4|webm|mov|m4v|ogv|mp3|wav|ogg|oga|flac|m4a|aac|opus)$/i
 const PDF = /\.pdf$/i
@@ -83,7 +83,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
   // The rendered page, and the button that swaps it for the source.
   const drawn = RENDERED.find(([test]) => test.test(path))?.[1]
   const page = drawn && el('div', { className: drawn === 'markdown' ? 'markdown' : 'rendered', tabIndex: -1 })
-  let drawing // previews.js's view of a sheet or SVG, once it has drawn one
+  let drawing // previews.js's view of a sheet, an SVG, or a page, once it has drawn one
   let player // previews.js's view of audio, video, or a PDF
   const toggle = page && Object.assign(button('', () => { preview(!previewing); focus() }), { className: 'mode' })
   let previewing = !!page
@@ -147,7 +147,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
     if (drawn !== 'markdown') {
       const text = editor.state.doc.toString()
       if (!drawing) {
-        drawing = (await previews())[drawn]()
+        drawing = (await previews())[drawn](path)
         page.replaceChildren(drawing.el)
       }
       return drawing.update(text, name)
@@ -181,7 +181,8 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave })
     changed()
     paint('text', [editor.dom, ...(page ? [page, toggle] : []), bar])
     if (blameOn) blame()
-    if (page) preview(previewing && !target)
+    // A page with a script opens on its source: drawn with scripts off, it would mostly be blank.
+    if (page) preview(previewing && !target && !(drawn === 'html' && /<script\b/i.test(text)))
     if (document.activeElement === view) focus()
     if (target) reveal(target)
   }

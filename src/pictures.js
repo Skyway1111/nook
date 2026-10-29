@@ -39,7 +39,7 @@ const MAX_BASE64 = 64 << 20 // the largest picture sent in chunks, in base64
 
 /** The asset URL of an HTML file with its folders kept as the URL's own, so the page's relative links (its
  * stylesheet, its pictures) resolve beside it. `convertFileSrc` encodes the whole path as one segment. */
-function pageUrl(path) {
+export function pageUrl(path) {
   return convertFileSrc('').replace(/\/$/, '') + '/' + path.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/')
 }
 
@@ -68,7 +68,7 @@ async function pictureUrl(k, base64) {
 export function startPictures(term, screen, reply = () => {}) {
   const layer = screen.appendChild(el('div', { className: 'pictures' }))
   const cell = term.buffer.active.getNullCell()
-  const files = new Map() // id -> { url, columns, rows, blob, page: an HTML page's folder }, oldest first
+  const files = new Map() // id -> { url, columns, rows, blob, page: an HTML page's folder, path: a named file's }, oldest first
   let sending = null // a picture arriving in chunks: { keys, parts, size }
   const shown = new Map() // id -> { el, css }
   let seen = false // whether Claude has drawn a picture yet
@@ -132,7 +132,7 @@ export function startPictures(term, screen, reply = () => {}) {
       }
       // An HTML page Claude wrote shows as the page itself, laid out wide and scaled into its box.
       const page = /\.html?$/i.test(path)
-      keep(id, { url: page ? pageUrl(path) : convertFileSrc(path), columns: Number(k.c), rows: Number(k.r), page: page && folder(path) })
+      keep(id, { url: page ? pageUrl(path) : convertFileSrc(path), columns: Number(k.c), rows: Number(k.r), page: page && folder(path), path })
       answer('OK')
     } else if (medium === 'd') {
       if (k.m === '1') sending = { keys: k, parts: [payload], size: payload.length }
@@ -248,6 +248,8 @@ export function startPictures(term, screen, reply = () => {}) {
   return {
     read,
     wrote,
+    /** The file a picture on screen was named by, or undefined for one sent whole or drawn by nook. */
+    pathOf: id => files.get(id)?.path,
     /** Hides the placeholder cells among a row's new spans, under the picture that covers them. */
     hide(spans) {
       if (seen) for (const s of spans) if (s.textContent.startsWith(PLACEHOLDER)) s.style.visibility = 'hidden'
