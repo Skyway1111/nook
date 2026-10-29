@@ -215,3 +215,25 @@ test('a build, install, linter, or git command says what it did', () => {
   const failed = 'Exit code 101\n   Compiling a\n   Compiling b\n   Compiling c\nerror[E0425]: cannot find value `x`\n --> src/main.rs:3:5\nerror: could not compile `a` due to 1 previous error\n'
   expect(outcome(failed, true, 0)).toEqual([['1 error', 'error'], ['↳ error[E0425]: cannot find value `x` at src/main.rs:3:5', 'error']])
 })
+
+test('a picture a command wrote shows under it: one it names, or a new one in the session\'s folder', async ($, on) => {
+  const png = (w: number, h: number) => btoa(String.fromCharCode(137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, w >> 8, w & 255, 0, 0, h >> 8, h & 255))
+  let now = 10_000
+  on('clock.now', () => ({ value: (now += 1000) }))
+  on('session.root', () => ({ value: '/work' }))
+  const files: Record<string, number> = { '/work/plot.png': 11_500, '/work/old.png': 1_000, '/work/out/chart.svg': 11_500 }
+  on('fs.list', () => ({ value: [{ name: 'plot.png', kind: 'file', size: 9, mtimeMs: 11_500, isLink: false }, { name: 'old.png', kind: 'file', size: 9, mtimeMs: 1_000, isLink: false }, { name: 'notes.md', kind: 'file', size: 9, mtimeMs: 11_500, isLink: false }] }))
+  on('fs.stat', (_, e) => (e.path in files ? { value: { kind: 'file', size: 9, mtimeMs: files[e.path], isLink: false } } : { error: 'ENOENT' }))
+  on('fs.read', (_, e) => ({ value: e.path.endsWith('.svg') ? '<svg viewBox="0 0 400 200"></svg>' : { base64: png(640, 480) } }))
+  on('tool.call', () => ({ result: { stdout: 'saved out/chart.svg\n', stderr: '' } }))
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'engine' }))
+  await $.tool.call({ tool: 'Bash', command: 'python plot.py && cat old.png', tool_use_id: 'p1' })
+  const ui = await $.ui.mount({
+    plugin: 'nook', surface: 'terminal', component: 'ToolResult', requestId: 'p1',
+    props: { tool_use_id: 'p1', tool: 'Bash', output: { stdout: 'saved out/chart.svg\n', stderr: '' }, isErrored: false, isExpanded: false },
+  })
+  const images = await ui.findAll({ type: 'Image' })
+  expect(images.map(i => i.props.source.file)).toEqual(['/work/out/chart.svg', '/work/plot.png'])
+  expect(images.map(i => [i.props.columns, i.props.rows])).toEqual([[40, 10], [53, 20]])
+  await ui.unmount()
+})
