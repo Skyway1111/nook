@@ -1,6 +1,7 @@
 // Drags a dev nook's bottom-right corner 500 x 300 physical px out over a second and back, three times, with
 // SetWindowPos as Windows' own sizing loop does. Per drag: ms between frames that show a new size, ms from a
-// size reaching the window until a frame shows it, raster ms, and the display compositor's ms per frame.
+// size reaching the window until a frame shows it, ms from each leg's last size until Claude's last redraw
+// shows, raster ms, and the display compositor's ms per frame.
 // Then parity: each element that holds its gradients still (backdrops.js), screenshotted with its baked
 // bitmaps and with live CSS. A pixel off by more than 2 of 255 is more than dither.
 // cdp.mjs has the command that starts nook with CDP on 9222.
@@ -34,17 +35,24 @@ public static class Drag {
         if (t >= 1000) break;
         Thread.Sleep(8);
       }
-      Thread.Sleep(600);
+      Thread.Sleep(1500); // past the last redraw
     }
     return log.ToString();
   }
 }
 '@
-[Drag]::Run((Get-Process nook | Where-Object MainWindowHandle -ne 0 | Select-Object -First 1).MainWindowHandle)`
+[Drag]::Run((Get-Process nook | Where-Object { $_.Path -like '*\\target\\debug\\nook.exe' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowHandle)`
 
+// Each frame: when, the page's size in physical px, and the length of the text Claude's rows show.
 await evaluate(`(() => {
   window.__frames = []
-  const tick = () => { __frames.push([performance.timeOrigin + performance.now(), Math.round(innerWidth * devicePixelRatio), Math.round(innerHeight * devicePixelRatio)]); requestAnimationFrame(tick) }
+  const rows = document.querySelector('.view:not([hidden]) .xterm-rows')
+  const tick = () => {
+    let text = 0
+    for (const r of rows.children) text += r.textContent.trim().length
+    __frames.push([performance.timeOrigin + performance.now(), Math.round(innerWidth * devicePixelRatio), Math.round(innerHeight * devicePixelRatio), text])
+    requestAnimationFrame(tick)
+  }
   requestAnimationFrame(tick)
 })()`)
 
@@ -65,10 +73,17 @@ async function drag() {
     const f = frames.find(f => f[0] >= t && (out ? f[1] - dw >= w - 2 && f[2] - dh >= h - 2 : f[1] - dw <= w + 2 && f[2] - dh <= h + 2))
     return f ? [f[0] - t] : []
   })
+  // Each leg's last size, then the last frame within the pause after it whose text changed: Claude's redraw.
+  const legs = [steps[peak], steps.at(-1)].map(([t]) => {
+    const after = frames.filter(f => f[0] >= t && f[0] < t + 1500)
+    const changed = after.filter((f, i) => i && f[3] !== after[i - 1][3])
+    return changed.length ? changed.at(-1)[0] - t : 0
+  })
   const ms = name => events.filter(e => e.name === name).map(e => e.dur / 1000)
   return {
     gapP50: Math.round(median(gaps)), gapP90: Math.round(quantile(gaps, 0.9)),
     lagP50: Math.round(median(lags)), lagP90: Math.round(quantile(lags, 0.9)),
+    redraw: Math.round(Math.max(...legs)),
     raster: Math.round(ms('RasterTask').reduce((s, d) => s + d, 0)),
     composite: +median(ms('Display::DrawAndSwap')).toFixed(1),
   }

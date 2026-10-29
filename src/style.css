@@ -94,7 +94,9 @@ body.files-hidden #pane { border-left: 0; border-top-left-radius: 0; }
 body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .view { position: absolute; inset: 0; }
 .view.claude { padding: 12px 4px 8px 16px; }
-.xterm-host { position: relative; width: 100%; height: 100%; }
+.xterm-host { position: relative; width: 100%; height: 100%; overflow: hidden; } /* the screen moves for the composer */
+/* Its own layer: a redraw rasters only the text, not the backdrop under it, and the composer's shift only moves it. */
+.xterm-screen { will-change: transform; }
 /* xterm draws its own themed scrollbar; hide the native one underneath. */
 .xterm .xterm-viewport { background: transparent !important; scrollbar-width: none; }
 
@@ -102,40 +104,38 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .pictures { position: absolute; inset: 0; pointer-events: none; }
 .pictures > div { position: absolute; background: center / contain no-repeat; }
 
-/* Composer: the card over Claude's prompt. It sits under xterm's helpers, so IME text shows above it. */
+/* Composer: the card over Claude's prompt. It sits under xterm's helpers, so IME text shows above it at its caret. */
 .composer { position: absolute; z-index: 4; display: flex; }
 .composer .frame {
-  flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; min-width: 0;
+  flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0;
   padding: 10px 14px 7px; border-radius: 14px;
   background: var(--raised); border: 1px solid color-mix(in oklab, var(--rule) 60%, transparent);
-  font: var(--term-font-size)/var(--row) var(--font-ui); color: var(--ink-1);
+  font: var(--term-font-size)/1.4 var(--font-ui); color: var(--ink-1);
 }
-.composer .thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+.composer .thumbs { flex: none; display: flex; flex-wrap: wrap; gap: 8px; }
 .composer .thumbs:empty { display: none; }
 .composer .thumbs img {
   height: 64px; max-width: 128px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line);
   cursor: pointer;
 }
-/* Claude wraps each row to the terminal's width, so a row never needs clipping, and descenders overhang it. */
-.composer .draft > div, .composer .hints > div { white-space: pre; }
-.composer .draft { cursor: text; }
-.composer .draft > div { min-height: var(--row); }
+/* The draft wraps at the card's width in one font size. A draft taller than the card scrolls to the caret. */
+.composer .draft { min-height: 0; overflow: hidden auto; scrollbar-width: none; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
+.composer .draft > div { min-height: 1lh; }
 .composer .mark { margin-right: 8px; color: var(--rule); }
-.composer .foot { display: flex; align-items: flex-end; gap: 12px; font-size: .86em; color: var(--ink-3); }
+.composer .foot { flex: none; display: flex; align-items: flex-end; gap: 12px; font-size: .86em; color: var(--ink-3); }
 .composer .hints { flex: 1; min-width: 0; }
-.composer .hints > div { overflow: hidden; text-overflow: ellipsis; } /* a narrow card keeps the menus clear */
+.composer .hints > div { white-space: pre; overflow: hidden; text-overflow: ellipsis; } /* a narrow card keeps the menus clear */
 .composer .chips { display: flex; align-items: center; gap: 12px; color: var(--ink-2); }
 .composer .chips span { color: var(--ink-3); }
-.composer .chips button { height: var(--row); margin: 0 -6px; padding: 0 6px; border-radius: 5px; }
+.composer .chips button { height: 1.5em; margin: 0 -6px; padding: 0 6px; border-radius: 5px; }
 .composer .chips button:hover { background: var(--hover); color: var(--ink-1); }
 .composer .ring { width: 16px; height: 16px; rotate: -90deg; }
 .composer .ring circle { fill: none; stroke: var(--line); stroke-width: 2.5; }
 .composer .ring circle + circle { stroke: var(--accent); stroke-linecap: round; }
-.composer .caret {
-  display: inline-block; width: 2px; height: 1.15em; margin-right: -2px; vertical-align: -.2em;
-  background: var(--cursor); opacity: .4;
-}
-.xterm-host:focus-within .composer .caret { opacity: 1; }
+/* An inline around a zero-width character, so the caret never moves where a line wraps. */
+.composer .caret { position: relative; }
+.composer .caret::after { content: ''; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: var(--cursor); opacity: .4; }
+.xterm-host:focus-within .composer .caret::after { opacity: 1; }
 .composer .b { font-weight: 600; }
 .composer .i { font-style: italic; }
 .composer .d { opacity: .55; }

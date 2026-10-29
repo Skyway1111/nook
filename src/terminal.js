@@ -9,8 +9,8 @@ import { startPictures } from './pictures.js'
 import { ANSI, CLAUDE_SLOTS, slotVar, bytes } from './palette.js'
 
 const open = path => invoke('open_path', { path })
-export const SETTLE_MS = 100 // how long a dragged size holds still before Claude redraws for it and gradients go live
-const HOLD_MS = 500 // the longest xterm keeps holding the last frame for Claude's redraw
+const HOLD_MS = 500 // the longest xterm holds the last frame for Claude's redraw
+const QUIET_MS = 16 // how long a redraw's last chunk waits for more when it leaves the cursor hidden
 /** Mouse tracking modes by rank, as DECSET numbers and as xterm's names. */
 const MOUSE = { none: 0, 9: 1, x10: 1, 1000: 2, vt200: 2, 1002: 3, drag: 3, 1003: 4, any: 4 }
 
@@ -69,23 +69,29 @@ function clears(bytes) {
   return false
 }
 
+const SHOW = [0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68] // ESC [ ? 2 5 h
+/** Whether output ends by showing the cursor, as each of ConPTY's frames does while Claude's prompt has it. */
+const ends = bytes => bytes.length >= 6 && SHOW.every((b, i) => bytes[bytes.length - 6 + i] === b)
+
 export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
-  // IPC calls can complete out of order, so writes go one at a time; keys typed meanwhile batch up.
+  // IPC calls can complete out of order, so keys and sizes go to the PTY one at a time, in order: keys
+  // typed meanwhile batch up, and only the latest size waiting its turn goes.
   let id
-  let pending = ''
-  let writing = false
-  async function send(data) {
-    pending += data
-    if (writing) return
-    writing = true
+  const queue = []
+  let posting = false
+  async function send(message) {
+    const i = queue.length - 1
+    if (i >= 0 && typeof queue[i] === typeof message) queue[i] = typeof message === 'string' ? queue[i] + message : message
+    else queue.push(message)
+    if (posting) return
+    posting = true
     try {
-      while (pending) {
-        const chunk = pending
-        pending = ''
-        await invoke('pty_write', { id, data: chunk })
+      while (queue.length) {
+        const m = queue.shift()
+        await (typeof m === 'string' ? invoke('pty_write', { id, data: m }) : invoke('pty_resize', { id, ...m }))
       }
     } finally {
-      writing = false
+      posting = false
     }
   }
 
@@ -113,7 +119,15 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
   const pictures = startPictures(term, host.querySelector('.xterm-screen'))
   keepSameRows(host.querySelector('.xterm-rows'), pictures.hide)
 
-  let holding = 0 // until when a resize waits for Claude's redraw; 0 when none is due
+  // Claude redraws its whole screen within a frame or two of each resize: ESC [ 2 J, then every row, and
+  // ConPTY ends the frame by showing the cursor. Until that redraw is in, a synchronized update (DEC 2026)
+  // holds xterm's last frame, which the composer keeps on the screen's bottom row, instead of xterm painting
+  // its own cut copy first. Claude never closes the update itself, so the redraw's last chunk does. One
+  // resize waits at a time, and the size goes out again once its frame shows, so a dragged edge reflows
+  // Claude as fast as Claude redraws. fit.fit() would blank every row first. A hidden tab has no size, and
+  // fitting it would shrink Claude to a sliver.
+  let hold = null // the resize waiting for Claude's redraw: { until, redrawn, timer }
+  let again = false // whether the host resized while a frame was held
   const output = new Channel()
   // An empty chunk means the shell exited.
   output.onmessage = buf => {
@@ -121,35 +135,42 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
     const bytes = new Uint8Array(buf)
     pictures.read(bytes)
     term.write(bytes)
-    // A frame Claude drew for the old size, such as a spinner tick, ends the update early. Only the
-    // redraw clears the screen, so any other frame starts the update again.
-    if (!holding) return
-    if (clears(bytes) || performance.now() > holding) holding = 0
-    else term.write('\x1b[?2026h')
+    if (!hold || !(hold.redrawn ||= clears(bytes))) return
+    clearTimeout(hold.timer)
+    if (ends(bytes)) release()
+    else hold.timer = setTimeout(release, Math.min(QUIET_MS, hold.until - performance.now()))
   }
   id = await invoke('pty_spawn', { command, cwd, cols: term.cols, rows: term.rows, onData: output })
   const composer = startComposer(term, host, id)
   term.onData(send)
-  term.onResize(({ cols, rows }) => invoke('pty_resize', { id, cols, rows }))
+  term.onResize(({ cols, rows }) => send({ cols, rows }))
   term.onTitleChange(onTitle)
-  // Claude redraws its whole screen about 50 ms after each resize, inside a synchronized update (DEC
-  // 2026). So the size goes to Claude once it holds still, and xterm holds the last frame until that
-  // redraw, instead of painting its own cut copy of the screen first. fit.fit() would blank every row
-  // first. A hidden tab has no size, and fitting it would shrink Claude to a sliver.
-  let settle
+
   function refit() {
-    clearTimeout(settle)
-    if (term.modes.synchronizedOutputMode) return void (settle = setTimeout(refit, SETTLE_MS)) // a redraw is due
+    if (hold) return void (again = true)
     const size = host.offsetWidth && fit.proposeDimensions()
     if (!size?.cols || !size.rows || (size.cols === term.cols && size.rows === term.rows)) return
     if (term.buffer.active.type !== 'alternate') return term.resize(size.cols, size.rows)
-    holding = performance.now() + HOLD_MS
-    term.write('\x1b[?2026h', () => term.resize(size.cols, size.rows))
+    const rows = term.rows
+    hold = { until: performance.now() + HOLD_MS, redrawn: false, timer: setTimeout(release, HOLD_MS) }
+    term.write('\x1b[?2026h', () => {
+      term.resize(size.cols, size.rows)
+      composer.hold(rows)
+    })
   }
-  new ResizeObserver(() => {
-    clearTimeout(settle)
-    settle = setTimeout(refit, SETTLE_MS)
-  }).observe(host)
+  function release() {
+    if (!hold) return
+    clearTimeout(hold.timer)
+    hold = null
+    term.write('\x1b[?2026l')
+  }
+  term.onRender(() => {
+    if (again && !hold) {
+      again = false
+      refit()
+    }
+  })
+  new ResizeObserver(refit).observe(host)
 
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true
@@ -208,11 +229,10 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
 
   return {
     restyle: () => { applyTheme(term); refit() },
-    refit,
     paste: text => { term.paste(text); term.focus() },
     focus: () => term.focus(),
     close: () => {
-      clearTimeout(settle)
+      clearTimeout(hold?.timer)
       composer.close()
       output.onmessage = () => {}
       invoke('pty_close', { id })

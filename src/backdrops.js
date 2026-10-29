@@ -1,10 +1,9 @@
-import { SETTLE_MS } from './terminal.js'
-
 // Blink dithers every CSS gradient, and software raster draws a dithered gradient about five times slower than an
 // image, so a resize used to repaint each theme's gradients on every frame. Once an element's size settles, its
 // gradient layers are baked into bitmaps at that size. While it resizes, the bitmaps stretch in their place, and
 // the live CSS returns once the size holds still. A gradient sized in percents stretches into itself.
 
+const SETTLE_MS = 100 // how long an element's size holds still before its gradients go live
 const PROPS = ['image', 'position', 'size', 'repeat', 'origin', 'clip', 'attachment']
 const keyOf = cs => PROPS.map(p => cs.getPropertyValue(`background-${p}`)).join('|')
 

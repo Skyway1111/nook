@@ -1,4 +1,4 @@
-// The composer: a card nook paints over Claude's prompt. It draws the rows Claude draws between its two
+// The composer: a card nook paints over Claude's prompt. It draws the draft Claude draws between its two
 // prompt rules and never takes input. Keys go to xterm, and a click on the card becomes a click on the
 // cell under the same character. It hides whenever the screen stops matching the prompt's shape.
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
@@ -50,28 +50,54 @@ export function startComposer(term, host, id) {
   const parts = Object.fromEntries(['thumbs', 'draft', 'hints', 'chips'].map(k => [k, frame.querySelector(`.${k}`)]))
   const screen = host.querySelector('.xterm-screen')
   const rows = host.querySelector('.xterm-rows')
+  // xterm's input textarea and IME text leave the screen, which moves and is a layer of its own, so they stay
+  // above the card. `follow` lines them up with the card's caret, so composing text shows there.
+  const helpers = term.element.appendChild(host.querySelector('.xterm-helpers'))
   const cell = term.buffer.active.getNullCell()
   const line = y => term.buffer.active.getLine(term.buffer.active.viewportY + y)
   const images = new Map() // [Image #N] -> its file, once found
   let imageKey = ''
   let shown = {} // what each part of the card shows
   let geo = null // the screen's box inside the host, measured on resize
+  let held = null // the rows of the frame xterm holds while a resize waits for Claude's redraw
   let report = '' // the mod's last report, as JSON
   let state = {} // ...and parsed
   let chips = ''
-  let scale = 1 // the draft's font size, in em of the card's
-  const range = document.createRange()
 
-  /** The cell after the last one that draws anything. */
-  function end(l, from) {
+  /** The cell after the last one that draws anything: a character, or unless `text`, a styled blank. */
+  function end(l, from, text = false) {
     let x = term.cols
-    while (x > from && !(l.getCell(x - 1, cell).getChars().trim() || !cell.isAttributeDefault())) x--
+    while (x > from && !(l.getCell(x - 1, cell).getChars().trim() || (!text && !cell.isAttributeDefault()))) x--
     return x
   }
 
-  /** Cells `from` on as styled runs. Each run's `data-x` is its first cell, for clicks. */
-  function runs(l, from, caret = -1) {
-    const last = Math.max(end(l, from), caret + 1)
+  /** A draft row's text in cells: its length, the cells its first and last words take, and the look of the
+   * cell after it, which Claude paints when its selection runs on to the next row. */
+  function words(l) {
+    const len = end(l, 2, true) - 2
+    let first = len
+    let last = len
+    for (let x = 2; x < len + 2; x++) {
+      if (!l.getCell(x, cell).getWidth() || cell.getChars().trim()) continue
+      if (first === len) first = x - 2
+      last = len + 1 - x
+    }
+    const after = len + 2 < term.cols && bg(l.getCell(len + 2, cell))
+    return { len, first, last, after }
+  }
+
+  /** How Claude broke the draft between rows `a` and `b`: null at a newline the user typed, ' ' where it
+   * wrapped at a space, which it drops, or '' inside a word longer than a row, which it splits. Claude
+   * wraps the draft at `cols - 4` cells, so any break the next word would have fit before is a newline. */
+  function joint(a, b) {
+    const room = term.cols - 4
+    if (!a.len || !b.len || a.len + 1 + b.first <= room) return null
+    return a.len >= room - 1 && a.last + b.first > room ? '' : ' '
+  }
+
+  /** Cells `from` up to `last` as styled runs, with the caret before cell `caret`. Each run's `data-x` is its
+   * first cell, for clicks. */
+  function runs(l, from, last, caret = -1) {
     let html = ''
     let style = null
     let text = ''
@@ -80,9 +106,11 @@ export function startComposer(term, host, id) {
       if (text) html += `<span data-x="${start}" class="${style[0]}" style="${style[1]}">${esc(text)}</span>`
       text = ''
     }
-    for (let x = from; x < last; x++) {
+    for (let x = from; x <= last; x++) {
+      // A zero-width non-joiner gives the caret the line's height and, as a combining mark, no break of its own.
+      if (x === caret) { flush(); style = null; html += '<i class="caret">&zwnj;</i>' }
+      if (x === last) break
       l.getCell(x, cell)
-      if (x === caret) { flush(); style = null; html += '<i class="caret"></i>' }
       if (!cell.getWidth()) continue // the right half of a wide character
       const cls = (cell.isBold() ? 'b ' : '') + (cell.isItalic() ? 'i ' : '') + (cell.isDim() ? 'd ' : '')
         + (cell.isUnderline() ? 'u ' : '') + (cell.isInverse() ? 'v' : '')
@@ -111,17 +139,31 @@ export function startComposer(term, host, id) {
     const mark = line(top + 1).getCell(0, cell).getChars()
     const name = rule(top)
     const color = fg(line(top).getCell(0, cell)) || 'var(--line)'
-    const draft = []
+    // Claude's rows join back into the lines the user typed, and the card wraps them at its own width. Each
+    // row's runs sit in a span with its `data-y`, for clicks.
+    const lines = []
     let all = ''
     for (let y = top + 1; y < bottom; y++) {
-      const badge = y === top + 1 && mark !== '❯' ? `<b class="mark">${esc(mark)}</b>` : ''
-      draft.push(`<div data-y="${y}">${badge}${runs(line(y), 2, y === b.cursorY ? b.cursorX : -1)}</div>`)
+      const l = line(y)
+      const caret = y === b.cursorY ? b.cursorX : -1
+      const row = words(l)
+      lines.push({ y, ...row, html: runs(l, 2, Math.max(row.len + 2, caret), caret) })
       all += text(y)
     }
+    let draft = `<div>${mark !== '❯' ? `<b class="mark">${esc(mark)}</b>` : ''}`
+    lines.forEach((r, i) => {
+      const next = lines[i + 1]
+      const join = next ? joint(r, next) : null
+      const gap = join && `<span data-x="${r.len + 2}"${r.after ? ` style="background:${r.after}"` : ''}>${join}</span>`
+      draft += `<span data-y="${r.y}">${r.html}${gap || ''}</span>`
+      if (next && join == null) draft += '</div><div>'
+    })
+    draft += '</div>'
     const foot = []
     for (let y = bottom + 1; y < term.rows; y++) {
       const s = text(y)
-      if (s.trim()) foot.push(`<div>${runs(line(y), s.length - s.trimStart().length)}</div>`)
+      const from = s.length - s.trimStart().length
+      if (s.trim()) foot.push(`<div>${runs(line(y), from, end(line(y), from))}</div>`)
     }
     const nums = [...new Set(Array.from(all.matchAll(/\[Image #(\d+)\]/g), m => Number(m[1])))]
     findImages(nums)
@@ -130,7 +172,7 @@ export function startComposer(term, host, id) {
       block: term.rows - top,
       rule: color,
       thumbs: thumbs.join(''),
-      draft: draft.join(''),
+      draft,
       hints: foot.join(''),
       chips: (name ? `<span>${esc(name)}</span>` : '') + chips,
     }
@@ -152,56 +194,94 @@ export function startComposer(term, host, id) {
     for (const n of nums) find(n, 30)
   }
 
-  function render() {
+  /** Repaints the card from the screen. `moved` lays it out again even when nothing in it changed. */
+  function render(moved = false) {
+    if (held != null) return // the card shows the prompt of the frame xterm holds
     const next = read()
     if (!next) {
-      if (!card.hidden) { card.hidden = true; place() }
+      if (!card.hidden || moved) {
+        card.hidden = true
+        layout()
+      }
       return
     }
-    for (const k in parts) if (next[k] !== shown[k]) parts[k].innerHTML = next[k]
+    let changed = moved || card.hidden || next.block !== shown.block
+    for (const k in parts) {
+      if (next[k] === shown[k]) continue
+      parts[k].innerHTML = next[k]
+      changed = true
+    }
     if (next.rule !== shown.rule) frame.style.setProperty('--rule', next.rule)
-    const moved = card.hidden || next.block !== shown.block
     const typed = next.draft !== shown.draft
     shown = next
     card.hidden = false
-    if (moved) place()
-    else if (typed) fit()
+    if (!changed) return
+    if (typed) reveal()
+    layout()
   }
 
-  /** Shrinks the draft's font until its widest row fits. Claude wraps the draft by cells, and a row of them
-   * runs wider in the card's font. */
-  function fit() {
-    let widest = 0
-    for (const row of parts.draft.children) {
-      range.selectNodeContents(row)
-      widest = Math.max(widest, range.getBoundingClientRect().width)
+  /** Lays the card over Claude's prompt block, as tall as its own content, hides Claude's prompt under it,
+   * and moves the screen by the difference, so Claude's rows above the prompt, such as the slash menu, sit
+   * right above the card. A frame xterm holds through a resize keeps its bottom row on the screen's bottom row. */
+  function layout() {
+    if (!geo) return
+    const h = geo.height / term.rows
+    const snap = px => Math.round(px * devicePixelRatio) / devicePixelRatio
+    const hold = held == null ? 0 : snap((term.rows - held) * h)
+    rows.style.transform = hold ? `translateY(${hold}px)` : ''
+    if (card.hidden) {
+      rows.style.clipPath = ''
+      screen.style.transform = helpers.style.transform = ''
+      return
     }
-    const next = widest ? Math.min(1, Math.floor((100 * scale * parts.draft.clientWidth) / widest) / 100) : 1
-    if (next !== scale) parts.draft.style.fontSize = `${(scale = next)}em`
-  }
-
-  /** Lines the card up with the screen's bottom rows, hides Claude's own prompt under it, and fits the draft. */
-  function place() {
-    if (card.hidden || !geo) { rows.style.clipPath = ''; return }
-    const { block } = shown
-    const below = (block * geo.height) / term.rows
     Object.assign(card.style, {
       left: `${geo.left}px`,
       width: `${geo.width}px`,
       bottom: `${geo.bottom}px`,
-      minHeight: `${below}px`,
+      maxHeight: `${Math.round(geo.height * 0.7)}px`,
     })
-    card.style.setProperty('--row', `${geo.height / term.rows}px`) // a line per row, so the card fits
-    rows.style.clipPath = `inset(0 0 ${below}px 0)`
-    fit()
+    const below = shown.block * h
+    rows.style.clipPath = `inset(0 0 ${below + hold}px 0)`
+    const shift = snap(card.offsetHeight - below)
+    screen.style.transform = shift ? `translateY(${-shift}px)` : ''
+    follow()
   }
 
-  term.onRender(render)
+  /** Moves xterm's textarea, which sits at Claude's cursor cell, to the card's caret. */
+  function follow() {
+    const caret = !card.hidden && parts.draft.querySelector('.caret')
+    if (!caret) return void (helpers.style.transform = '')
+    const at = caret.getBoundingClientRect()
+    const box = host.getBoundingClientRect()
+    const b = term.buffer.active
+    const x = at.left - box.left - geo.left - (b.cursorX * geo.width) / term.cols
+    const y = at.top - box.top - geo.top - (b.cursorY * geo.height) / term.rows
+    helpers.style.transform = `translate(${x}px, ${y}px)`
+  }
+
+  /** Scrolls a draft taller than the card so the caret shows. */
+  function reveal() {
+    const d = parts.draft
+    const caret = d.scrollHeight > d.clientHeight && d.querySelector('.caret')
+    if (!caret) return
+    const box = d.getBoundingClientRect()
+    const at = caret.getBoundingClientRect()
+    if (at.top < box.top) d.scrollTop -= box.top - at.top
+    else if (at.bottom > box.bottom) d.scrollTop += at.bottom - box.bottom
+  }
+
+  term.onRender(() => {
+    const moved = held != null // the held frame gives way to the redraw
+    held = null
+    render(moved)
+  })
+  // The screen's box as laid out, before the shift: its transform would feed back into the card's place.
   const measure = new ResizeObserver(() => {
-    const h = host.getBoundingClientRect()
-    const s = screen.getBoundingClientRect()
-    geo = { left: s.left - h.left, width: s.width, height: s.height, bottom: h.bottom - s.bottom }
-    place()
+    let left = 0
+    let top = 0
+    for (let e = screen; e && e !== host; e = e.offsetParent) { left += e.offsetLeft; top += e.offsetTop }
+    geo = { left, top, width: screen.offsetWidth, height: screen.offsetHeight, bottom: host.clientHeight - top - screen.offsetHeight }
+    layout()
   })
   measure.observe(host)
   measure.observe(screen)
@@ -262,7 +342,7 @@ export function startComposer(term, host, id) {
     const ry = Number(row.dataset.y)
     const l = line(ry)
     const run = at.closest('[data-x]')
-    if (!run) return { x: end(l, 2), y: ry } // beside the text: its end
+    if (!run) return { x: end(l, 2, true), y: ry } // beside the text: its end
     let cx = Number(run.dataset.x)
     for (let n = pos.offset; n > 0 && cx < term.cols; cx++) {
       if (l.getCell(cx, cell).getWidth()) n -= cell.getChars().length || 1
@@ -297,5 +377,12 @@ export function startComposer(term, host, id) {
     render()
   }, 500)
 
-  return { close: () => clearInterval(poll) }
+  return {
+    /** xterm holds its last frame, `n` rows tall, until Claude redraws for the new size. */
+    hold(n) {
+      held = n
+      layout()
+    },
+    close: () => clearInterval(poll),
+  }
 }

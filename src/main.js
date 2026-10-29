@@ -57,7 +57,6 @@ for (const [panel, other, dir] of [['files', 'git', 1], ['git', 'files', -1]]) {
     sash.onpointermove = e => setWidth(panel, Math.round(Math.max(160, Math.min(max, w0 + dir * (e.clientX - x0)))))
     sash.onlostpointercapture = () => {
       sash.onpointermove = null
-      tabs.refit() // now, not once the size has held still
       if (widths[panel] !== was) saveWidths()
     }
   }

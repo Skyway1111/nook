@@ -38,9 +38,8 @@ export function startTabs({ settings, onShow }) {
     tab.el.classList.add('active')
     tab.view.hidden = false
     if (!tab.viewer) claude = tab
-    // A hidden terminal skips theme changes and resizes, so it catches up as it shows.
+    // A hidden terminal skips theme changes, so it catches up as it shows. Its size catches up on its own.
     if (tab.look !== look) tab.terminal?.restyle()
-    else tab.terminal?.refit()
     tab.look = look
     tab.viewer?.refresh()
     win.setTitle(`${tab.name} · nook`)
@@ -141,7 +140,6 @@ export function startTabs({ settings, onShow }) {
       active?.terminal?.restyle()
       if (active) active.look = look
     },
-    refit: () => active?.terminal?.refit(),
     paste(text) {
       if (!claude?.terminal) return
       show(claude)
