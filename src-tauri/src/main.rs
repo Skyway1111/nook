@@ -4,7 +4,6 @@
 mod commands;
 mod git;
 mod history;
-mod ide;
 mod index;
 mod notify;
 #[cfg_attr(not(windows), path = "priority_unix.rs")]
@@ -550,7 +549,6 @@ fn main() {
             commands::claude_commands,
             pty::pty_command,
             pty::session_image,
-            ide::ide_selection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running nook");

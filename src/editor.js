@@ -66,9 +66,8 @@ const BARS = {
 /**
  * An editor holding `text`, in the language its file `name` implies. Calls `changed` after each edit. With
  * `status`, a line under the text shows the caret, the language, the indent, and `status.eol()`, the line ending.
- * Calls `picked` after each change to the selection.
  */
-export function createEditor(name, text, changed, { status, picked } = {}) {
+export function createEditor(name, text, changed, { status } = {}) {
   const language = new Compartment()
   const wrapping = new Compartment()
   const indent = /^(\t)|^( {2,})(?=\S)/m.exec(text) // the first indented line's
@@ -96,10 +95,7 @@ export function createEditor(name, text, changed, { status, picked } = {}) {
       ]),
       language.of([]),
       status ? showPanel.of(view => statusLine(view, { language: found?.name ?? 'Plain text', unit, eol: status.eol, toggleWrap })) : [],
-      EditorView.updateListener.of(u => {
-        if (u.docChanged) changed()
-        if (u.selectionSet) picked?.()
-      }),
+      EditorView.updateListener.of(u => u.docChanged && changed()),
     ],
   })
   const support = found?.name === 'Markdown' // with its code blocks colored
