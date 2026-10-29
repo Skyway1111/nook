@@ -79,8 +79,9 @@ function atlas(w, h, font, colors) {
 }
 
 /** Draws the wallpaper in `pane`. `button` opens the picker, `save(id)` keeps a pick by setting
- * `--wallpaper` in the user's theme.css, and `onClose` hears the picker close. */
-export function startWallpaper(pane, { button, save, onClose }) {
+ * `--wallpaper` in the user's theme.css, `tune(name, value)` sets another of its variables, and `onClose`
+ * hears the picker close. */
+export function startWallpaper(pane, { button, save, tune, onClose }) {
   const canvas = pane.insertBefore(el('canvas', { className: 'wallpaper', hidden: true }), pane.firstChild)
   let speed = 1, since = performance.now(), before = 0 // the scene's clock runs at `speed` from `since`, when it read `before`
   const clock = now => before + (now - since) * speed / 1000 // seconds, in the scene's time
@@ -93,9 +94,11 @@ export function startWallpaper(pane, { button, save, onClose }) {
   let onCanvas = null, spare = null // the grid on the canvas, and one to draw the next frame into
   let lastInput = -Infinity, lastFrame = -Infinity, raf = 0
   let picker = null // the open picker's { focus, restyle, tick, close }
+  const held = new Map() // a picker slider's value, by variable, shown until theme.css carries it
 
   const id = () => previewing ?? look.id
-  const shown = () => !!scene(id()) && showing
+  let faded = false // at no strength at all, the scene isn't drawn
+  const shown = () => !!scene(id()) && showing && !faded
   const live = () => shown() && focused && !document.hidden
 
   function measure() {
@@ -152,6 +155,16 @@ export function startWallpaper(pane, { button, save, onClose }) {
     schedule()
   }
 
+  /** Sets the scene's pace from a `--wallpaper-speed` value. */
+  function retime(value) {
+    const pace = Math.min(SPEEDS[1], Math.max(SPEEDS[0], parseFloat(value) || 1))
+    if (pace === speed) return
+    const now = performance.now()
+    before = clock(now) // the scene goes on from where it is, at the new pace
+    since = now
+    speed = pace
+  }
+
   /** Reads the scene, colors, and cell size from theme.css. */
   function restyle() {
     const style = getComputedStyle(document.documentElement)
@@ -166,13 +179,11 @@ export function startWallpaper(pane, { button, save, onClose }) {
       family: v('--font-term') || 'monospace',
       colors: Object.fromEntries(ROLES.map(r => [r, rgba(v(`--wallpaper-${r}`) || v('--ink-3'))])),
     }
-    const pace = Math.min(SPEEDS[1], Math.max(SPEEDS[0], parseFloat(v('--wallpaper-speed')) || 1))
-    if (pace !== speed) {
-      const now = performance.now()
-      before = clock(now) // the scene goes on from where it is, at the new pace
-      since = now
-      speed = pace
-    }
+    for (const [name, value] of held) if (parseFloat(v(name)) === parseFloat(value)) held.delete(name)
+    retime(held.get('--wallpaper-speed') ?? v('--wallpaper-speed'))
+    const strength = held.get('--wallpaper-opacity')
+    canvas.style.opacity = strength ?? ''
+    faded = parseFloat(strength ?? v('--wallpaper-opacity')) === 0
     if (previewing === look.id) previewing = null // a kept pick has reached theme.css
     measure()
     update()
@@ -212,6 +223,29 @@ export function startWallpaper(pane, { button, save, onClose }) {
     })
     strip.append(...cards.map(c => c.card))
     box.append(head, strip)
+    // How strongly and how fast the wallpaper shows, live while a slider moves, kept where it's let go.
+    if (tune) {
+      const style = getComputedStyle(document.documentElement)
+      const sliders = [['--wallpaper-opacity', 'Strength', 0, 1, .05], ['--wallpaper-speed', 'Speed', SPEEDS[0], SPEEDS[1], .25]]
+      const foot = box.appendChild(el('footer'))
+      foot.append(...sliders.map(([name, label, min, max, step]) => {
+        const input = el('input', { type: 'range', min, max, step, className: 'strength' })
+        input.value = held.get(name) ?? (style.getPropertyValue(name).trim() || 1)
+        input.oninput = () => {
+          held.set(name, input.value)
+          if (name === '--wallpaper-speed') retime(input.value)
+          else {
+            canvas.style.opacity = input.value
+            faded = parseFloat(input.value) === 0
+            update()
+          }
+        }
+        input.onchange = () => tune(name, input.value).catch(e => { held.delete(name); restyle(); throw e })
+        const row = el('label')
+        row.append(el('span', { textContent: label }), input)
+        return row
+      }))
+    }
     pane.append(box)
 
     /** Moves the picker to card `i` and previews its scene in the pane. */
@@ -248,6 +282,7 @@ export function startWallpaper(pane, { button, save, onClose }) {
     const outside = e => { if (!box.contains(e.target) && !button.contains(e.target)) close() }
     addEventListener('pointerdown', outside, true)
     box.onkeydown = e => {
+      if (e.target.type === 'range' && e.key !== 'Escape') return // its arrows move the slider
       const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Tab: e.shiftKey ? -1 : 1 }[e.key]
       if (step) point(at + step)
       else if (e.key === 'Home' || e.key === 'End') point(e.key === 'Home' ? 0 : ids.length - 1)
