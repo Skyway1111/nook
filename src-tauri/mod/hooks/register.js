@@ -18,6 +18,8 @@ const sizes = new Map() // a pasted image's path -> its size, as a promise
 const MADE = 3 // the most pictures shown under a command that wrote them
 const made = new Map() // a Bash call's tool_use_id -> the pictures it wrote, as a promise of [path, size]
 const MERMAID = /^```mermaid[^\n]*\n([\s\S]*?)\n```[ \t]*$/gm // a reply's mermaid blocks, each closed
+const SVG = /^```(?:svg|xml|html)?[ \t]*\n((?:<\?xml[^\n]*\n)?<svg\b[\s\S]*?<\/svg>)[ \t]*\n```[ \t]*$/gm // a reply's SVG blocks, whole
+const SVG_ROWS = 8 // the fewest rows a reply's SVG takes: it scales, and an icon's own size is a few cells
 const MATH = /^[ \t]*(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])[ \t]*$/gm // a reply's display formulas, $$ … $$ or \[ … \], on lines of their own
 const MATH_ROWS = 20 // the tallest formula, in rows
 // An inline formula's TeX commands, and what each writes in plain text
@@ -56,6 +58,7 @@ const GROUP_ROWS = 6 // the most outcome rows under a folded run of calls
 const READ_NAMES = 8 // the most files the row of a folded run's reads names
 // What Claude reads, in a tab nook started, about what nook draws in its replies.
 const DRAWS = 'This terminal is nook, which draws more than text in your replies: a ```mermaid code block shows as a diagram, '
+  + 'an ```svg code block shows the picture it draws under its source, '
   + 'display math on lines of its own ($$ … $$ or \\[ … \\]) is typeset, inline $…$ math shows as Unicode symbols, and a '
   + 'Markdown image link to a local picture file, like ![loss](out/loss.png), shows the picture after its paragraph. '
   + 'Pictures you read and pictures your commands save show in the transcript too (a PDF as its first page), and an HTML file you write shows '
@@ -218,10 +221,13 @@ async function pictureSize($, path) {
   return svgSize(await $.fs.read(path).catch(() => '')) ?? UNKNOWN
 }
 
-/** An SVG's [width, height] from its viewBox, or null without one. */
-function svgSize(text) {
+/** An SVG's [width, height] from its viewBox, else its width and height in pixels, or null without them. */
+export function svgSize(text) {
   const box = /viewBox\s*=\s*["'][^"']*?([\d.]+)[\s,]+([\d.]+)\s*["']/.exec(text)
-  return box ? [Number(box[1]), Number(box[2])] : null
+  if (box) return [Number(box[1]), Number(box[2])]
+  const head = /<svg\b[^>]*>/.exec(text)?.[0] ?? ''
+  const px = name => Number(new RegExp(`\\s${name}\\s*=\\s*["']\\s*([\\d.]+)(?:px)?\\s*["']`).exec(head)?.[1])
+  return px('width') > 0 && px('height') > 0 ? [px('width'), px('height')] : null
 }
 
 const LOOKS = /^(?:cd|ls|cat|head|tail|less|wc|echo|git|rg|grep|egrep|find|fd|which|pwd|stat|file)\b/ // commands that write no files
@@ -379,13 +385,15 @@ export function plainInline(text) {
     .map((part, i) => (i % 2 ? part : part.replace(INLINE, (m, tex) => plainMath(tex) ?? m))).join('')
 }
 
-/** A reply's text cut at its mermaid blocks and display formulas: [text, [kind, source], text, …], where
- * kind is `mermaid` or `math`. A formula inside another code block stays in the text. */
+/** A reply's text cut at its mermaid blocks, display formulas, and SVG blocks: [text, [kind, source], text, …],
+ * where kind is `mermaid`, `math`, or `svg`. A formula inside another code block stays in the text, and an SVG
+ * block stays at the end of the text before its picture, so its source still shows. */
 export function splitBlocks(text) {
   const code = []
   for (const m of text.matchAll(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*\1[ \t]*$|(?![\s\S]))/gm)) code.push([m.index, m.index + m[0].length])
   const found = [
     ...Array.from(text.matchAll(MERMAID), m => [m.index, m[0].length, 'mermaid', m[1]]),
+    ...Array.from(text.matchAll(SVG), m => [m.index, m[0].length, 'svg', m[1]]),
     ...Array.from(text.matchAll(MATH), m => [m.index, m[0].length, 'math', (m[1] ?? m[2]).trim()])
       .filter(([at, , , source]) => source && !code.some(([a, b]) => at >= a && at < b)),
   ].sort((a, b) => a[0] - b[0])
@@ -393,7 +401,7 @@ export function splitBlocks(text) {
   let at = 0
   for (const [index, length, kind, source] of found) {
     if (index < at) continue
-    pieces.push(text.slice(at, index).trim(), [kind, source])
+    pieces.push(text.slice(at, kind === 'svg' ? index + length : index).trim(), [kind, source])
     at = index + length
   }
   pieces.push(at ? text.slice(at).trim() : text)
@@ -845,7 +853,7 @@ export function register(on) {
     const { isSummary } = e.props
     if (e.surface !== 'terminal' || isSummary) return next(e)
     const text = e.props.text.includes('$') ? plainInline(e.props.text) : e.props.text
-    const diagrams = file && (text.includes('```mermaid') || text.includes('$$') || text.includes('\\['))
+    const diagrams = file && (text.includes('```mermaid') || text.includes('$$') || text.includes('\\[') || text.includes('<svg'))
     const shown = text.includes('![') ? await linkedPictures($, text) : new Map()
     const plain = text === e.props.text ? e : { ...e, props: { ...e.props, text } }
     if (!diagrams && !shown.size) return next(plain)
@@ -857,6 +865,18 @@ export function register(on) {
     for (const [i, piece] of (diagrams ? splitBlocks(text) : [text]).entries()) {
       if (i % 2) {
         const [kind, source] = piece
+        if (kind === 'svg') {
+          // The source stays above, and its picture follows it.
+          const path = `${dir}${sep(dir)}svg-${hash(source)}.svg`
+          if (!saved.has(path)) {
+            await $.fs.write(path, source)
+            saved.add(path)
+          }
+          const [w, h] = svgSize(source) ?? UNKNOWN
+          const k = Math.max(1, (SVG_ROWS * ROW_PIXELS) / h)
+          blocks.push(Box({ flexDirection: 'column', marginBottom: 1, children: [picture(Box, Image, path, [w * k, h * k], room, REPLY_INDENT)] }))
+          continue
+        }
         const math = kind === 'math'
         const path = `${dir}${sep(dir)}${math ? 'math' : 'diagram'}-${hash(source)}.${math ? 'tex' : 'mmd'}`
         if (!saved.has(path)) {

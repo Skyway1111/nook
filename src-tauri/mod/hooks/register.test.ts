@@ -94,7 +94,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, spent, splitBlocks, splitPictures, summary, testCounts } from './register.js'
+import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, pageSize, svgSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, spent, splitBlocks, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -306,6 +306,36 @@ test('a reply with a diagram draws it in its place, in a tab nook started only',
   const desktop = await $.ui.mount({ plugin: 'nook', surface: 'desktop', component: 'AssistantMessage', requestId: 'r2', props: { text, isFirstOfReply: true } })
   expect(await desktop.find({ type: 'Image' })).toBeFalsy()
   await desktop.unmount()
+})
+
+test('a reply\'s SVG block stays as source, its picture after it', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>'
+  expect(splitBlocks(`An icon:\n\n\`\`\`svg\n${svg}\n\`\`\`\n\nUse it twice.`)).toEqual([`An icon:\n\n\`\`\`svg\n${svg}\n\`\`\``, ['svg', svg], 'Use it twice.'])
+  expect(splitBlocks(`\`\`\`xml\n<?xml version="1.0"?>\n${svg}\n\`\`\``)[1]).toEqual(['svg', `<?xml version="1.0"?>\n${svg}`])
+  // A block that holds more than the drawing, or other XML, is code.
+  expect(splitBlocks(`\`\`\`html\n<div>${svg}</div>\n\`\`\``)).toHaveLength(1)
+  expect(splitBlocks('```xml\n<note>hi</note>\n```')).toHaveLength(1)
+  expect(svgSize(svg)).toEqual([24, 24])
+  expect(svgSize('<svg width="300px" height="150"><rect/></svg>')).toEqual([300, 150])
+  expect(svgSize('<svg width="100%" height="50%"></svg>')).toBe(null)
+})
+
+test('a reply\'s SVG draws under its source, at least eight rows tall, in a tab nook started', async ($, on) => {
+  const reports: Record<string, unknown>[] = []
+  const written: Record<string, string> = {}
+  nook(on, reports, ['terminal'], written)
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: `engine: ${e.props.text}` }))
+  await $.session.start({ cwd: '/work' })
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>'
+  const text = `An icon:\n\n\`\`\`svg\n${svg}\n\`\`\`\n\nDone.`
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AssistantMessage', requestId: 'r1', props: { text, isFirstOfReply: true } })
+  expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe(`engine: An icon:\n\n\`\`\`svg\n${svg}\n\`\`\``)
+  const image = await ui.find({ type: 'Image' })
+  expect(image?.props.source.file).toMatch(/^\/nook\/svg-\w+\.svg$/)
+  expect(written[image?.props.source.file]).toBe(svg)
+  expect(image?.props).toMatchObject({ rows: 8, columns: 16 })
+  expect((await ui.find({ type: 'Markdown' }))?.props.text).toBe('Done.')
+  await ui.unmount()
 })
 
 test('a picture\'s size comes from its header: PNG, GIF, WebP, and a JPEG past its EXIF', () => {
