@@ -140,7 +140,7 @@ const openQuick = () => {
   quick ??= Promise.all([import('./quickopen.js'), import('./commands.js')]).then(([{ startQuickOpen }, { appCommands }]) => startQuickOpen({
     dir: tabFolder,
     commands: appCommands({
-      tabs, files, git, drawer, home, banner, insertPath,
+      tabs, files, git, drawer, wallpaper, home, banner, insertPath,
       newSession: () => tabs.openClaude(here()),
       openQuick: prefix => openQuick().then(q => q.open(prefix)),
       quickPrompts,

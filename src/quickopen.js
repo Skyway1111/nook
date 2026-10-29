@@ -146,14 +146,19 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openFile, ins
   function offer(query) {
     if (query.startsWith('>')) {
       const all = commands().filter(c => !c.when || c.when())
-      const back = () => { for (const f of new Set(all.map(c => c.back))) f?.() }
+      const back = (keep) => { for (const f of new Set(all.map(c => c.back))) if (f !== keep) f?.() }
       const found = rank(query.slice(1), all, { text: c => c.title, limit: 100 })
       return {
         rows: found.map(r => commandRow(r.item, r.positions)),
         act: i => found[i].item.run(),
-        // A command can show what it would do while it's marked, such as a theme, and `back` undoes that.
-        look: i => (found[i]?.item.look ?? back)(),
-        back,
+        // A command can show what it would do while it's marked, such as a theme or a wallpaper, and `back` undoes
+        // that. Marking another undoes every other kind's.
+        look: i => {
+          const item = found[i]?.item
+          back(item?.back)
+          item?.look?.()
+        },
+        back: () => back(),
         hint: found.length ? 'Enter runs the command' : 'No command matches',
         count: found.length,
       }
