@@ -292,6 +292,13 @@ export function startGit({ openView, openFile, insertPath }) {
   addEventListener('focus', refresh)
 
   return {
+    /** Opens a diff tab of one file's changes, in whichever repository holds it, or the file outside one. */
+    async changes(path) {
+      const status = await invoke('git_status', { path }).catch(() => null)
+      if (!status?.root || !paths.within(path, status.root)) return openFile(path)
+      const rel = path.slice(status.root.length).replace(/^[\\/]/, '').replaceAll(paths.SEP, '/')
+      openView('diff', leaf(rel), path, view => startDiff(view, status.root, rel, openFile))
+    },
     /** Follows the tab now showing: a Claude tab's folder, or an open file. */
     show(path) {
       want = path

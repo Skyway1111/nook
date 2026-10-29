@@ -38,6 +38,7 @@
   --session-working: var(--accent);
   --session-waiting: var(--ansi-yellow);
   --session-done: var(--ansi-green);
+  --claude-touched: var(--icon-claude); /* the dot on a file Claude wrote, in the file browser */
 
   /* Terminal backdrop: any CSS background (a color, or layered gradients like these). */
   --term-bg:

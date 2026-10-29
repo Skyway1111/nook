@@ -5,11 +5,12 @@
 import { el } from './ui.js'
 import { ago, modelName, summary } from './sessions.js'
 
+const FILES = 4 // the files a card lists
 const WORDS = { working: 'Working', waiting: 'Waiting on you', done: 'Done', '': 'Idle' }
 
 /** `list()` gives `[{ tab, view, report }]` for every Claude tab, `open(tab)` shows one, and `newSession()`
  * starts another. `button` toggles the dashboard; `onClose` hears it close. */
-export function startDashboard(pane, { button, list, open, newSession, onClose }) {
+export function startDashboard(pane, { button, list, open, newSession, showChanges, onClose }) {
   let box = null
   let timer = 0
   let at = 0 // the card the arrow keys are on
@@ -21,7 +22,7 @@ export function startDashboard(pane, { button, list, open, newSession, onClose }
     const c = el('button', { className: `session${i === at ? ' at' : ''}` })
     c.dataset.mark = mark
     c.innerHTML = '<header><b class="mark"></b><span class="state"></span><span class="where"></span></header>' +
-      '<p class="prompt"></p><p class="doing"></p><footer></footer>'
+      '<p class="prompt"></p><p class="doing"></p><footer></footer><p class="files"></p>'
     c.querySelector('.state').textContent = WORDS[mark] + since
     c.querySelector('.where').textContent = tab.name
     c.querySelector('.where').title = tab.path
@@ -36,8 +37,19 @@ export function startDashboard(pane, { button, list, open, newSession, onClose }
       report.turns && `${report.turns} turn${report.turns > 1 ? 's' : ''}`,
     ].filter(Boolean)
     c.querySelector('footer').textContent = facts.join(' · ')
-    c.title = report.touched?.length ? report.touched.slice(-12).join('\n') : tab.path
-    c.onclick = () => { close(); open(tab) }
+    // The newest files Claude wrote, each opening its diff.
+    c.querySelector('.files').append(...(report.touched ?? []).slice(-FILES).reverse().map(path => {
+      const f = el('span', { className: 'file', textContent: path.split(/[\\/]/).pop(), title: `${path}\nShow Claude's changes` })
+      f.dataset.path = path
+      return f
+    }))
+    c.title = tab.path
+    c.onclick = e => {
+      const file = e.target.closest('.file')
+      close()
+      if (file) showChanges(file.dataset.path)
+      else open(tab)
+    }
     return c
   }
 

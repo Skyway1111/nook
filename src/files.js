@@ -34,11 +34,12 @@ const holdsTheme = (path, dir) => dir
   ? invoke('list_dir', { path }).then(es => es.some(e => e.name.toLowerCase() === 'theme.css'), () => false)
   : /\.zip$/i.test(path) && invoke('zip_holds_theme', { path })
 
-export function startFiles({ start, home, pinned, newSession, openFile, insertPath, installTheme }) {
+export function startFiles({ start, home, pinned, newSession, openFile, insertPath, installTheme, showChanges }) {
   const [list, pinList, crumbs, status] = [$('list'), $('pinned'), $('crumbs'), $('status')]
   let cur = null
   let shown = ''
   let marked = '' // the open file tab's path, highlighted in the listing
+  let claude = [] // the files Claude wrote in any open session, marked in the listing
   const back = []
   const forward = []
   let pins = [...pinned]
@@ -77,7 +78,21 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     if (!rows.length) rows.push(el('li', { className: 'empty', textContent: 'Empty folder' }))
     list.replaceChildren(...rows)
     mark(marked)
+    markClaude()
     syncNav()
+  }
+
+  const byClaude = path => claude.some(t => same(t, path))
+  /** Marks each listed file Claude wrote, and each folder that holds one. */
+  function markClaude() {
+    for (const r of list.children) {
+      const path = r.dataset.path
+      if (!path) continue
+      const file = byClaude(path)
+      r.classList.toggle('claude-file', file)
+      r.classList.toggle('claude-dir', !file && r.matches('.dir, .drive') && claude.some(t => under(t, path)))
+      r.title = file ? `${path}\nChanged by Claude` : ''
+    }
   }
 
   function mark(path) {
@@ -205,6 +220,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     ]
     if (!isDir) {
       return [
+        ...(byClaude(path) ? [["Claude's changes", ICON.diff, () => showChanges(path)], null] : []),
         ...edits,
         ['Open with default app', ICON.open, () => invoke('open_path', { path })],
         ...(paths.windows ? [['Open with…', ICON.openWith, () => invoke('open_path', { path, verb: 'openas' })]] : []), add, null,
@@ -301,5 +317,14 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   setInterval(() => document.hidden || sync(), 2000)
 
   go(start)
-  return { current: () => cur, go, mark }
+  return {
+    current: () => cur,
+    go,
+    mark,
+    /** The files Claude wrote in any open session, as its mod reports them. */
+    claude(touched) {
+      claude = touched.map(normalize)
+      markClaude()
+    },
+  }
 }

@@ -84,6 +84,7 @@ files = startFiles({
   openFile,
   insertPath,
   installTheme: drawer.installTheme,
+  showChanges: path => git.changes(path),
 })
 const git = startGit({ openView: (...args) => tabs.openView(...args), openFile, insertPath })
 tabs = startTabs({
@@ -93,7 +94,10 @@ tabs = startTabs({
     wallpaper.show(!tab.viewer)
     git.show(tab.path)
   },
-  onSessions: () => dashboard?.refresh(),
+  onSessions: () => {
+    dashboard?.refresh()
+    claudeFiles()
+  },
 })
 if (error) banner(`Using default settings. ${error}`)
 
@@ -106,11 +110,20 @@ getCurrentWebview().onDragDropEvent(e => {
 const here = () => files.current() || cwd
 $('toggle-files').onclick = () => { document.body.classList.toggle('files-hidden'); tabs.focus() }
 const newSession = () => tabs.openClaude(here())
+// The files Claude wrote in any open session, marked in the explorer, each linked to its diff.
+let touched = ''
+function claudeFiles() {
+  const all = [...new Set(tabs.sessions().flatMap(s => s.report.touched ?? []))]
+  if (all.join('\n') === touched) return
+  touched = all.join('\n')
+  files.claude(all)
+}
 dashboard = startDashboard($('pane'), {
   button: $('toggle-sessions'),
   list: () => tabs.sessions(),
   open: tab => tabs.show(tab),
   newSession,
+  showChanges: path => git.changes(path),
   onClose: () => tabs.focus(),
 })
 $('new-tab').onclick = newSession

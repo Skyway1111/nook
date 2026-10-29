@@ -153,6 +153,10 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .sessions .session .prompt { color: var(--ink-1); }
 .sessions .session .doing { font-family: var(--font-term); font-size: .8rem; color: var(--ink-3); min-height: 1.2em; }
 .sessions .session footer { font-size: .78rem; color: var(--ink-3); }
+.sessions .session .files { display: flex; gap: 6px; min-height: 0; }
+.sessions .session .files:empty { display: none; }
+.sessions .session .file { padding: 1px 7px; border-radius: 5px; font-size: .78rem; background: var(--hover); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.sessions .session .file:hover { background: var(--line); color: var(--ink-1); }
 .sessions .mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .sessions [data-mark=working] .mark { background: var(--session-working); }
 .sessions [data-mark=waiting] .mark { background: var(--session-waiting); }
@@ -247,6 +251,10 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .row .icon { flex: none; width: 14px; text-align: center; color: var(--ink-3); }
 .row.dir .icon { color: var(--icon-folder); }
 #list .empty { padding: 6px 8px; color: var(--ink-3); }
+/* A file Claude wrote in an open session, and a folder that holds one. */
+.row:is(.claude-file, .claude-dir)::after { content: ''; flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: 50%; }
+.row.claude-file::after { background: var(--claude-touched); }
+.row.claude-dir::after { box-shadow: inset 0 0 0 1.5px var(--claude-touched); }
 
 #status, #banner, #git-error { margin: 6px 4px 0; padding: 6px 8px; border-radius: 6px; font-size: .9rem; background: var(--raised); color: var(--ink-1); }
 #banner { margin: 6px 0 4px; box-shadow: inset 2px 0 0 var(--ansi-red); user-select: text; }
