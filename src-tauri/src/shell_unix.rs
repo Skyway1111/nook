@@ -165,6 +165,13 @@ pub async fn paste_files(dir: String) -> Result<bool, String> {
     Ok(done)
 }
 
+/// Moves or copies files dropped on a folder in nook's file browser into `dir`. A taken name gets a free one
+/// beside it, as a paste does, and a move of a file already there does nothing.
+#[tauri::command]
+pub async fn drop_files(paths: Vec<String>, dir: String, copy: bool) -> Result<bool, String> {
+    spawn_blocking(move || paste(&paths, !copy, &dir)).await.map_err(err)?
+}
+
 #[cfg(test)]
 mod tests {
     use super::{free_name, in_dir, paste};

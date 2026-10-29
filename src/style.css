@@ -257,6 +257,9 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .row span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .row:hover { background: var(--hover); color: var(--ink-1); }
 .row.selected, .row.current { background: var(--raised); color: var(--ink-1); }
+.row.picked { background: color-mix(in oklch, var(--accent) 22%, transparent); color: var(--ink-1); }
+.row.drop { background: color-mix(in oklch, var(--accent) 35%, transparent); color: var(--ink-1); box-shadow: inset 0 0 0 1px var(--accent); }
+#crumbs button.drop { color: var(--accent); background: var(--hover); }
 .row .icon { flex: none; width: 14px; text-align: center; color: var(--ink-3); }
 .row.dir .icon { color: var(--icon-folder); }
 #list .empty { padding: 6px 8px; color: var(--ink-3); }

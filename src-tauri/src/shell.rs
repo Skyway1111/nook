@@ -203,6 +203,22 @@ pub async fn paste_files(dir: String) -> Result<bool, String> {
     .map_err(err)?
 }
 
+/// Moves or copies files dropped on a folder in nook's file browser into `dir`, as Explorer's drag does: a
+/// move of a file already there does nothing, and a name that's taken gets the shell's conflict dialog.
+#[tauri::command]
+pub async fn drop_files(paths: Vec<String>, dir: String, copy: bool) -> Result<bool, String> {
+    spawn_blocking(move || {
+        let paths: Vec<String> = paths.into_iter().filter(|p| copy || !in_dir(p, &dir)).collect();
+        if paths.is_empty() {
+            return Ok(false);
+        }
+        let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR;
+        Ok(file_op(if copy { FO_COPY } else { FO_MOVE }, flags, &paths, &dir))
+    })
+    .await
+    .map_err(err)?
+}
+
 #[cfg(test)]
 mod tests {
     use super::{file_op, in_dir, FOF_ALLOWUNDO, FOF_NOCONFIRMMKDIR, FOF_RENAMEONCOLLISION, FO_COPY, FO_MOVE, FO_RENAME};

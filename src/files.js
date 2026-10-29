@@ -41,6 +41,8 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   let shown = ''
   let marked = '' // the open file tab's path, highlighted in the listing
   let claude = [] // the files Claude wrote in any open session, marked in the listing
+  let picked = new Set() // rows picked with Ctrl+click or Shift+click, which a drag or the menu acts on together
+  let anchor = '' // where a Shift+click range starts
   const back = []
   const forward = []
   let pins = [...pinned]
@@ -63,6 +65,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
       back.push(cur)
       forward.length = 0
     }
+    if (path !== cur) picked.clear()
     cur = path
     say('')
     render(entries)
@@ -78,6 +81,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     const rows = entries.map(e => row(join(cur, e.name), cur === '' ? 'drive' : kind(e), e.name))
     if (!rows.length) rows.push(el('li', { className: 'empty', textContent: 'Empty folder' }))
     list.replaceChildren(...rows)
+    paintPicked()
     mark(marked)
     markClaude()
     syncNav()
@@ -95,6 +99,35 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
       r.title = file ? `${path}\nChanged by Claude` : ''
     }
   }
+
+  /** Shows the picked rows, and forgets picks that left the folder. */
+  function paintPicked() {
+    const here = new Set()
+    for (const r of list.children) {
+      const on = picked.has(r.dataset.path)
+      r.classList.toggle('picked', on)
+      if (on) here.add(r.dataset.path)
+    }
+    picked = here
+  }
+
+  /** Ctrl+click adds or drops a row. Shift+click picks every row from the last one picked to this one. */
+  function pick(r, range) {
+    const rows = [...list.querySelectorAll('.row')]
+    const from = rows.findIndex(x => x.dataset.path === anchor)
+    if (range && from >= 0) {
+      const to = rows.indexOf(r)
+      picked = new Set(rows.slice(Math.min(from, to), Math.max(from, to) + 1).map(x => x.dataset.path))
+    } else {
+      const p = r.dataset.path
+      if (!picked.delete(p)) picked.add(p)
+      anchor = p
+    }
+    paintPicked()
+  }
+
+  /** The paths a drag or a menu on row `r` acts on: every picked row if `r` is one of them, else `r` alone. */
+  const actOn = r => (picked.size > 1 && picked.has(r.dataset.path) ? [...picked] : [r.dataset.path])
 
   function mark(path) {
     marked = path
@@ -119,6 +152,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     }
     crumbs.replaceChildren(...parts.flatMap(([label, path], i) => {
       const b = el('button', { textContent: label, title: i < parts.length - 1 ? path || TOP : 'Type a path' })
+      b.dataset.path = path // a drop target
       // The current folder's crumb falls through to the path bar's click: edit the path.
       if (i < parts.length - 1) b.onclick = e => { e.stopPropagation(); go(path) }
       return i ? [el('i', { className: 'icon sep', textContent: '' }), b] : [b]
@@ -238,6 +272,49 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     ]
   }
 
+  /** The menu for several picked rows. */
+  function menuForMany(many) {
+    const n = `${many.length} items`
+    return [
+      [`Cut ${n}`, ICON.cut, () => invoke('copy_files', { paths: many, cut: true }).catch(say)],
+      [`Copy ${n}`, ICON.copy, () => invoke('copy_files', { paths: many, cut: false }).catch(say)],
+      [`Delete ${n}`, ICON.delete, async () => {
+        for (const path of many) if (await invoke('recycle', { path }).catch(say)) moved(path, null)
+        sync(true)
+      }], null,
+      ['Add to prompt', ICON.add, () => many.forEach(insertPath)],
+      ['Copy paths', ICON.copy, () => navigator.clipboard.writeText(many.join('\n'))],
+    ]
+  }
+
+  /** The folder a drop on `target` goes into: a folder row, a pinned folder, or a crumb of the path bar. Never
+   * one of the dragged folders or a folder inside one. */
+  const DROP = '#list .row:is(.dir, .drive), #pinned .row, #crumbs button'
+  function folderAt(target, dragged = []) {
+    const r = target?.closest?.(DROP)
+    const dir = r?.dataset.path
+    return dir && !dragged.some(d => same(d, dir) || under(dir, d)) ? r : null
+  }
+  let dropOn = null // the folder row a drag is over
+  function hoverDrop(r) {
+    if (r === dropOn) return
+    dropOn?.classList.remove('drop')
+    ;(dropOn = r)?.classList.add('drop')
+  }
+
+  /** Moves `paths` into `dir`, or copies them there. */
+  async function dropInto(paths, dir, copy) {
+    try {
+      if ((await invoke('drop_files', { paths, dir, copy })) && !copy) {
+        for (const p of paths) moved(p, join(dir, basename(p)))
+        picked.clear()
+      }
+    } catch (e) {
+      say(String(e))
+    }
+    sync(true)
+  }
+
   // Shared row behavior for the pinned list and the folder listing. A row with a name box takes no clicks or drags.
   const rowAt = e => {
     const r = e.target.closest('.row')
@@ -246,6 +323,9 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   for (const ul of [list, pinList]) {
     ul.addEventListener('click', e => {
       const r = rowAt(e)
+      const pickable = ul === list && cur !== ''
+      if (r && pickable && (e.ctrlKey || e.metaKey || e.shiftKey)) return pick(r, e.shiftKey)
+      if (pickable && picked.size) { picked.clear(); paintPicked() }
       if (r) (r.matches('.dir, .drive') ? go : openFile)(r.dataset.path)
     })
     ul.addEventListener('contextmenu', async e => {
@@ -253,7 +333,9 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
       if (editing || (!r && (ul !== list || cur === ''))) return
       const isDir = r?.matches('.dir, .drive')
       const [pasteable, theme] = await Promise.all([invoke('can_paste'), r && holdsTheme(r.dataset.path, isDir)])
-      if (r) openMenu(e, menuFor(r.dataset.path, isDir, ul === list && cur !== '' && r, pasteable, theme))
+      const many = ul === list && r ? actOn(r) : []
+      if (many.length > 1) openMenu(e, menuForMany(many))
+      else if (r) openMenu(e, menuFor(r.dataset.path, isDir, ul === list && cur !== '' && r, pasteable, theme))
       else {
         openMenu(e, [
           ['New file', ICON.file, () => create(false)],
@@ -264,7 +346,19 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     })
     ul.addEventListener('pointerdown', e => {
       const r = rowAt(e)
-      if (r && e.button === 0) dragPath(e, r.dataset.path, target => target?.closest('#pane') && insertPath(r.dataset.path))
+      if (!r || e.button !== 0) return
+      // A drag from the listing moves its rows into a folder it's dropped on, or copies them with Ctrl held. A
+      // pinned folder only drags into the prompt, so a pin can't be moved by accident.
+      const files = ul === list && cur !== ''
+      const many = files ? actOn(r) : [r.dataset.path]
+      dragPath(e, r.dataset.path, (target, up) => {
+        if (target?.closest('#pane')) return many.forEach(insertPath)
+        const into = files && folderAt(target, many)
+        if (into) dropInto(many, into.dataset.path, up.ctrlKey)
+      }, {
+        label: many.length > 1 ? `${many.length} items` : undefined,
+        over: target => hoverDrop(files ? folderAt(target, many) : null),
+      })
     })
   }
 
@@ -334,6 +428,14 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     reveal,
     create,
     pins: () => pins,
+    /** For files dragged in from another app: the drop folder under (x, y), shown as the target, or null. */
+    dropFolder(x, y) {
+      const r = x == null ? null : folderAt(document.elementFromPoint(x, y))
+      hoverDrop(r)
+      return r?.dataset.path ?? null
+    },
+    /** Copies files dragged in from another app into `dir`. */
+    receive: (paths, dir) => dropInto(paths, dir, true),
     /** The files Claude wrote in any open session, as its mod reports them. */
     claude(touched) {
       claude = touched.map(normalize)

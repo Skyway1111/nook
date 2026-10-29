@@ -456,6 +456,7 @@ fn main() {
             shell::can_paste,
             shell::copied_paths,
             shell::paste_files,
+            shell::drop_files,
             git::git,
             git::git_status,
             git::git_diff,
