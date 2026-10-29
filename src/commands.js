@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { ICON } from './files.js'
 import { path as paths } from './paths.js'
 
-export function appCommands({ tabs, files, git, drawer, openQuick, quickPrompts, newSession, insertPath, home, banner, welcome }) {
+export function appCommands({ tabs, files, git, drawer, wallpaper, openQuick, quickPrompts, newSession, insertPath, home, banner, welcome }) {
   const active = () => tabs.active()
   const claude = () => active()?.terminal ?? null
   const file = () => (active()?.viewer && active().type !== 'diff' ? active().path : null)
@@ -30,6 +30,10 @@ export function appCommands({ tabs, files, git, drawer, openQuick, quickPrompts,
     ...drawer.themes.names().map(name => ({
       title: `Theme: ${name ? drawer.themes.label(name) : 'nook'}`, icon: '\uE790',
       run: () => drawer.themes.use(name), look: () => drawer.themes.peek(name), back: drawer.themes.unpeek,
+    })),
+    ...wallpaper.scenes().map(([id, name]) => ({
+      title: `Wallpaper: ${name}`, icon: '\uE771',
+      run: () => wallpaper.use(id), look: () => wallpaper.peek(id), back: wallpaper.unpeek,
     })),
     { title: 'Show the welcome', icon: '\uE790', run: welcome },
     { title: 'Go to file…', keys: 'Ctrl+P', icon: ICON.file, run: () => openQuick('') },

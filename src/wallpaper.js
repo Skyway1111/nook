@@ -158,7 +158,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
 
   /** Shows or hides the canvas for what's in front, and runs the loop while anything moves. */
   function update() {
-    const rest = motion === 'working' && !working && !picker // the open picker shows every scene moving
+    const rest = motion === 'working' && !working && !picker && previewing == null // a scene being picked moves
     if (rest !== resting) rebase(() => { resting = rest })
     canvas.hidden = !shown()
     if (shown() !== !!cells) measure()
@@ -280,15 +280,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
       point(i)
       const pick = ids[at]
       close(false)
-      if (pick === kept) return
-      previewing = pick // until theme.css names it, so the pane doesn't flash back to the old one
-      try {
-        await save(pick)
-      } catch (e) {
-        previewing = null
-        update()
-        throw e
-      }
+      if (pick !== kept) await use(pick)
     }
     function close(revert = true) {
       if (picker !== api) return
@@ -340,10 +332,37 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
     box.focus()
   }
 
+  /** Keeps scene `sid`, showing it until theme.css names it, so the pane doesn't flash back to the old one. */
+  async function use(sid) {
+    previewing = sid === look.id ? null : sid
+    update()
+    try {
+      await save(sid)
+    } catch (e) {
+      previewing = null
+      update()
+      throw e
+    }
+  }
+
   button.onclick = () => (picker ? picker.close() : open())
 
   return {
     restyle,
+    /** Every scene's id and name, none first. */
+    scenes: () => [['none', 'None'], ...SCENES.map(s => [s.id, s.name])],
+    /** Shows scene `sid` in the pane until `unpeek`, as the picker's arrows do. */
+    peek(sid) {
+      if (picker) return
+      previewing = sid === look.id ? null : sid
+      update()
+    },
+    unpeek() {
+      if (picker || previewing == null) return
+      previewing = null
+      update()
+    },
+    use,
     /** Whether any Claude session in this window is working, which moves a wallpaper set to `working`. */
     working(on) {
       if (on === working) return
