@@ -18,7 +18,7 @@ import { path as paths } from './paths.js'
 import { $, openMenu, openPicker } from './ui.js'
 import { SAFE, worktreeName, fanNames, since } from './launch.js'
 import { expand, offer, saved } from './prompts.js'
-import { stat as worktreeStat, keep } from './keep.js'
+import { stat as worktreeStat, keep, discard } from './keep.js'
 
 const win = getCurrentWindow()
 // For bench/linux.mjs: how far startup got, in ms since nook started.
@@ -231,6 +231,25 @@ dashboard = startDashboard($('pane'), {
       banner(`Couldn't keep ${tab.name}: ${e.message ?? e}`)
       throw e
     }),
+    // Its session ends first; a process just told to quit can still hold the folder for a moment on Windows.
+    discard: async (tab, report) => {
+      if (!tabs.end(tab)) {
+        const why = `${tab.name} is this window's last tab, so open another before discarding it`
+        banner(why)
+        throw new Error(why)
+      }
+      for (const wait of [300, 1500, 4000]) {
+        await new Promise(r => setTimeout(r, wait))
+        try {
+          return await discard(runGit, report.root)
+        } catch (e) {
+          if (wait === 4000) {
+            banner(`Couldn't discard ${tab.name}: ${e.message ?? e}`)
+            throw e
+          }
+        }
+      }
+    },
   },
   onClose: () => tabs.focus(),
 })
