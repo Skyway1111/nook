@@ -302,6 +302,21 @@ export function splitPictures(text, shown) {
   return pieces // text, targets, text, … , text
 }
 
+/** A reply as one plain line for nook's cards and notifications: code blocks dropped, Markdown's marks taken
+ * off, spaces collapsed, cut at a word near `room` characters. */
+export function gist(text, room = 280) {
+  const plain = text
+    .replace(/```[\s\S]*?(```|$)/g, ' ')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}(#{1,6}|[-*+]|\d+\.|>)\s+/gm, '')
+    .replace(/(\*\*|__|`)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (plain.length <= room) return plain
+  const cut = plain.slice(0, room)
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), room * 0.6)).replace(/[\s,;:.-]+$/, '')}…`
+}
+
 /** One inline formula as Unicode, or null when part of it has no plain form. */
 export function plainMath(tex) {
   let s = tex
@@ -625,7 +640,8 @@ export function outcome(output, isErrored, ms) {
 
 // What the session is doing: `status` is working, waiting (on the person), or idle, since `since`;
 // `activity` the tool running, `prompt` the main turn's first line, `agents` the subagents running,
-// `turns` the main turns finished, and `touched` the files Claude wrote, newest last.
+// `turns` the main turns finished, `touched` the files Claude wrote, newest last, and `answer` and `took` the
+// last main turn's reply as one plain line and its length in ms.
 const agents = new Set()
 const running = new Map() // tool_use_id -> activity, of the calls under way
 
@@ -657,7 +673,7 @@ export function register(on) {
   on('turn.start', async ($, e, next) => {
     if (file && e.agentId) agents.add(e.agentId)
     if (file) {
-      const patch = e.agentId ? {} : { prompt: e.text.trim().split('\n')[0].slice(0, 200) }
+      const patch = e.agentId ? {} : { prompt: e.text.trim().split('\n')[0].slice(0, 200), answer: '', took: 0 }
       await setStatus($, file, 'working', patch).catch(() => {})
     }
     return next(e)
@@ -671,7 +687,8 @@ export function register(on) {
     } else {
       running.clear()
       agents.clear()
-      await setStatus($, file, 'idle', { turns: (state.turns ?? 0) + 1, ended: e.reason }).catch(() => {})
+      const said = { answer: gist(e.answer ?? ''), took: e.durationMs ?? 0 }
+      await setStatus($, file, 'idle', { turns: (state.turns ?? 0) + 1, ended: e.reason, ...said }).catch(() => {})
     }
     return result
   })
@@ -713,7 +730,7 @@ export function register(on) {
   })
   on('session.end', async ($, e, next) => {
     // After a /clear the process goes on as a new session, with nothing yet said.
-    if (file) await setStatus($, file, 'idle', { ended: e.reason, prompt: '' }).catch(() => {})
+    if (file) await setStatus($, file, 'idle', { ended: e.reason, prompt: '', answer: '', took: 0 }).catch(() => {})
     return next(e)
   })
   // The effort each request goes out with, the main agent's only.

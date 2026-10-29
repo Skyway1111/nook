@@ -158,6 +158,9 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .sessions .session .where { flex: 1; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
 .sessions .session p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sessions .session .prompt { color: var(--ink-1); }
+.sessions .session .answer { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-height: 1.4; color: var(--ink-2); }
+.sessions .session .answer:empty { display: none; }
+.sessions .session:not([data-mark=working], [data-mark=waiting]) .doing:empty { display: none; }
 .sessions .session .doing { font-family: var(--font-term); font-size: .8rem; color: var(--ink-3); min-height: 1.2em; }
 .sessions .session footer { font-size: .78rem; color: var(--ink-3); }
 .sessions .session .files { display: flex; gap: 6px; min-height: 0; }

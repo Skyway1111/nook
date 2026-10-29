@@ -33,7 +33,8 @@ export const answeredReport = (report, answered) =>
   answered != null && report.status === 'waiting' && report.since === answered ? { ...report, status: 'working' } : report
 
 /** The desktop notification for a session that just wanted the user, `{ title, body }`, or null when it
- * wants nothing. `name` is its tab's. A wait names the tool Claude asks about; a finish, the prompt it ran. */
+ * wants nothing. `name` is its tab's. A wait names the tool Claude asks about; a finish, what Claude said
+ * last, or the prompt it ran. */
 export function notice(view, report = {}, name = '') {
   if (!view.attention) return null
   const where = name ? ` in ${name}` : ''
@@ -42,7 +43,7 @@ export function notice(view, report = {}, name = '') {
     const asks = report.activity ? `Asks about ${report.activity}` : 'Waiting on you'
     return { title: `Claude needs you${where}`, body: [asks, prompt].filter(Boolean).join('\n') }
   }
-  return { title: `Claude finished${where}`, body: prompt || 'Done' }
+  return { title: `Claude finished${where}`, body: report.answer || prompt || 'Done' }
 }
 
 /** Why a prompt can't be sent to this session now, or null when it can. A session asking something would
