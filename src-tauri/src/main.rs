@@ -334,8 +334,15 @@ fn render_on_the_cpu_unless_gpu() {
         .and_then(|dir| fs::read_to_string(dir.join("dev.nook.app").join("settings.json")).ok())
         .and_then(|text| serde_json::from_str::<Settings>(&text).ok())
         .is_some_and(|s| s.gpu);
-    if !gpu && std::env::var_os(VAR).is_none() {
-        std::env::set_var(VAR, "1");
+    if gpu {
+        return;
+    }
+    // Without compositing nothing needs DMA-BUF, and the renderer for it still sets up EGL and Mesa in the UI
+    // process: about 28 MB on Xvfb.
+    for var in [VAR, "WEBKIT_DISABLE_DMABUF_RENDERER"] {
+        if std::env::var_os(var).is_none() {
+            std::env::set_var(var, "1");
+        }
     }
 }
 
