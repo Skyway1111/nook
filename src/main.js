@@ -189,6 +189,15 @@ getCurrentWebview().onDragDropEvent(({ payload: { type, position, paths: dropped
 // Titlebar
 const here = () => files.current() || cwd
 $('toggle-files').onclick = () => { document.body.classList.toggle('files-hidden'); tabs.focus() }
+// F11, or the palette, toggles focus mode: Claude alone, in a column over the wallpaper. The pill leaves it.
+const focusMode = () => { document.body.classList.toggle('focus'); tabs.focus() }
+$('focus-exit').onclick = focusMode
+addEventListener('keydown', e => {
+  if (e.key !== 'F11' || e.ctrlKey || e.altKey || e.shiftKey || e.metaKey || e.repeat) return
+  e.preventDefault()
+  e.stopPropagation()
+  focusMode()
+}, true)
 const newSession = () => tabs.openClaude(here())
 // The files Claude wrote in any open session, marked in the explorer, each linked to its diff.
 let touched = ''

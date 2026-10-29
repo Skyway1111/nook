@@ -44,6 +44,7 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 | Ctrl+P | Quick open: find a file, `>` for commands, `:` for a line, `%` for text in files |
 | Ctrl+Shift+O | Go to a function, class, or heading in the open file. The arrows show each in the editor, and Esc goes back. |
 | F1 | Run a command |
+| F11 | Focus mode: no panels or titlebar buttons, each Claude tab a centered column over the wallpaper. `--focus-width` in theme.css sets the column. F11 again, or the Focus pill, leaves it. |
 | Ctrl+Shift+E | Move through the file browser with the keys. Shift+arrows pick, Space picks one, F2 renames, Delete deletes, Ctrl+Enter adds to Claude's prompt, Ctrl+F or / filters by name, Esc gives the keys back. |
 | Ctrl+Tab, Ctrl+Shift+Tab | Next or previous tab |
 | Ctrl+S | Save the open file |

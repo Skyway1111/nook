@@ -105,6 +105,17 @@ body.files-hidden #pane { border-left: 0; border-top-left-radius: 0; }
 body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .view { position: absolute; inset: 0; }
 .view.claude { padding: 12px 4px 8px 16px; }
+/* Focus mode (F11): no panels and no titlebar buttons but the tabs, and each whole Claude tab a centered column
+   over the wallpaper. Only body.focus has these, so the usual layout never pays for them. */
+body.focus main { --files-width: 0px; --git-width: 0px; }
+body.focus :is(#files, #files-sash, #git, #git-sash) { visibility: hidden; }
+/* The pane keeps its top edge: without it, each of the wallpaper's frames costs half again as much CPU. */
+body.focus #pane { border-width: 1px 0 0; border-radius: 0; }
+body.focus .lead { width: auto; }
+body.focus :is(.lead > button, #titlebar > button:not(#focus-exit)) { display: none; }
+body.focus .view.claude:not([data-half]) { padding: 28px max(16px, calc((100% - var(--focus-width)) / 2)) 12px; }
+#focus-exit { display: none; }
+body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: auto; padding: 0 10px; font-size: .86rem; }
 /* Split: two tabs side by side, the focused half's tab active in the strip and the other marked beside. */
 .view[data-half=left] { right: calc(100% - var(--split, 50%)); }
 .view[data-half=right] { left: var(--split, 50%); border-left: 1px solid var(--line); }
