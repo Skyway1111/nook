@@ -102,7 +102,8 @@
   --claude-selectionBg: var(--selection);
 
   /* Living wallpaper: a scene drawn in characters behind Claude tabs, always moving. One of none, drift,
-     turtles, koi, jellyfish, boats, fireflies, moonlit, rain, aurora, snow, campfire, lava, orbit, or coderain.
+     turtles, koi, jellyfish, boats, fireflies, moonlit, rain, aurora, snow, campfire, lava, orbit, coderain,
+     petals, tide, or city.
      The titlebar's wallpaper button writes your pick here. */
   --wallpaper: none;
   --wallpaper-opacity: .5; /* over --term-bg, under Claude's text */
