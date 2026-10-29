@@ -26,6 +26,11 @@ export function appCommands({ tabs, files, git, drawer, openQuick, quickPrompts,
     { title: 'Open settings', icon: '\uE713', run: drawer.toggle },
     { title: 'Pick a wallpaper', icon: '\uE771', run: () => document.getElementById('toggle-wallpaper').click() },
     { title: 'Make a theme from a picture…', icon: '\uEB9F', run: drawer.themes.fromPicture },
+    // Arrowing onto a theme shows nook in it, and closing the box without picking one puts back the one in use.
+    ...drawer.themes.names().map(name => ({
+      title: `Theme: ${name ? drawer.themes.label(name) : 'nook'}`, icon: '\uE790',
+      run: () => drawer.themes.use(name), look: () => drawer.themes.peek(name), back: drawer.themes.unpeek,
+    })),
     { title: 'Show the welcome', icon: '\uE790', run: welcome },
     { title: 'Go to file…', keys: 'Ctrl+P', icon: ICON.file, run: () => openQuick('') },
     { title: 'Go to line…', keys: 'Ctrl+P, then :', icon: '\uE8D2', when: file, run: () => openQuick(':') },
