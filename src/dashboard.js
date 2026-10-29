@@ -10,9 +10,9 @@ const FILES = 4 // the files a card lists
 const WORDS = { working: 'Working', waiting: 'Waiting on you', done: 'Done', '': 'Idle' }
 
 /** `list()` gives `[{ tab, view, report }]` for every Claude tab, `open(tab)` shows one, `newSession()`
- * starts another, and `send(tab, text)` sends one a prompt. `button` toggles the dashboard; `onClose` hears
+ * starts another, `send(tab, text)` sends one a prompt, and `review(session)` opens all it changed. `button` toggles the dashboard; `onClose` hears
  * it close. */
-export function startDashboard(pane, { button, list, open, newSession, showChanges, send, onClose }) {
+export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, onClose }) {
   let box = null
   let timer = 0
   let at = 0 // the card the arrow keys are on
@@ -51,7 +51,8 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
       !busy && report.took >= 1000 && `took ${ago(report.took)}`,
     ].filter(Boolean)
     c.querySelector('footer').textContent = facts.join(' · ')
-    // The newest files Claude wrote, each opening its diff.
+    // Every file Claude wrote in one diff, then the newest few, each opening its own.
+    if (files > 1) c.querySelector('.files').append(el('span', { className: 'file review', textContent: `Review all ${files}`, title: 'Show every change this session made, in one tab' }))
     c.querySelector('.files').append(...(report.touched ?? []).slice(-FILES).reverse().map(path => {
       const f = el('span', { className: 'file', textContent: path.split(/[\\/]/).pop(), title: `${path}\nShow Claude's changes` })
       f.dataset.path = path
@@ -62,7 +63,8 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
       if (e.target.closest('.pick')) return tick(i)
       const file = e.target.closest('.file')
       close()
-      if (file) showChanges(file.dataset.path)
+      if (file?.classList.contains('review')) review({ tab, view, report })
+      else if (file) showChanges(file.dataset.path)
       else open(tab)
     }
     return c

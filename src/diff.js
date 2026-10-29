@@ -21,9 +21,10 @@ const SHOW = ['-c', 'core.quotepath=false', 'show', '--format=', '--no-color', '
  * runs a git command after any the panel has queued and resolves to true, or to what git said went wrong;
  * `stage(paths, on)` stages or unstages whole files as the panel's checkboxes do, and resolves the same way.
  * Given `commit`, it shows that commit's changes instead, read-only, after `commit.intro`; `show(commit)`
- * moves it to another, and null shows none.
+ * moves it to another, and null shows none. Given `only`, a list of paths in the repository, it shows those
+ * files alone, and `review(list)` changes the list.
  */
-export function startDiff(view, { root, rel, openFile, run, stage, commit }) {
+export function startDiff(view, { root, rel, openFile, run, stage, commit, only }) {
   view.tabIndex = -1 // focusable, so the keyboard scrolls it
   const fixed = commit !== undefined
   let shown // the diffs' text last painted
@@ -51,7 +52,7 @@ export function startDiff(view, { root, rel, openFile, run, stage, commit }) {
       shown = text
       return render([[null, parseDiff(text), false]])
     }
-    const [staged, unstaged] = await Promise.all([true, false].map(s => invoke('git_diff', { root, path: rel, staged: s }).catch(e => `\\ nook ${e}`)))
+    const [staged, unstaged] = await Promise.all([true, false].map(s => invoke('git_diff', { root, path: rel, paths: only, staged: s }).catch(e => `\\ nook ${e}`)))
     const text = staged + '\0' + unstaged
     if (text === shown && !force) return
     if (text !== shown) picked = null
@@ -335,7 +336,14 @@ export function startDiff(view, { root, rel, openFile, run, stage, commit }) {
     }
   }
 
-  return { refresh, show }
+  /** Shows another list of files, from the top. */
+  function review(list) {
+    only = list
+    view.scrollTop = 0
+    return refresh(true)
+  }
+
+  return { refresh, show, review }
 }
 
 /** Rebuilds `code` as `text` in token spans, with the changed characters `mark` set apart. */

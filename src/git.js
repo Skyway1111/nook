@@ -256,6 +256,24 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
     })
   }
 
+  /** A tab of the changes to `rels` alone, the files one Claude session wrote, named `name`. One such tab
+   * serves a repository: asked again, for another session, it shows that one's files. */
+  function openReview(status, rels, name) {
+    const { root } = status
+    const run = (args, input) => act(args, input, root).then(ok => ok || said)
+    const stage = (paths, on) => {
+      const args = on ? ['add', '-A'] : status.oid ? ['restore', '--staged'] : ['rm', '--cached', '-r', '-q']
+      return run([...args, ...PATHSPEC], paths.join('\0'))
+    }
+    let diff
+    const tab = openView('review', name, root, view => {
+      diff = import('./diff.js').then(m => m.startDiff(view, { root, rel: '', only: rels, openFile, run, stage }))
+      return { refresh: () => diff.then(d => d.refresh()), review: list => diff.then(d => d.review(list)) }
+    })
+    if (!diff) tab.viewer.review(rels) // the tab was open, on another session's files
+    tab.name = tab.label.textContent = name
+  }
+
   /** A conflicted file's tab, to settle its conflicts and mark it resolved. */
   function openMerge(status, rel) {
     const { root } = status
@@ -486,6 +504,13 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
       const status = await invoke('git_status', { path }).catch(() => null)
       if (!status?.root || !paths.within(path, status.root)) return openFile(path)
       openDiff(status, relative(status.root, path))
+    },
+    /** Opens a tab of what one Claude session changed: `files` it wrote, in the repository holding `dir`. */
+    async review(dir, files, name) {
+      const status = await invoke('git_status', { path: dir }).catch(() => null)
+      const rels = status?.root ? files.filter(f => paths.within(f, status.root)).map(f => relative(status.root, f)) : []
+      if (!rels.length) return files.length && openFile(files[files.length - 1])
+      openReview(status, rels, name)
     },
     /** Follows the tab now showing: a Claude tab's folder, or an open file. */
     show(path) {

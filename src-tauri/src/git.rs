@@ -304,14 +304,18 @@ fn parse_numstat(out: &str) -> HashMap<&str, (u32, u32)> {
 /// What changed under `path`, as a unified diff; `""` is the whole repo. Staged: the index against the last
 /// commit. Unstaged: the working tree against the index, with untracked files as added.
 #[tauri::command]
-pub async fn git_diff(root: String, path: String, staged: bool) -> Result<String, String> {
+pub async fn git_diff(root: String, path: String, staged: bool, paths: Option<Vec<String>>) -> Result<String, String> {
     spawn_blocking(move || {
         let root = Path::new(&root);
-        let spec = if path.is_empty() { "." } else { &path };
+        // `paths`, when given, are the only files shown: the ones one Claude session wrote.
+        let spec: Vec<&str> = match &paths {
+            Some(list) if !list.is_empty() => list.iter().map(String::as_str).collect(),
+            _ => vec![if path.is_empty() { "." } else { &path }],
+        };
         // The user's diff settings can't change the shape git.js parses: no external tool, color, or odd prefixes.
         let read = |args: &[&str]| {
             let options = ["--no-optional-locks", "-c", "core.quotepath=false", "-c", "diff.noprefix=false"];
-            run(root, &[&options[..], args, &["--", spec]].concat(), None)
+            run(root, &[&options[..], args, &["--"], &spec[..]].concat(), None)
         };
         let diff = ["diff", "--no-ext-diff", "--no-color", "--src-prefix=a/", "--dst-prefix=b/"];
         if staged {
@@ -444,6 +448,35 @@ mod tests {
         let root = repo_root(&file).unwrap();
         assert!(root.join(".git").exists() && here.starts_with(root));
         assert_eq!(repo_root(Path::new("src")), None);
+    }
+
+    /// A session's review shows only the files it names, tracked or new, staged or not.
+    #[test]
+    fn diffs_only_the_paths_given() {
+        let dir = std::env::temp_dir().join(format!("nook-git-paths-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let id = ["-c", "user.name=nook", "-c", "user.email=nook@example.com"];
+        run(&dir, &["init", "-q"], None).unwrap();
+        for f in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(dir.join(f), "one\n").unwrap();
+        }
+        run(&dir, &["add", "."], None).unwrap();
+        run(&dir, &[&id[..], &["commit", "-qm", "files"]].concat(), None).unwrap();
+        for f in ["a.txt", "b.txt", "c.txt", "new.txt"] {
+            std::fs::write(dir.join(f), "two\n").unwrap();
+        }
+        run(&dir, &["add", "b.txt"], None).unwrap();
+        let diff = |staged, paths: Option<Vec<String>>| {
+            tauri::async_runtime::block_on(git_diff(dir.to_string_lossy().into(), String::new(), staged, paths)).unwrap()
+        };
+        let mine = || Some(vec!["a.txt".to_string(), "b.txt".to_string(), "new.txt".to_string()]);
+        let named = |text: &str| ["a.txt", "b.txt", "c.txt", "new.txt"].iter().filter(|f| text.contains(&format!("b/{f}"))).copied().collect::<Vec<_>>();
+        assert_eq!(named(&diff(false, mine())), ["a.txt", "new.txt"]);
+        assert_eq!(named(&diff(true, mine())), ["b.txt"]);
+        assert_eq!(named(&diff(false, None)), ["a.txt", "c.txt", "new.txt"]);
+        assert_eq!(named(&diff(false, Some(vec![]))), ["a.txt", "c.txt", "new.txt"]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A clone's progress comes line by line as git writes it; what it says when it fails is kept.
