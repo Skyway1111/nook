@@ -46,7 +46,20 @@ test('a turn works, runs its tools, notes the files it wrote, and goes idle', as
   expect(last(reports)).toMatchObject({ status: 'working', touched: ['/work/notes.md', '/work/src/tabs.js'] })
 
   await $.turn.complete({ answer: 'Done', durationMs: 5, isAborted: false, reason: 'answer', turnId: 't1' })
-  expect(last(reports)).toMatchObject({ status: 'idle', turns: 1, activity: '' })
+  expect(last(reports)).toMatchObject({ status: 'idle', turns: 1, activity: '', answer: 'Done', took: 5 })
+
+  // The next turn starts with no answer, so a card never shows the last turn's reply as this one's.
+  await $.turn.start({ text: 'Again', turnId: 't2' })
+  expect(last(reports)).toMatchObject({ status: 'working', answer: '', took: 0 })
+})
+
+test('a reply reads as one plain line: no code, no Markdown marks, cut at a word', () => {
+  expect(gist('## Fixed\n\n- **Tabs** now keep `order`\n- See [the PR](https://x/1)\n\n```js\nlet a = 1\n```\nAll green.'))
+    .toBe('Fixed Tabs now keep order See the PR All green.')
+  const long = gist('word '.repeat(100), 40)
+  expect(long.endsWith('…')).toBe(true)
+  expect(long.length).toBeLessThanOrEqual(41)
+  expect(gist('')).toBe('')
 })
 
 test('a permission prompt or a question to the person waits on them', async ($, on) => {
@@ -66,7 +79,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, headerSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, splitBlocks, splitPictures, summary, testCounts } from './register.js'
+import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, gist, headerSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, splitBlocks, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })

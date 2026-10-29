@@ -82,6 +82,7 @@ test('a notice names what Claude asks about, or the prompt it finished, and only
     body: 'Asks about Bash · npm publish\n“Ship it”',
   })
   assert.deepEqual(notice({ mark: 'done', attention: true }, report, 'nook'), { title: 'Claude finished in nook', body: '“Ship it”' })
+  assert.deepEqual(notice({ mark: 'done', attention: true }, { ...report, answer: 'Published 1.4.0' }, 'nook'), { title: 'Claude finished in nook', body: 'Published 1.4.0' })
   assert.deepEqual(notice({ mark: 'waiting', attention: true }, {}), { title: 'Claude needs you', body: 'Waiting on you' })
   assert.equal(notice({ mark: 'working', attention: false }, report, 'nook'), null)
 })

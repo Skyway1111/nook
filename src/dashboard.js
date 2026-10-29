@@ -27,7 +27,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     const c = el('button', { className: `session${i === at ? ' at' : ''}` })
     c.dataset.mark = mark
     c.innerHTML = '<header><b class="pick" role="checkbox"></b><b class="mark"></b><span class="state"></span><span class="where"></span></header>' +
-      '<p class="prompt"></p><p class="doing"></p><footer></footer><p class="files"></p>'
+      '<p class="prompt"></p><p class="doing"></p><p class="answer"></p><footer></footer><p class="files"></p>'
     c.querySelector('.state').textContent = WORDS[mark] + since
     c.querySelector('.where').textContent = tab.name
     c.querySelector('.where').title = tab.path
@@ -37,7 +37,10 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     pick.setAttribute('aria-disabled', !!why)
     pick.title = why ?? 'Send the prompt below to this session too (Space)'
     c.querySelector('.prompt').textContent = report.prompt ? `“${report.prompt}”` : 'No prompt yet'
-    c.querySelector('.doing').textContent = mark === 'working' || mark === 'waiting' ? report.activity ?? '' : ''
+    const busy = mark === 'working' || mark === 'waiting'
+    c.querySelector('.doing').textContent = busy ? report.activity ?? '' : ''
+    // Between turns, what Claude said at the end of the last one.
+    c.querySelector('.answer').textContent = busy ? '' : report.answer ?? ''
     const files = report.touched?.length ?? 0
     const facts = [
       modelName(report.model),
@@ -45,6 +48,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
       report.agents && `${report.agents} subagent${report.agents > 1 ? 's' : ''}`,
       files && `${files} file${files > 1 ? 's' : ''} changed`,
       report.turns && `${report.turns} turn${report.turns > 1 ? 's' : ''}`,
+      !busy && report.took >= 1000 && `took ${ago(report.took)}`,
     ].filter(Boolean)
     c.querySelector('footer').textContent = facts.join(' · ')
     // The newest files Claude wrote, each opening its diff.
