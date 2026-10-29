@@ -1,0 +1,49 @@
+/* Phosphor: an old green-screen terminal. The window in one glowing green, brightest where it matters;
+   the terminal keeps just enough color to tell a red line from a green one.
+   Try it with the code rain wallpaper. */
+
+:root {
+  --h: 145;
+  --font-ui: "CaskaydiaCove Nerd Font Mono", "Cascadia Mono", Consolas, monospace;
+  --ui-font-size: 13px;
+  --bg: oklch(.12 .02 150);
+  --raised: oklch(.19 .035 150);
+  --hover: oklch(.85 .15 145 / .07);
+  --line: oklch(.85 .15 145 / .13);
+  --ink-1: oklch(.92 .17 145);
+  --ink-2: oklch(.78 .14 145);
+  --ink-3: oklch(.58 .1 145);
+  --accent: oklch(.9 .19 140);
+  --icon-image: oklch(.85 .14 120);
+  --icon-code: oklch(.85 .14 165);
+  --icon-doc: var(--ink-2);
+
+  --term-bg:
+    radial-gradient(90% 80% at 50% 45%, oklch(.2 .05 150 / .7), transparent 80%),
+    oklch(.1 .02 150);
+  --term-fg: oklch(.88 .17 145);
+  --cursor: oklch(.92 .2 140);
+  --selection: oklch(.7 .17 145 / .3);
+
+  /* Still sixteen colors, each nudged toward green, so red and blue still read as red and blue. */
+  --ansi-black: oklch(.26 .04 150);
+  --ansi-red: oklch(.72 .13 40);
+  --ansi-green: oklch(.82 .18 145);
+  --ansi-yellow: oklch(.88 .15 115);
+  --ansi-blue: oklch(.74 .1 200);
+  --ansi-magenta: oklch(.76 .1 330);
+  --ansi-cyan: oklch(.84 .12 175);
+  --ansi-white: oklch(.86 .1 145);
+  --ansi-bright-black: oklch(.55 .09 145);
+  --ansi-bright-red: oklch(.8 .12 45);
+  --ansi-bright-green: oklch(.92 .19 142);
+  --ansi-bright-yellow: oklch(.94 .14 115);
+  --ansi-bright-blue: oklch(.82 .09 200);
+  --ansi-bright-magenta: oklch(.84 .09 330);
+  --ansi-bright-cyan: oklch(.9 .11 175);
+  --ansi-bright-white: oklch(.97 .1 145);
+
+  --claude-claude: oklch(.92 .2 140);
+}
+
+.brand { letter-spacing: .25em; text-transform: uppercase; font-size: .85rem; }

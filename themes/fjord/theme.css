@@ -1,0 +1,43 @@
+/* Fjord: cold water under a gray northern sky. Slate panels, frost-blue text, and an aurora green for Claude. */
+
+:root {
+  --h: 230;
+  --bg: #242933;
+  --raised: #2e3440;
+  --hover: oklch(.9 .02 230 / .06);
+  --line: oklch(.9 .02 230 / .1);
+  --ink-1: #eceff4;
+  --ink-2: #c4cbd8;
+  --ink-3: #7b8597;
+  --accent: #88c0d0;
+  --icon-image: #b48ead;
+  --icon-code: #8fbcbb;
+
+  --term-bg:
+    radial-gradient(80% 60% at 100% 0%, oklch(.36 .05 220 / .5), transparent 70%),
+    radial-gradient(70% 55% at 0% 100%, oklch(.32 .05 170 / .35), transparent 70%),
+    #20242d;
+  --term-fg: #d8dee9;
+  --cursor: #88c0d0;
+  --selection: oklch(.68 .07 220 / .32);
+
+  --ansi-black: #3b4252;
+  --ansi-red: #bf616a;
+  --ansi-green: #a3be8c;
+  --ansi-yellow: #ebcb8b;
+  --ansi-blue: #81a1c1;
+  --ansi-magenta: #b48ead;
+  --ansi-cyan: #88c0d0;
+  --ansi-white: #e5e9f0;
+  --ansi-bright-black: #616e88;
+  --ansi-bright-red: #d08770;
+  --ansi-bright-green: #b6d0a0;
+  --ansi-bright-yellow: #f2d9a6;
+  --ansi-bright-blue: #9db8d6;
+  --ansi-bright-magenta: #c9a6c2;
+  --ansi-bright-cyan: #8fbcbb;
+  --ansi-bright-white: #eceff4;
+
+  --claude-claude: #8fd0b4;
+  --claude-permission: #81a1c1;
+}
