@@ -16,7 +16,7 @@ import { startDashboard } from './dashboard.js'
 import { opened } from './recent.js'
 import { path as paths } from './paths.js'
 import { $, openMenu, openPicker } from './ui.js'
-import { SAFE, worktreeName, since } from './launch.js'
+import { SAFE, worktreeName, fanNames, since } from './launch.js'
 import { expand, offer, saved } from './prompts.js'
 
 const win = getCurrentWindow()
@@ -206,6 +206,7 @@ dashboard = startDashboard($('pane'), {
   review: ({ tab, report }) => git.review(report.root || tab.path, report.touched ?? [], `${tab.name} · Claude's changes`),
   send: (tab, text) => tabs.prompt(tab, text),
   answer: (tab, allow) => tabs.answer(tab, allow),
+  fanOut,
   onClose: () => tabs.focus(),
 })
 $('new-tab').onclick = newSession
@@ -233,6 +234,20 @@ async function resume(at) {
       .filter(s => !q || `${s.title ?? ''} ${s.prompt}`.toLowerCase().includes(q))
       .map(s => [`${s.title ?? s.prompt} · ${since(s.modified)}`, ICON.history, () => launch(['--resume', s.id])])
   })
+}
+// One prompt to several new sessions, each in a git worktree of its own, so they try it side by side without
+// editing the same checkout. Each takes the prompt once its session has started; the tab in front stays.
+async function fanOut(text, n) {
+  const dir = here()
+  if (!(await invoke('git_status', { path: dir }).catch(() => null))) return banner(`${dir} isn't in a git repository, so Claude can't start worktrees there`)
+  const back = tabs.active()
+  const started = []
+  for (const name of fanNames(n)) started.push(await tabs.openClaude(dir, ['--worktree', name]))
+  if (back) tabs.show(back)
+  await Promise.all(started.map(async tab => {
+    if (await tabs.ready(tab)) tabs.prompt(tab, text)
+    else banner(`${tab.name} didn't start in time, so its prompt wasn't sent`)
+  }))
 }
 function worktree(at) {
   const name = worktreeName()
