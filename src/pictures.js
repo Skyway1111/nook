@@ -1,7 +1,9 @@
 // Pictures in Claude's transcript, drawn with kitty's graphics protocol. Claude names each picture once,
-// `ESC _ G a=T,U=1,t=f,i=<id>,c=<columns>,r=<rows>;<base64 path> ESC \`, then fills its box with U+10EEEE
-// cells. A cell's color is the picture's id, and its two diacritics are its row and column in the box.
-// nook paints the file over the cells on screen and hides the placeholders under it as xterm draws them.
+// `ESC _ G a=T,U=1,t=f,i=<id>,c=<columns>,r=<rows>;<base64 path> ESC \`, or sends the picture itself as
+// base64 with t=d, PNG (f=100) or raw RGB(A) pixels (f=24, f=32), split into chunks while m=1. Then it
+// fills the picture's box with U+10EEEE cells. A cell's color is the picture's id, and its two diacritics
+// are its row and column in the box. nook paints the picture over the cells on screen and hides the
+// placeholders under it as xterm draws them. A query (a=q) learns which ways of sending nook takes.
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { el } from './ui.js'
 
@@ -21,19 +23,50 @@ const MARKS = [0x305, [0x30d, 0x30e], 0x310, 0x312, [0x33d, 0x33f], 0x346, [0x34
 const INDEX = new Map(MARKS.flatMap(m => (typeof m === 'number' ? [m] : Array.from({ length: m[1] - m[0] + 1 }, (_, i) => m[0] + i)))
   .map((c, i) => [c, i]))
 const latin1 = new TextDecoder('latin1')
+
+/** Whether `bytes` holds ESC _, which starts a graphics command, or ends with ESC, which may. */
+function startsCommand(bytes) {
+  for (let i = bytes.indexOf(0x1b); i !== -1; i = bytes.indexOf(0x1b, i + 1)) {
+    if (i === bytes.length - 1 || bytes[i + 1] === 0x5f) return true
+  }
+  return false
+}
 const utf8 = new TextDecoder()
 
-export function startPictures(term, screen) {
+const MAX_PICTURES = 64 // sent pictures kept, oldest dropped first
+const MAX_BASE64 = 64 << 20 // the largest picture sent in chunks, in base64
+
+/** A sent picture as a URL the page can show: PNG bytes as they are, raw pixels drawn into a PNG. */
+async function pictureUrl(k, base64) {
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+  const format = k.f ?? '32'
+  if (format === '100') return URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
+  const [w, h] = [Number(k.s), Number(k.v)]
+  const step = format === '24' ? 3 : 4
+  if (!(w > 0 && h > 0) || bytes.length < w * h * step) throw new Error('bad size')
+  const rgba = new Uint8ClampedArray(w * h * 4)
+  for (let i = 0, j = 0; i < w * h; i++, j += step) {
+    rgba.set(bytes.subarray(j, j + 3), i * 4)
+    rgba[i * 4 + 3] = step === 4 ? bytes[j + 3] : 255
+  }
+  const canvas = new OffscreenCanvas(w, h)
+  canvas.getContext('2d').putImageData(new ImageData(rgba, w, h), 0, 0)
+  return URL.createObjectURL(await canvas.convertToBlob())
+}
+
+/** `reply(text)` answers a query on the terminal's input, as kitty does. */
+export function startPictures(term, screen, reply = () => {}) {
   const layer = screen.appendChild(el('div', { className: 'pictures' }))
   const cell = term.buffer.active.getNullCell()
-  const files = new Map() // id -> { url, columns, rows }
+  const files = new Map() // id -> { url, columns, rows, blob }, oldest first
+  let sending = null // a picture arriving in chunks: { keys, parts, size }
   const shown = new Map() // id -> { el, css }
   let seen = false // whether Claude has drawn a picture yet
   let tail = '' // the start of a command the last chunk cut off
 
   /** Takes the graphics commands from a chunk of output. xterm drops them on its own. */
   function read(bytes) {
-    if (!tail && !bytes.includes(0x5f)) return // no `_`, so no command starts here
+    if (!tail && !startsCommand(bytes)) return
     const text = tail + latin1.decode(bytes)
     let at = 0
     while ((at = text.indexOf('\x1b_G', at)) !== -1) {
@@ -49,15 +82,60 @@ export function startPictures(term, screen) {
 
   function run(command) {
     seen = true
-    const [keys, payload = ''] = command.split(';')
+    const at = command.indexOf(';')
+    const [keys, payload] = at < 0 ? [command, ''] : [command.slice(0, at), command.slice(at + 1)]
     const k = Object.fromEntries(keys.split(',').map(kv => kv.split('=')))
-    const id = Number(k.i)
-    if (k.a === 'd') files.delete(id)
-    // Claude declares a PNG, but the webview decodes whatever the file holds, SVG and JPEG included.
-    else if (k.t === 'f') {
-      const path = utf8.decode(Uint8Array.from(atob(payload), c => c.charCodeAt(0)))
-      files.set(id, { url: convertFileSrc(path), columns: Number(k.c), rows: Number(k.r) })
+    // While a picture arrives in chunks, each command carries its next chunk.
+    if (sending) {
+      sending.parts.push(payload)
+      sending.size += payload.length
+      if (sending.size > MAX_BASE64) sending = null
+      else if (k.m !== '1') finish(sending.keys, sending.parts.join('')), (sending = null)
+      return
     }
+    const id = Number(k.i)
+    const medium = k.t ?? 'd'
+    const answer = message => {
+      if (k.i && k.q !== '2' && !(message === 'OK' && k.q === '1')) reply(`\x1b_Gi=${k.i};${message}\x1b\\`)
+    }
+    if (k.a === 'q') return answer(medium === 'd' || medium === 'f' ? 'OK' : 'EINVAL:only direct and file pictures')
+    if (k.a === 'd') {
+      if (!k.d || k.d === 'a' || k.d === 'A') for (const id of [...files.keys()]) drop(id)
+      else if (k.d.toLowerCase() === 'i') drop(id)
+      return
+    }
+    if (k.a && k.a !== 't' && k.a !== 'T') return
+    if (medium === 'f') {
+      // Claude declares a PNG, but the webview decodes whatever the file holds, SVG and JPEG included.
+      const path = utf8.decode(Uint8Array.from(atob(payload), c => c.charCodeAt(0)))
+      keep(id, { url: convertFileSrc(path), columns: Number(k.c), rows: Number(k.r) })
+      answer('OK')
+    } else if (medium === 'd') {
+      if (k.m === '1') sending = { keys: k, parts: [payload], size: payload.length }
+      else finish(k, payload)
+    } else answer('EINVAL:only direct and file pictures')
+  }
+
+  /** A picture sent whole: shown once it decodes. */
+  function finish(k, base64) {
+    const id = Number(k.i)
+    pictureUrl(k, base64).then(url => {
+      keep(id, { url, columns: Number(k.c), rows: Number(k.r), blob: true })
+      if (k.i && k.q !== '1' && k.q !== '2') reply(`\x1b_Gi=${k.i};OK\x1b\\`)
+      draw()
+    }, () => k.i && k.q !== '2' && reply(`\x1b_Gi=${k.i};EBADPNG:can't decode the picture\x1b\\`))
+  }
+
+  function keep(id, file) {
+    drop(id)
+    files.set(id, file)
+    if (files.size > MAX_PICTURES) drop(files.keys().next().value)
+  }
+
+  function drop(id) {
+    const file = files.get(id)
+    if (file?.blob) URL.revokeObjectURL(file.url)
+    files.delete(id)
   }
 
   /** Paints each picture over its cells on screen. */
