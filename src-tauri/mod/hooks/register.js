@@ -1,7 +1,7 @@
 // Tells nook's composer what to show beside Claude's prompt, runs the two commands its menus send, and
 // draws pictures in the transcript: ones Claude read, an SVG it wrote, ones a shell command wrote, ones a reply links, and a reply's diagrams and formulas, with its inline math written in plain symbols. Every hook passes its event on unchanged, and the render hooks add
 // pictures under Claude's own drawing, and under a shell command's result the line that says how it went. The mod writes the session's model, effort, effort levels, context
-// fill, pasted images' folder, and what the session is doing as JSON to NOOK_STATE, and reads requests from
+// fill, pasted images' folder, what the session is doing, and a command to type as JSON to NOOK_STATE, and reads requests from
 // the .cmd file beside it: { command, args, at }.
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const MODELS = ['fable', 'opus', 'sonnet', 'haiku'] // the menu's aliases, each its family's latest model
@@ -408,21 +408,34 @@ export function splitBlocks(text) {
   return pieces // text, [kind, source], … , text
 }
 
-/** A reply's text cut after each closed fenced code block: text, code, text, … , text, where each text piece
- * keeps its blocks and each code piece is the block before it as one would paste it, its fence's indent
- * taken off. A block still streaming in, with no closing fence yet, isn't cut after. */
+/** A reply's text cut after each closed fenced code block: text, block, text, … , text, where each text piece
+ * keeps its blocks and each block piece is `{ code, lang }`: the block before it as one would paste it, its
+ * fence's indent taken off, and its info string's first word. A block still streaming in, with no closing
+ * fence yet, isn't cut after. */
 export function splitCode(text) {
   const pieces = []
   let at = 0
-  for (const m of text.matchAll(/^([ \t]*)(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n?^[ \t]*\2[ \t]*$/gm)) {
+  for (const m of text.matchAll(/^([ \t]*)(`{3,}|~{3,})([^\n]*)\n([\s\S]*?)\n?^[ \t]*\2[ \t]*$/gm)) {
     const indent = m[1].length
-    const code = m[3].split('\n').map(l => l.slice(Math.min(indent, l.length - l.trimStart().length))).join('\n')
+    const code = m[4].split('\n').map(l => l.slice(Math.min(indent, l.length - l.trimStart().length))).join('\n')
     if (!code.trim()) continue
-    pieces.push(text.slice(at, m.index + m[0].length).trim(), code)
+    pieces.push(text.slice(at, m.index + m[0].length).trim(), { code, lang: m[3].trim().split(/\s/)[0].toLowerCase() })
     at = m.index + m[0].length
   }
   pieces.push(at ? text.slice(at).trim() : text)
   return pieces
+}
+
+const SHELLS = new Set(['sh', 'bash', 'shell', 'zsh', 'console', 'terminal'])
+
+/** The one command a shell block holds, its `$ ` prompt taken off, or null: a block in another language, of
+ * more than one line, or of a comment alone. */
+export function runnable({ code, lang }) {
+  if (!SHELLS.has(lang)) return null
+  const line = code.trim()
+  if (!line || line.includes('\n')) return null
+  const command = line.replace(/^\$\s+/, '')
+  return command && !command.startsWith('#') ? command : null
 }
 
 /** About how many rows a display formula takes at the terminal's own text size, a row being about an em:
@@ -920,23 +933,43 @@ export function register(on) {
     const { Box, Button, Image, Markdown } = $.ui.resolve(e)
     // Under each code block, a Copy that puts the block's code, without its fences, on the clipboard.
     const copies = new Map() // keys taken in this reply, so a block that repeats gets its own
-    const copy = (source, more) => {
+    // In a tab nook started, a one-line shell block also has a Run. nook types it into Claude's empty prompt
+    // as a ! command, which Claude runs itself, for the person to send or change: nothing runs until they
+    // press Enter. A prompt typed into can't take it, as a ! only switches an empty one to a command.
+    const copy = (block, more) => {
+      const source = block.code
       const n = copies.get(source) ?? 0
       copies.set(source, n + 1)
       const lines = source.split('\n').length
+      const command = file && runnable(block)
+      const buttons = [Button({
+        key: `copy:${hash(source)}:${n}`,
+        label: '⧉ Copy',
+        plain: true,
+        dimColor: true,
+        onPress: async press => {
+          const { isCopied } = await $.ui.copy({ text: source, surface: press?.surface })
+          $.ui.toast(isCopied ? `Copied ${lines} line${lines === 1 ? '' : 's'}` : 'Nothing could take the copy here')
+        },
+      })]
+      if (command) {
+        buttons.push(Button({
+          key: `run:${hash(source)}:${n}`,
+          label: '▸ Run',
+          plain: true,
+          dimColor: true,
+          onPress: async () => {
+            if ((await $.prompt.read()).text.trim()) return $.ui.toast('Send or clear what you typed first, then Run')
+            await report($, file, { run: { command, at: Date.now() } })
+          },
+        }))
+      }
       return Box({
         paddingLeft: REPLY_INDENT,
         marginBottom: more ? 1 : 0, // the blank line Claude keeps after a block, when words follow
-        children: [Button({
-          key: `copy:${hash(source)}:${n}`,
-          label: '⧉ Copy',
-          plain: true,
-          dimColor: true,
-          onPress: async press => {
-            const { isCopied } = await $.ui.copy({ text: source, surface: press?.surface })
-            $.ui.toast(isCopied ? `Copied ${lines} line${lines === 1 ? '' : 's'}` : 'Nothing could take the copy here')
-          },
-        })],
+        flexDirection: 'row',
+        gap: 3,
+        children: buttons,
       })
     }
     const dir = file?.replace(/[\\/][^\\/]*$/, '')
