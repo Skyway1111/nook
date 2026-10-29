@@ -28,6 +28,13 @@ export function noise(a, b) {
 /** The change from `a` to `b` that counts as worse: the largest of `floor`, RELATIVE of a's median, and noise. */
 export const bar = (a, b, floor) => Math.max(floor, RELATIVE * Math.abs(median(a)), noise(a, b))
 
+/** The change from `then` to `now` in medians, the bar it must pass to count as worse, and whether it does. */
+export function judge(then, now, floor) {
+  const delta = median(now) - median(then)
+  const most = bar(then, now, floor)
+  return { delta, bar: most, worse: delta > most }
+}
+
 /** Prints a table of `metrics`, each [key, label, digits, floor], for `builds`, whose numbers `values(build, key)`
  * gives: each build's median (min-max), then the change from each earlier build to the last, flagged WORSE past
  * its bar, which follows the ±. Returns how many changes were flagged. */
@@ -46,9 +53,7 @@ export function table(builds, metrics, values) {
     for (const base of bases) {
       const then = values(base, key)
       const a = median(then)
-      const delta = median(now) - a
-      const most = bar(then, now, floor)
-      const flagged = delta > most
+      const { delta, bar: most, worse: flagged } = judge(then, now, floor)
       if (flagged) worse++
       line += `${delta >= 0 ? '+' : ''}${f(delta, d)}${a ? ` (${delta >= 0 ? '+' : ''}${f((100 * delta) / a, 0)}%)` : ''} ±${f(most, d)}${flagged ? ' WORSE' : ''}`.padEnd(30)
     }

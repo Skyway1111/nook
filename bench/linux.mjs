@@ -5,12 +5,12 @@
 //   scroll    ms from a wheel step until the frame that shows the scrolled rows, over 40 steps
 //   flood     ms from Enter until the frame that shows the last of 10,000 lines of output, and the
 //             longest gaps between frames meanwhile (p95 and max), each the median of three floods
-//   idle      CPU, as % of one core, over 10 s with nothing happening
-//   typing    CPU over 10 s of typing a key every 100 ms
+//   idle      CPU, as % of one core, over 10 s with nothing happening (5 s with --quick)
+//   typing    CPU over 10 s of typing a key every 100 ms (6 s with --quick)
 //   memory    MB of PSS once idle, and again after the flood fills the scrollback
 //   resize full  resize again, once the flood has filled the scrollback, which xterm reflows each time
 //   diff      with --repo: ms from asking for the diff of every change to the frame that shows it, and the CPU
-//             seconds nook spends in the 5 s after, colors included
+//             seconds nook spends in the 5 s after (3 s with --quick), colors included
 //   history   with --repo: ms from asking for the history to the frame that shows its commits; - for a build
 //             without one
 //   tui       key echo, typing CPU, and resize again, in bench/tui.mjs, a stand-in for Claude's fullscreen
@@ -31,23 +31,32 @@
 // noise. With --repo it runs in that repository instead, so the git panel and its diff tab are measured too;
 // bench/diffrepo.mjs makes a repository with a large diff for it. Xvfb has no GPU, so WebKit draws in software: compare numbers from the same machine, not with a
 // desktop's.
+// --quick is the merge gate's run, which bench/gate.mjs starts: each session times fewer keys, resizes and
+// floods over shorter spans, 16 opens, no Claude-view pass unless --tui on, and a number that comes close to its
+// bar gets more launches before the verdict. --koi also switches each session to the koi wallpaper for a while.
 // Needs Xvfb, xdotool and python3, and a build: `npx tauri build --no-bundle`.
 //   node bench/linux.mjs [--bin src-tauri/target/release/nook[,other...]] [--wallpapers none,koi] [--runs 30]
-//                        [--sessions 3] [--tui off] [--repo path] [--json out.json]
+//                        [--sessions 3] [--tui off] [--repo path] [--quick] [--koi] [--json out.json]
 import { spawn, execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
-import { f, median, quantile, table } from './stats.mjs'
+import { f, judge, median, quantile, table } from './stats.mjs'
 
 const flag = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i < 0 ? fallback : process.argv[i + 1] }
 const bins = flag('bin', new URL('../src-tauri/target/release/nook', import.meta.url).pathname).split(',').map(b => resolve(b))
 const wallpapers = flag('wallpapers', 'none').split(',')
-const runs = Number(flag('runs', 30))
+const quick = process.argv.includes('--quick')
+const runs = Number(flag('runs', quick ? 16 : 30))
 const sessions = Math.min(runs, Number(flag('sessions', 3)))
 const repo = flag('repo', null) && resolve(flag('repo'))
+const tuiOn = flag('tui', quick ? 'off' : 'on') !== 'off'
+const koi = process.argv.includes('--koi')
 const [W, H] = [1280, 820] // nook's own first size
-const FLOODS = 3 // floods a session times
+// How much a session does: the full run's, or the quick gate's, which times fewer of each over shorter spans.
+const P = quick
+  ? { settle: 2000, idle: 5000, keys: 60, resizes: 20, floods: 1, afterFlood: 800, scrolls: 12, resizesFull: 8, diffCpu: 3000 }
+  : { settle: 3000, idle: 10000, keys: 100, resizes: 40, floods: 3, afterFlood: 1500, scrolls: 40, resizesFull: 20, diffCpu: 5000 }
 for (const bin of bins) if (!existsSync(bin)) throw new Error(`no build at ${bin}`)
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -79,7 +88,7 @@ function scratch(wallpaper, command = ['bash', '-c', SHELL]) {
   mkdirSync(home)
   writeFileSync(join(config, 'settings.json'), JSON.stringify({ command, lastDir: repo ?? home, pinned: [] }))
   writeFileSync(join(config, 'theme.css'), `:root { --wallpaper: ${wallpaper}; }\n`)
-  return { dir, env: { ...env, XDG_CONFIG_HOME: join(dir, 'config'), HOME: home } }
+  return { dir, config, env: { ...env, XDG_CONFIG_HOME: join(dir, 'config'), HOME: home } }
 }
 
 /** Whether a line from nook is `event`, or `event:` and what it carries. */
@@ -112,12 +121,14 @@ function launch(bin, run) {
   const next = (event, timeout = 30000, from = 0) => new Promise((resolve, reject) => {
     const have = lines.slice(from).find(l => is(l, event))
     if (have) return resolve(have)
-    const w = { event, resolve }
+    // The timer goes once answered: a pending one would hold the bench open until it fired.
+    const timer = setTimeout(() => { waiting.splice(waiting.indexOf(w), 1); reject(new Error(`no ${event} from nook within ${timeout} ms`)) }, timeout)
+    const w = { event, resolve: item => { clearTimeout(timer); resolve(item) } }
     waiting.push(w)
-    setTimeout(() => { waiting.splice(waiting.indexOf(w), 1); reject(new Error(`no ${event} from nook within ${timeout} ms`)) }, timeout)
   })
   return {
     child,
+    config: run.config,
     lines,
     next,
     since: (from, event) => lines.slice(from).filter(l => l.event === event).map(l => l.ms),
@@ -183,16 +194,16 @@ async function session(app) {
   const page = app.lines.find(l => l.event === 'page')
   if (page) marks.page = page.since - page.ms // when the page began to load
   marks.ready = app.lines.find(l => l.event === 'ready')?.ms
-  await sleep(3000) // past the backdrops' bake and the first polls
+  await sleep(P.settle) // past the backdrops' bake and the first polls
   const win = xdotool('search', '--sync', '--onlyvisible', '--pid', String(app.child.pid)).split('\n')[0]
   xdotool('windowfocus', '--sync', win) // the wallpaper moves only while nook has focus
-  r.idle = await load(app.child.pid, 10000)
+  r.idle = await load(app.child.pid, P.idle)
   r.memory = pss(processes(app.child.pid))
   xdotool('mousemove', '--window', win, String(W / 2), String(H / 2), 'click', '1')
   await sleep(300)
   let from = app.lines.length
-  r.typing = await load(app.child.pid, 10000, async () => {
-    for (let k = 0; k < 100; k++) {
+  r.typing = await load(app.child.pid, P.keys * 100, async () => {
+    for (let k = 0; k < P.keys; k++) {
       xdotool('key', k % 10 === 9 ? 'Return' : 'a') // to the focused window: GTK ignores sent events
       await sleep(100)
     }
@@ -200,12 +211,13 @@ async function session(app) {
   await sleep(300)
   const keys = app.since(from, 'key')
   Object.assign(r, { key: median(keys), keyP95: quantile(keys, 0.95) })
-  Object.assign(r, await resizes(app, win, 40, 'resize'))
+  Object.assign(r, await resizes(app, win, P.resizes, 'resize'))
+  if (koi) Object.assign(r, await withKoi(app, win))
 
   // Floods of output fill the scrollback; then the wheel scrolls back through it. A flood paints in a handful
-  // of frames, so one slow frame moves its gaps by tens of ms: each number is the median of FLOODS floods.
+  // of frames, so one slow frame moves its gaps by tens of ms: each number is the median of a session's floods.
   const floods = []
-  for (let k = 0; k < FLOODS; k++) {
+  for (let k = 0; k < P.floods; k++) {
     xdotool('type', '--delay', '20', 'flood')
     await sleep(200)
     from = app.lines.length
@@ -215,20 +227,20 @@ async function session(app) {
       await app.next('flood-frame-max', 5000, from)
       floods.push({ ms, p95: app.since(from, 'flood-frame-p95')[0], max: app.since(from, 'flood-frame-max')[0] })
     } catch {}
-    await sleep(1500)
+    await sleep(P.afterFlood)
   }
   Object.assign(r, { flood: median(floods.map(x => x.ms)), floodFrameP95: median(floods.map(x => x.p95)), floodFrameMax: median(floods.map(x => x.max)) })
   r.memoryFull = pss(processes(app.child.pid))
   from = app.lines.length
-  for (let k = 0; k < 40; k++) {
-    xdotool('click', k < 20 ? '4' : '5') // wheel up, then back down
+  for (let k = 0; k < P.scrolls; k++) {
+    xdotool('click', k < P.scrolls / 2 ? '4' : '5') // wheel up, then back down
     await sleep(80)
   }
   await sleep(300)
   const scrolls = app.since(from, 'scroll')
   Object.assign(r, { scroll: median(scrolls), scrollP95: quantile(scrolls, 0.95) })
   // With the scrollback full, xterm reflows all of it on each resize.
-  Object.assign(r, await resizes(app, win, 20, 'resizeFull'), { marks })
+  Object.assign(r, await resizes(app, win, P.resizesFull, 'resizeFull'), { marks })
   if (repo) {
     xdotool('windowsize', '--sync', win, String(W), String(H))
     await sleep(1000)
@@ -237,7 +249,7 @@ async function session(app) {
     from = app.lines.length
     xdotool('key', 'F9')
     r.diff = (await app.next('diff', 30000, from)).ms
-    await sleep(5000)
+    await sleep(P.diffCpu)
     r.diffCpu = cpu(pids) - c0
     from = app.lines.length
     xdotool('key', 'F8')
@@ -249,13 +261,13 @@ async function session(app) {
 /** Typing and resizing in a stand-in for Claude's fullscreen view, bench/tui.mjs, which redraws the whole
  * screen for each key, so the composer paints its card and xterm patches rows as they do under Claude. */
 async function tuiSession(app) {
-  await sleep(2000)
+  await sleep(P.settle)
   const win = xdotool('search', '--sync', '--onlyvisible', '--pid', String(app.child.pid)).split('\n')[0]
   xdotool('windowfocus', '--sync', win)
   xdotool('mousemove', '--window', win, String(W / 2), String(H / 2))
   await sleep(300)
-  const typing = await load(app.child.pid, 10000, async () => {
-    for (let k = 0; k < 100; k++) {
+  const typing = await load(app.child.pid, P.keys * 100, async () => {
+    for (let k = 0; k < P.keys; k++) {
       xdotool('key', k % 10 === 9 ? 'Return' : 'a')
       await sleep(100)
     }
@@ -271,7 +283,7 @@ async function tuiSession(app) {
   let keys = []
   if (w > 0 && h > 0) {
     const at = Object.fromEntries(xdotool('getwindowgeometry', '--shell', win).split('\n').map(l => l.split('=')))
-    const args = [new URL('pixels.py', import.meta.url).pathname, x + Number(at.X), y + Number(at.Y), w, h, 100]
+    const args = [new URL('pixels.py', import.meta.url).pathname, x + Number(at.X), y + Number(at.Y), w, h, P.keys]
     const helper = spawn('python3', args.map(String), { env, stdio: ['ignore', 'pipe', 'inherit'] })
     let out = ''
     helper.stdout.on('data', d => (out += d))
@@ -279,8 +291,26 @@ async function tuiSession(app) {
     keys = out.trim() ? JSON.parse(out) : []
   }
   await sleep(300)
-  const { resize, resizeP95 } = await resizes(app, win, 40, 'resize')
+  const { resize, resizeP95 } = await resizes(app, win, P.resizes, 'resize')
   return { tuiKey: median(keys), tuiKeyP95: quantile(keys, 0.95), tuiTyping: typing, tuiResize: resize, tuiResizeP95: resizeP95 }
+}
+
+/** With --koi: switches the open nook to the koi wallpaper, as a pick in its theme.css does, and times idle CPU,
+ * memory, and resizes under it. Then theme.css goes back to no wallpaper, for the rest of the session and the
+ * next launch. */
+async function withKoi(app, win) {
+  const css = join(app.config, 'theme.css')
+  const before = readFileSync(css, 'utf8')
+  writeFileSync(css, ':root { --wallpaper: koi; }\n')
+  try {
+    await sleep(2500) // nook reads theme.css within a second, then the wallpaper bakes its glyphs
+    const r = { koiIdle: await load(app.child.pid, P.idle), koiMemory: pss(processes(app.child.pid)) }
+    const { koiResize, koiResizeP95 } = await resizes(app, win, P.resizes, 'koiResize')
+    return { ...r, koiResize, koiResizeP95 }
+  } finally {
+    writeFileSync(css, before)
+  }
+  await sleep(1500) // and the wallpaper goes, before the floods
 }
 
 /** `n` resizes of the window, back and forth, as `key` and `key`P95. */
@@ -311,6 +341,7 @@ const METRICS = [
   ['memory', 'memory MB', 0, 5],
   ['memoryFull', 'memory full MB', 0, 20], // when the webview collects the flood's garbage varies by tens of MB
   ['resizeFull', 'resize full ms', 1, 3],
+  ...(koi ? [['koiIdle', 'koi idle CPU %', 1, 0.5], ['koiMemory', 'koi memory MB', 0, 5], ['koiResize', 'koi resize ms', 1, 2], ['koiResizeP95', 'koi resize p95 ms', 1, 4]] : []),
   ...(repo ? [['diff', 'diff ms', 0, 30], ['diffCpu', 'diff CPU s', 2, 0.1], ['history', 'history ms', 0, 30]] : []),
   ['tuiKey', 'tui key echo ms', 1, 2],
   ['tuiKeyP95', 'tui key p95 ms', 1, 4],
@@ -318,6 +349,26 @@ const METRICS = [
   ['tuiResize', 'tui resize ms', 1, 2],
   ['tuiResizeP95', 'tui resize p95 ms', 1, 4],
 ]
+const values = (r, key) => (key === 'open' ? r.opens : (key.startsWith('tui') ? r.tui : r.sessions).map(s => s[key]))
+// The numbers a quick run spends more launches on: those the gate must hold, not every number it prints.
+const SESSION = ['resize', 'idle', 'typing', 'memory', 'key', 'koiIdle', 'koiMemory', 'koiResize']
+const TUI = ['tuiKey', 'tuiTyping', 'tuiResize']
+/** Whether the last build's change from any earlier one, in any of `keys`, is between `share` of its bar and
+ * twice it: close enough to its bar that more samples could decide it either way. */
+function near(mine, keys, share) {
+  const last = mine.at(-1)
+  const measured = METRICS.filter(m => keys.includes(m[0]))
+  return mine.slice(0, -1).some(base => measured.some(([key, , , floor]) => {
+    const [then, now] = [values(base, key), values(last, key)].map(xs => xs.filter(Number.isFinite))
+    if (!then.length || !now.length) return false
+    const { delta, bar } = judge(then, now, floor)
+    return delta > share * bar && delta < 2 * bar
+  }))
+}
+
+// A quick run spends more launches only where a change comes close to its bar, so a clear case is decided fast:
+// two more sessions of each build, once, when any of SESSION's numbers passes half its bar; opens, eight rounds
+// at a time up to 40, while open's change passes 40% of its own. A change past twice its bar is decided.
 const results = [] // { wallpaper, bin, opens, sessions: [], tui: [] }
 for (const wallpaper of wallpapers) {
   const run = scratch(wallpaper)
@@ -329,33 +380,40 @@ for (const wallpaper of wallpapers) {
     await warm.ready
     await warm.stop()
   }
-  for (let i = 0; i < runs; i++) {
-    for (const m of i % 2 ? [...mine].reverse() : mine) {
+  let i = 0 // rounds so far; launches take turns, the order flipping each round
+  const round = async withSession => {
+    for (const m of i++ % 2 ? [...mine].reverse() : mine) {
       const app = launch(m.bin, run)
       m.opens.push(await app.ready)
-      if (i < sessions) m.sessions.push(await session(app))
+      if (withSession) m.sessions.push(await session(app))
       await app.stop()
     }
   }
+  for (let k = 0; k < runs; k++) await round(k < sessions)
+  if (quick && near(mine, SESSION, 0.5)) for (let k = 0; k < 2; k++) await round(true)
+  while (quick && i < 40 && near(mine, ['open'], 0.4)) for (let k = 0; k < 8; k++) await round(false)
   rmSync(run.dir, { recursive: true, force: true })
   const tui = scratch(wallpaper, [process.execPath, new URL('tui.mjs', import.meta.url).pathname])
-  for (let i = 0; i < (flag('tui', 'on') === 'off' ? 0 : sessions); i++) {
-    for (const m of i % 2 ? [...mine].reverse() : mine) {
+  let t = 0
+  const tuiRound = async () => {
+    for (const m of t++ % 2 ? [...mine].reverse() : mine) {
       const app = launch(m.bin, tui)
       await app.ready
       m.tui.push(await tuiSession(app))
       await app.stop()
     }
   }
+  for (let k = 0; k < (tuiOn ? sessions : 0); k++) await tuiRound()
+  if (quick && tuiOn && near(mine, TUI, 0.5)) for (let k = 0; k < 2; k++) await tuiRound()
   rmSync(tui.dir, { recursive: true, force: true })
 }
 xvfb.kill()
 
-const values = (r, key) => (key === 'open' ? r.opens : (key.startsWith('tui') ? r.tui : r.sessions).map(s => s[key]))
 let worse = 0
 for (const wallpaper of wallpapers) {
   const mine = results.filter(r => r.wallpaper === wallpaper)
-  console.log(`\nwallpaper ${wallpaper}: median (min-max) of ${runs} opens and ${sessions} sessions`)
+  const counts = r => `${r.opens.length} opens and ${r.sessions.length} sessions`
+  console.log(`\nwallpaper ${wallpaper}: median (min-max) of ${counts(mine.at(-1))} of each build`)
   bins.forEach((b, i) => console.log(`  [${i}] ${b}`))
   worse += table(mine, METRICS, values)
   // Where an open's time goes: the median ms since nook started at which each step finished.
