@@ -227,6 +227,16 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .nav { display: flex; gap: 2px; }
 .nav button { width: 30px; height: 28px; border-radius: 6px; color: var(--ink-2); }
 .nav button:hover:not(:disabled) { background: var(--hover); color: var(--ink-1); }
+/* Quiet until used: no frame until it's hovered, focused, or holding text. */
+#filter {
+  flex: 1; min-width: 0; height: 28px; margin-left: 6px; padding: 0 8px; font: inherit; font-size: .93rem;
+  color: var(--ink-1); background: none; border: 1px solid transparent; border-radius: 6px; outline: none; user-select: text;
+}
+#filter::placeholder { color: var(--ink-3); }
+#filter:hover { background: var(--hover); }
+#filter:focus, #filter.on { background: var(--bg); border-color: var(--line); }
+#filter:focus { border-color: var(--accent); }
+#filter::-webkit-search-cancel-button { display: none; }
 
 #crumbs {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0 2px;

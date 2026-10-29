@@ -2,6 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { $, el, openMenu, showPreview, hidePreview, dragPath } from './ui.js'
 import { path as paths } from './paths.js'
+import { sortEntries } from './order.js'
 
 const { SEP, TOP, isRoot, join, parent, normalize, within: under } = paths
 export const ICON = {
@@ -16,9 +17,8 @@ const CODE = /\.(js|mjs|cjs|ts|tsx|jsx|py|ipynb|rs|go|c|h|cpp|hpp|cs|java|kt|rb|
 /** Prose: wraps in the editor. */
 export const DOC = /\.(md|markdown|txt)$/i
 export const kind = e => (e.dir ? 'dir' : IMAGE.test(e.name) ? 'image' : DOC.test(e.name) ? 'doc' : CODE.test(e.name) ? 'code' : 'file')
-const compare = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
-/** A folder's entries, folders first, in Explorer's order. */
-const listing = path => invoke('list_dir', { path }).then(es => es.sort((a, b) => b.dir - a.dir || compare(a.name, b.name)))
+/** A folder's entries as the disk lists them; render() puts them in Explorer's order. */
+const listing = path => invoke('list_dir', { path })
 
 export const quote = p => (/\s/.test(p) ? `"${p}"` : p)
 export const { same, basename } = paths
@@ -36,7 +36,7 @@ const holdsTheme = (path, dir) => dir
   : /\.zip$/i.test(path) && invoke('zip_holds_theme', { path })
 
 export function startFiles({ start, home, pinned, newSession, openFile, insertPath, installTheme, showChanges }) {
-  const [list, pinList, crumbs, status] = [$('list'), $('pinned'), $('crumbs'), $('status')]
+  const [list, pinList, crumbs, status, filter] = [$('list'), $('pinned'), $('crumbs'), $('status'), $('filter')]
   let cur = null
   let shown = ''
   let marked = '' // the open file tab's path, highlighted in the listing
@@ -65,7 +65,10 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
       back.push(cur)
       forward.length = 0
     }
-    if (path !== cur) picked.clear()
+    if (path !== cur) {
+      picked.clear()
+      filter.value = ''
+    }
     // Up a level, the cursor lands on the folder you came from, as in Explorer; anywhere else, on the first row.
     if (path !== cur) [cursor, cursorAt] = [cur && same(parent(cur) ?? '', path) ? cur : '', 0]
     cur = path
@@ -83,15 +86,26 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   const WHOLE = 400 // a folder of up to this many entries is drawn whole
   const OVERSCAN = 20
   const [above, below] = [el('li', { className: 'spacer' }), el('li', { className: 'spacer' })]
-  let items = [] // the open folder's rows, in order: { path, kind, name }
+  let all = [] // the open folder's rows, in order: { path, kind, name }
+  let items = [] // the rows shown: all of them, or those the filter leaves
   let drawn = [-1, -1]
 
-  function render(entries) {
-    shown = JSON.stringify(entries)
+  function render(listed) {
+    // The listing as it came is kept to spot changes, so an unchanged folder is never sorted again.
+    shown = JSON.stringify(listed)
+    const entries = sortEntries(listed)
     hidePreview()
-    items = entries.map(e => ({ path: join(cur, e.name), kind: cur === '' ? 'drive' : kind(e), name: e.name }))
-    const here = new Set(items.map(i => i.path))
+    all = entries.map(e => ({ path: join(cur, e.name), kind: cur === '' ? 'drive' : kind(e), name: e.name }))
+    const here = new Set(all.map(i => i.path))
     picked = new Set([...picked].filter(p => here.has(p)))
+    narrow()
+  }
+
+  /** Shows the rows of `all` whose names hold the filter's text, keeping the cursor on its row where it can. */
+  function narrow() {
+    const want = filter.value.trim().toLowerCase()
+    items = want ? all.filter(i => i.name.toLowerCase().includes(want)) : all
+    filter.classList.toggle('on', !!want)
     // A cursor whose row went away moves to the row now in its place.
     const at = items.findIndex(i => same(i.path, cursor))
     cursor = items[at >= 0 ? at : Math.min(cursorAt, items.length - 1)]?.path ?? ''
@@ -113,7 +127,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     drawn = [start, end]
     hovered = null
     const rows = items.slice(start, end).map(i => paint(row(i.path, i.kind, i.name)))
-    if (!items.length) rows.push(el('li', { className: 'empty', textContent: 'Empty folder' }))
+    if (!items.length) rows.push(el('li', { className: 'empty', textContent: all.length ? 'No names hold that text' : 'Empty folder' }))
     above.style.height = `${start * ROW}px`
     below.style.height = `${(items.length - end) * ROW}px`
     list.replaceChildren(above, ...rows, below)
@@ -195,6 +209,30 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     }
   }
 
+  /** Clears the filter, showing every row. */
+  function unfilter() {
+    if (!filter.value) return
+    filter.value = ''
+    narrow()
+  }
+  filter.addEventListener('input', () => {
+    list.scrollTop = 0
+    narrow()
+  })
+  // Down or Enter takes the keys into the list; Enter on the only row left opens it. Esc clears, then leaves.
+  filter.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || (e.key === 'Enter' && items.length !== 1)) {
+      list.classList.add('keys')
+      list.focus({ preventScroll: true })
+      if (items.length) moveTo(0)
+    } else if (e.key === 'Enter' && items.length === 1) (items[0].kind === 'dir' || items[0].kind === 'drive' ? go : openFile)(items[0].path)
+    else if (e.key === 'Escape' && filter.value) unfilter()
+    else if (e.key === 'Escape') filter.blur()
+    else return
+    e.preventDefault()
+    e.stopPropagation()
+  })
+
   list.addEventListener('keydown', e => {
     if (editing || e.target !== list) return
     const ctrl = e.ctrlKey || e.metaKey
@@ -227,7 +265,11 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
       const b = r()?.getBoundingClientRect()
       b && r().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: b.left + 40, clientY: b.bottom - 4 }))
     } else if (e.key === 'Escape') {
-      if (picked.size) { picked.clear(); paintPicked() } else list.blur()
+      if (picked.size) { picked.clear(); paintPicked() } else if (filter.value) unfilter()
+      else list.blur()
+    } else if ((ctrl && /^f$/i.test(e.key)) || e.key === '/') {
+      filter.focus()
+      filter.select()
     } else if (e.key.length === 1 && !ctrl && !e.altKey && e.key !== ' ') seek(e.key)
     else return
     e.preventDefault()
@@ -372,6 +414,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
 
   /** A name box atop the folders for a new folder, or atop the files for a new file. */
   function create(dir) {
+    unfilter()
     const at = cur
     const li = row('', dir ? 'dir' : 'file', '')
     list.querySelector('.empty')?.remove()
@@ -577,8 +620,8 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
       if (next !== stamp) [stamp, stampMoved] = [next, now]
       if (!force && next && now - stampMoved > 4500 && now - reread < 20_000) return
       reread = now
-      const entries = await listing(at)
-      if (at === cur && !editing && (force || JSON.stringify(entries) !== shown)) render(entries)
+      const listed = await listing(at)
+      if (at === cur && !editing && (force || JSON.stringify(listed) !== shown)) render(listed)
     } catch {}
   }
   // Pick up files created while you work (by Claude, or anything else).
@@ -588,6 +631,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   async function reveal(path) {
     document.body.classList.remove('files-hidden')
     if (!(await go(parent(path)))) return
+    if (!items.some(i => same(i.path, path))) unfilter()
     const r = showRow(items.findIndex(i => same(i.path, path)))
     r?.scrollIntoView({ block: 'center' })
     r?.animate([{ background: 'var(--accent)' }, {}], { duration: 900, easing: 'ease-out' })
@@ -607,6 +651,12 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     mark,
     reveal,
     create,
+    /** Puts the keys in the filter box, showing the file browser if it's hidden. */
+    filter() {
+      document.body.classList.remove('files-hidden')
+      filter.focus()
+      filter.select()
+    },
     pins: () => pins,
     /** For files dragged in from another app: the drop folder under (x, y), shown as the target, or null. */
     dropFolder(x, y) {
