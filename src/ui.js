@@ -11,7 +11,7 @@ const previewImg = preview.querySelector('img')
 const ghost = $('ghost')
 
 /** Places a floating element near (x, y), flipped to stay inside the window. */
-function place(el, x, y) {
+export function place(el, x, y) {
   const { width, height } = el.getBoundingClientRect()
   const left = x + 14 + width > innerWidth ? x - width - 14 : x + 14
   const top = y + 14 + height > innerHeight ? Math.max(4, y - height - 14) : y + 14

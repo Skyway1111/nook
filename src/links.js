@@ -1,12 +1,17 @@
 // Paths in a Claude tab's text become links. Hovering one that names a file or folder on disk underlines
-// it, an image previews, and Ctrl+click opens it in nook: a file in a tab at its line, a folder in the file
-// browser. Claude names files in tool calls, `Update(src/main.js)`, in prose, `src/main.js:42`, and in grep
-// output. `findPaths` reads candidates from a row's text, and only those on disk become links, so a link
-// provider asks Rust about a row once, on hover, and costs nothing while the mouse is still.
+// it, an image previews, a text file shows the lines it points at (`peek.js`, loaded on the first hover),
+// and Ctrl+click opens it in nook: a file in a tab at its line, a folder in the file browser. Claude names
+// files in tool calls, `Update(src/main.js)`, in prose, `src/main.js:42`, and in grep output. `findPaths`
+// reads candidates from a row's text, and only those on disk become links, so a link provider asks Rust
+// about a row once, on hover, and costs nothing while the mouse is still.
 import { invoke } from '@tauri-apps/api/core'
 import { IMAGE } from './files.js'
 import { findPaths, candidates, diffLine, editedPath } from './linkify.js'
 import { showPreview, hidePreview, el } from './ui.js'
+
+let peeks // peek.js, imported the first time the mouse is on a file's path
+const loadPeek = () => (peeks ??= import('./peek.js'))
+const hidePeek = () => peeks?.then(m => m.hidePeek())
 
 /** The text of `line` as one string, and the cell each of its UTF-16 units starts in, so a match in the
  * string maps to cells when wide characters take two. */
@@ -94,13 +99,16 @@ export function startLinks(term, where, open) {
           range: { start: { x: xs[f.start] + 1, y }, end: { x: last + line.getCell(last, cell).getWidth(), y } },
           decorations: { underline: true, pointerCursor: true },
           hover(e) {
+            const hint = `Ctrl+click to open ${kind === 'dir' ? 'folder' : f.line ? `at line ${f.line}` : 'in nook'}`
             if (kind === 'file' && IMAGE.test(target)) showPreview(target, e.clientX, e.clientY)
-            else showHint(`Ctrl+click to open ${kind === 'dir' ? 'folder' : f.line ? `at line ${f.line}` : 'in nook'}`, e.clientX, e.clientY)
+            else if (kind === 'file') loadPeek().then(m => m.peek(target, f.line, e.clientX, e.clientY, hint))
+            else showHint(hint, e.clientX, e.clientY)
           },
-          leave() { hidePreview(); hideHint() },
+          leave() { hidePreview(); hidePeek(); hideHint() },
           activate(e) {
             if (!e.ctrlKey && !e.metaKey) return
             hidePreview()
+            hidePeek()
             hideHint()
             open(target, kind, f.line, f.col)
           },
@@ -109,5 +117,5 @@ export function startLinks(term, where, open) {
       callback(links.length ? links : undefined)
     },
   })
-  return { dispose: () => { provider.dispose(); hideHint() } }
+  return { dispose: () => { provider.dispose(); hidePeek(); hideHint() } }
 }
