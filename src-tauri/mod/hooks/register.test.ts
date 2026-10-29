@@ -66,7 +66,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { diagramBox, mathBox, plainInline, plainMath, errorLine, failingTests, headerSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, splitBlocks, splitPictures, summary, testCounts } from './register.js'
+import { diagramBox, webParts, mathBox, plainInline, plainMath, errorLine, failingTests, headerSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, splitBlocks, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -387,5 +387,18 @@ test('a reply\'s inline math draws as plain symbols in any terminal', async ($, 
   on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: `engine: ${e.props.text}` }))
   const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AssistantMessage', requestId: 'r1', props: { text: 'So $x^2 \\geq 0$ always.', isFirstOfReply: true } })
   expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine: So x² ≥ 0 always.')
+  await ui.unmount()
+})
+
+test('a web search\'s row says how many results it found and from which sites', async ($, on) => {
+  const hit = (url: string) => ({ title: 't', url })
+  const output = { query: 'xterm release', durationSeconds: 3, results: ['Here is what I found', { tool_use_id: 's1', content: [hit('https://github.com/xtermjs/xterm.js/releases'), hit('https://www.npmjs.com/package/@xterm/xterm'), hit('https://github.com/xtermjs/xterm.js'), hit('https://xtermjs.org/'), hit('https://news.ycombinator.com/x'), hit('https://dev.to/y'), hit('not a url')] }] }
+  expect(webParts({ tool: 'WebSearch', output })).toEqual([['7 results', null], ['github.com, npmjs.com, xtermjs.org, and 2 more', null]])
+  expect(webParts({ tool: 'WebSearch', output: { ...output, results: [] } })).toEqual([['no results', null]])
+  expect(webParts({ tool: 'WebSearch', output, isRunning: true })).toBe(null)
+  expect(webParts({ tool: 'WebFetch', output })).toBe(null)
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'engine' }))
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'ToolResult', requestId: 's1', props: { tool_use_id: 's1', tool: 'WebSearch', output, isErrored: false, isExpanded: false } })
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toMatch(/7 results.*github\.com, npmjs\.com/)
   await ui.unmount()
 })
