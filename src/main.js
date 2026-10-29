@@ -97,6 +97,8 @@ files = startFiles({
   showChanges: path => git.changes(path),
 })
 const git = startGit({ openView: (...args) => tabs.openView(...args), openFile, insertPath, onStatus: status => files.git(status) })
+// A wallpaper can move only while a Claude session in this window is working.
+const claudeWorks = () => wallpaper.working(!!tabs?.sessions().some(s => s.view?.mark === 'working'))
 tabs = startTabs({
   settings,
   home,
@@ -105,10 +107,12 @@ tabs = startTabs({
   onShow: tab => {
     files.mark(tab.viewer ? tab.path : '')
     wallpaper.show(!tab.viewer)
+    claudeWorks() // as when the tab of the session that worked closes
     git.show(tab.path)
   },
   onSessions: () => {
     dashboard?.refresh()
+    claudeWorks()
     claudeFiles()
   },
 })
