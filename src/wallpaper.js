@@ -31,12 +31,14 @@ export function startWallpaper(pane, { button, save, onClose }) {
   let look = { id: 'none', size: 14, family: 'monospace', colors: {} } // theme.css's, at the last restyle
   let previewing = null // a scene the picker shows before it's kept
   let showing = true // false while a file tab is in front
+  let focused = document.hasFocus() // the wallpaper moves only while nook's window has focus
   let ctx, cell, cols = 0, rows = 0
   let lastKey = -Infinity, lastFrame = -Infinity, raf = 0
   let picker = null // the open picker's { focus, restyle, tick, close }
 
   const id = () => previewing ?? look.id
-  const live = () => !!scene(id()) && showing && !document.hidden
+  const shown = () => !!scene(id()) && showing
+  const live = () => shown() && focused && !document.hidden
 
   function measure() {
     const { width, height } = pane.getBoundingClientRect()
@@ -65,8 +67,8 @@ export function startWallpaper(pane, { button, save, onClose }) {
 
   /** Shows or hides the canvas for what's in front, and runs the loop while anything moves. */
   function update() {
-    canvas.hidden = !live()
-    if (live()) draw()
+    canvas.hidden = !shown()
+    if (shown()) draw()
     if ((live() || picker) && !raf) raf = requestAnimationFrame(frame)
   }
 
@@ -90,9 +92,11 @@ export function startWallpaper(pane, { button, save, onClose }) {
     picker?.restyle()
   }
 
-  new ResizeObserver(() => { measure(); if (live()) draw() }).observe(pane)
+  new ResizeObserver(() => { measure(); if (shown()) draw() }).observe(pane)
   addEventListener('keydown', () => { if (!picker) lastKey = performance.now() }, true)
   document.addEventListener('visibilitychange', update)
+  addEventListener('focus', () => { focused = true; update() })
+  addEventListener('blur', () => { focused = false; update() })
   still.addEventListener('change', update)
 
   /** Opens the picker over the top of the pane: a live thumbnail of each scene. Arrows and the pointer

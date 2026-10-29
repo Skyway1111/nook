@@ -147,6 +147,7 @@ for (const wallpaper of wallpapers) {
     else {
       await sleep(3000) // past the backdrops' bake and the first polls
       const win = xdotool('search', '--sync', '--onlyvisible', '--pid', String(app.child.pid)).split('\n')[0]
+      xdotool('windowfocus', '--sync', win) // the wallpaper moves only while nook has focus
       const idle = await load(app.child.pid, 10000)
       const memory = pss(processes(app.child.pid))
       xdotool('mousemove', '--window', win, String(W / 2), String(H / 2), 'click', '1')

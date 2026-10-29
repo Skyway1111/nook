@@ -26,7 +26,7 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 - **File tabs.** Click a file to open it in a tab. Code and text open in an editor with syntax colors, Markdown opens rendered with an **Edit** button, and images open as pictures.
 - **Safe edits.** An open file follows changes on disk. If Claude changes a file while you have unsaved edits, nook keeps your edits and offers **Overwrite** or **Reload**.
 - **A git panel** for the open tab's repository. Stage files, read diffs, commit, switch or create branches, and fetch, pull, or push.
-- **Living wallpapers.** Click the brush in the titlebar to pick a scene drawn in characters behind Claude, always moving: drifting clouds, sea turtles, a koi pond, jellyfish, paper boats, fireflies, or a moonlit night. Arrows preview a scene, Enter keeps it, and Esc puts back the last one. The wallpaper holds still while you type and while nook is minimized.
+- **Living wallpapers.** Click the brush in the titlebar to pick a scene drawn in characters behind Claude, always moving: drifting clouds, sea turtles, a koi pond, jellyfish, paper boats, fireflies, or a moonlit night. Arrows preview a scene, Enter keeps it, and Esc puts back the last one. The wallpaper holds still while you type and while nook is in the background.
 - **Themes.** Pick a theme, re-hue the whole app, pick the interface and terminal fonts, and write CSS that restyles any part of nook as you type. Claude's own colors can follow the theme.
 - **Fast typing under load.** On Windows, nook renders on the CPU and runs its typing path at above-normal priority, so typing stays fast while a training run saturates the GPU or the CPU.
 
