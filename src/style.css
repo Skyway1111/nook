@@ -386,12 +386,13 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .theme.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); color: var(--ink-1); }
 .theme :is(img, .blank) { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 5px; background: var(--raised); }
 .theme span { padding: 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#settings .theme .remove {
+#settings .theme :is(.remove, .share) {
   position: absolute; top: 9px; right: 9px; width: 26px; height: 26px; border-radius: 6px;
   background: var(--bg); color: var(--ink-2); visibility: hidden;
 }
-#settings .theme:hover .remove { visibility: visible; }
-#settings .theme .remove:hover { color: var(--ink-1); }
+#settings .theme .share { right: 39px; }
+#settings .theme:hover :is(.remove, .share) { visibility: visible; }
+#settings .theme :is(.remove, .share):hover { color: var(--ink-1); }
 .theme.add { align-items: center; justify-content: center; border-style: dashed; }
 .theme.add .icon { font-size: 16px; }
 #settings-theme-note { user-select: text; }
