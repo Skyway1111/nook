@@ -1,5 +1,5 @@
 // Tells nook's composer what to show beside Claude's prompt, runs the two commands its menus send, and
-// draws pictures in the transcript: ones Claude read, an SVG it wrote, ones a shell command wrote, and ones a reply links. Every hook passes its event on unchanged, and the render hooks add
+// draws pictures in the transcript: ones Claude read, an SVG it wrote, ones a shell command wrote, ones a reply links, and a reply's diagrams and formulas. Every hook passes its event on unchanged, and the render hooks add
 // pictures under Claude's own drawing, and under a shell command's result the line that says how it went. The mod writes the session's model, effort, effort levels, context
 // fill, pasted images' folder, and what the session is doing as JSON to NOOK_STATE, and reads requests from
 // the .cmd file beside it: { command, args, at }.
@@ -16,6 +16,8 @@ const sizes = new Map() // a pasted image's path -> its size, as a promise
 const MADE = 3 // the most pictures shown under a command that wrote them
 const made = new Map() // a Bash call's tool_use_id -> the pictures it wrote, as a promise of [path, size]
 const MERMAID = /^```mermaid[^\n]*\n([\s\S]*?)\n```[ \t]*$/gm // a reply's mermaid blocks, each closed
+const MATH = /^[ \t]*(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])[ \t]*$/gm // a reply's display formulas, $$ … $$ or \[ … \], on lines of their own
+const MATH_ROWS = 20 // the tallest formula, in rows
 const DIAGRAM_ROWS = 40 // the tallest diagram, in rows
 const REPLY_INDENT = 2 // to the text after a reply's `● `
 const saved = new Set() // the diagram files written this session
@@ -279,16 +281,43 @@ export function splitPictures(text, shown) {
   return pieces // text, targets, text, … , text
 }
 
-/** A reply's text cut at its mermaid blocks: [the text before the first, [source, the text after it], …]. */
-export function splitDiagrams(text) {
+/** A reply's text cut at its mermaid blocks and display formulas: [text, [kind, source], text, …], where
+ * kind is `mermaid` or `math`. A formula inside another code block stays in the text. */
+export function splitBlocks(text) {
+  const code = []
+  for (const m of text.matchAll(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*\1[ \t]*$|(?![\s\S]))/gm)) code.push([m.index, m.index + m[0].length])
+  const found = [
+    ...Array.from(text.matchAll(MERMAID), m => [m.index, m[0].length, 'mermaid', m[1]]),
+    ...Array.from(text.matchAll(MATH), m => [m.index, m[0].length, 'math', (m[1] ?? m[2]).trim()])
+      .filter(([at, , , source]) => source && !code.some(([a, b]) => at >= a && at < b)),
+  ].sort((a, b) => a[0] - b[0])
   const pieces = []
   let at = 0
-  for (const m of text.matchAll(MERMAID)) {
-    pieces.push(text.slice(at, m.index).trim(), m[1])
-    at = m.index + m[0].length
+  for (const [index, length, kind, source] of found) {
+    if (index < at) continue
+    pieces.push(text.slice(at, index).trim(), [kind, source])
+    at = index + length
   }
   pieces.push(at ? text.slice(at).trim() : text)
-  return pieces // text, source, text, … , text
+  return pieces // text, [kind, source], … , text
+}
+
+/** About how many rows a display formula takes at the terminal's own text size, a row being about an em:
+ * an em a line, more for a fraction, a nested one, or a big operator with limits. nook fits the drawing
+ * inside the box, so a guess too small only draws it smaller. */
+export function mathBox(source, room) {
+  const lines = source.split(/\\\\(?!\w)/).filter(l => l.replace(/\\(?:begin|end)\{[^}]*\}|&|\s/g, ''))
+  const tall = line => {
+    let h = 1
+    if (/\\(?:[dt]?frac|cfrac|binom|over\b)/.test(line)) h = /\\[dt]?frac\s*\{[^{}]*\\[dt]?frac|\\[dt]?frac\s*\{[^{}]*\}\s*\{[^{}]*\\[dt]?frac/.test(line) ? 2.6 : 2.4
+    const limits = names => new RegExp(`\\\\(?:${names})(?![a-zA-Z])(?:\\s*\\\\limits)?\\s*[_^]`).test(line)
+    if (limits('sum|prod|coprod|bigcup|bigcap|bigoplus|bigotimes')) h = Math.max(h, 2.8)
+    else if (limits('int|iint|iiint|oint')) h = Math.max(h, 2.4)
+    else if (limits('lim|max|min|sup|inf|argmax|argmin')) h = Math.max(h, 2)
+    return h
+  }
+  const em = lines.length > 1 ? lines.reduce((sum, l) => sum + tall(l) * 1.2, 0) : tall(lines[0] ?? '')
+  return [Math.max(20, Math.min(room, 100)), Math.max(2, Math.min(MATH_ROWS, Math.ceil(em + 0.3)))]
 }
 
 /** The picture files a reply links that exist, LINKED at most: each target -> [path, size]. */
@@ -675,12 +704,13 @@ export function register(on) {
     return pictures.length ? withPictures($, e, drawn, pictures.slice(0, MADE)) : drawn
   })
   // A reply's ```mermaid block, in a tab nook started: the diagram in its place, which nook draws from the
-  // block saved as a .mmd file beside NOOK_STATE. Other terminals can't draw one, so they get the block.
+  // block saved as a .mmd file beside NOOK_STATE. A display formula, $$ … $$ or \[ … \], the same way as a
+  // .tex file. Other terminals can't draw either, so they get the source.
   // A picture file the reply links with ![alt](path) draws after the paragraph that links it.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     const { text, isSummary } = e.props
     if (e.surface !== 'terminal' || isSummary) return next(e)
-    const diagrams = file && text.includes('```mermaid')
+    const diagrams = file && (text.includes('```mermaid') || text.includes('$$') || text.includes('\\['))
     const shown = text.includes('![') ? await linkedPictures($, text) : new Map()
     if (!diagrams && !shown.size) return next(e)
     const { Box, Image, Markdown } = $.ui.resolve(e)
@@ -688,15 +718,17 @@ export function register(on) {
     const room = Math.min(255, (e.viewport?.columns ?? 80) - REPLY_INDENT - 1)
     // The reply as words, diagrams, and pictures, in order: each odd piece of a split is what its text was cut at.
     const blocks = []
-    for (const [i, piece] of (diagrams ? splitDiagrams(text) : [text]).entries()) {
+    for (const [i, piece] of (diagrams ? splitBlocks(text) : [text]).entries()) {
       if (i % 2) {
-        const path = `${dir}${sep(dir)}diagram-${hash(piece)}.mmd`
+        const [kind, source] = piece
+        const math = kind === 'math'
+        const path = `${dir}${sep(dir)}${math ? 'math' : 'diagram'}-${hash(source)}.${math ? 'tex' : 'mmd'}`
         if (!saved.has(path)) {
-          await $.fs.write(path, piece)
+          await $.fs.write(path, source)
           saved.add(path)
         }
-        const [columns, rows] = diagramBox(piece, room)
-        blocks.push(Box({ paddingLeft: REPLY_INDENT, marginY: 1, children: [Image({ source: { file: path, format: 'png' }, columns, rows, alt: 'diagram' })] }))
+        const [columns, rows] = math ? mathBox(source, room) : diagramBox(source, room)
+        blocks.push(Box({ paddingLeft: REPLY_INDENT, marginY: math ? 0 : 1, children: [Image({ source: { file: path, format: 'png' }, columns, rows, alt: math ? 'formula' : 'diagram' })] }))
         continue
       }
       for (const [j, part] of (shown.size ? splitPictures(piece, shown) : [piece]).entries()) {

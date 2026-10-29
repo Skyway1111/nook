@@ -108,13 +108,16 @@ export function startPictures(term, screen, reply = () => {}) {
     if (medium === 'f') {
       // Claude declares a PNG, but the webview decodes whatever the file holds, SVG and JPEG included.
       const path = utf8.decode(Uint8Array.from(atob(payload), c => c.charCodeAt(0)))
-      if (/\.mmd$/i.test(path)) {
-        // A diagram the mod saved: drawn at the box's left, since its size there is the mod's guess.
-        import('./diagrams.js').then(d => d.diagramUrl(path)).then(url => {
-          keep(id, { url, columns: Number(k.c), rows: Number(k.r), blob: true, left: true })
+      if (/\.(?:mmd|tex)$/i.test(path)) {
+        // A diagram or formula the mod saved: drawn at the box's left, since its size there is the mod's guess.
+        const [columns, rows] = [Number(k.c), Number(k.r)]
+        const made = /\.tex$/i.test(path) ? import('./math.js').then(m => m.mathUrl(path, boxSize(columns, rows)))
+          : import('./diagrams.js').then(d => d.diagramUrl(path))
+        made.then(url => {
+          keep(id, { url, columns, rows, blob: true, left: true })
           answer('OK')
           draw()
-        }, () => answer("EBADPNG:can't draw the diagram"))
+        }, () => answer("EBADPNG:can't draw the picture"))
         return
       }
       keep(id, { url: convertFileSrc(path), columns: Number(k.c), rows: Number(k.r) })
@@ -133,6 +136,14 @@ export function startPictures(term, screen, reply = () => {}) {
       if (k.i && k.q !== '1' && k.q !== '2') reply(`\x1b_Gi=${k.i};OK\x1b\\`)
       draw()
     }, () => k.i && k.q !== '2' && reply(`\x1b_Gi=${k.i};EBADPNG:can't decode the picture\x1b\\`))
+  }
+
+  /** A box of cells' size in pixels, and the terminal's font size: a formula draws at the text's size. */
+  function boxSize(columns, rows) {
+    const { fontSize } = term.options
+    // A tab that isn't showing has no size yet; a cell is then about 0.6 by 1.2 of the font's size.
+    const [w, h] = screen.clientWidth ? [screen.clientWidth / term.cols, screen.clientHeight / term.rows] : [fontSize * 0.6, fontSize * 1.2]
+    return { width: columns * w, height: rows * h, fontSize }
   }
 
   function keep(id, file) {
