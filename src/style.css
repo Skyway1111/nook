@@ -294,6 +294,13 @@ svg.glyph { flex: none; width: 15px; height: 15px; }
 svg.defs { position: absolute; width: 0; height: 0; }
 #git-error { flex: none; max-height: 160px; overflow-y: auto; margin: 0; white-space: pre-wrap; user-select: text; box-shadow: inset 2px 0 0 var(--ansi-red); }
 
+/* While git is mid-merge, rebase, or the like: what's left, and the way out either side. */
+#git-op { padding: 6px 6px 6px 10px; border-radius: 8px; background: color-mix(in oklch, var(--ansi-yellow) 12%, transparent); box-shadow: inset 2px 0 0 var(--ansi-yellow); }
+/* Never cut short: the two buttons go under the text together when the panel is too narrow for all three. */
+#git-op { flex-wrap: wrap; row-gap: 4px; }
+#git-op-text { flex: 1 0 auto; white-space: nowrap; font-size: .9rem; color: var(--ink-1); }
+#git-op .op-actions { display: flex; gap: 6px; margin-left: auto; }
+
 #git-list { flex: 1; overflow-y: auto; margin: 0 -4px 0 0; padding: 0 4px 0 0; list-style: none; }
 #git-list li { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 8px; border-radius: 6px; white-space: nowrap; transition: background-color 120ms; }
 #git-list li:hover:not(.empty) { background: var(--hover); }

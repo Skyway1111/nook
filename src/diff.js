@@ -339,7 +339,7 @@ export function startDiff(view, { root, rel, openFile, run, stage, commit }) {
 }
 
 /** Rebuilds `code` as `text` in token spans, with the changed characters `mark` set apart. */
-function colorize(code, text, tokens, mark) {
+export function colorize(code, text, tokens, mark) {
   const cuts = new Set([0, text.length, ...tokens.flatMap(([a, b]) => [a, b]), ...(mark ?? [])])
   const at = [...cuts].sort((a, b) => a - b)
   const parts = []

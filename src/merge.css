@@ -1,0 +1,15 @@
+/* Loaded with merge.js. */
+/* Merge tabs: a diff tab's look, current in blue on the left and incoming in magenta on the right. A ⋯ stands
+   for the settled lines between two conflicts. */
+.view.merge .hunk.conflict { margin-bottom: 4px; }
+.view.merge .cell.ours { background: color-mix(in oklch, var(--ansi-blue) 14%, transparent); }
+.view.merge .cell.theirs { background: color-mix(in oklch, var(--ansi-magenta) 14%, transparent); }
+.view.merge .cell.ctx { color: var(--ink-2); }
+.view.merge .cell.side { padding-left: 1ch; font: 600 .82rem/2 var(--font-ui); }
+.view.merge .cell.side.ours { color: var(--ansi-blue); }
+.view.merge .cell.side.theirs { color: var(--ansi-magenta); }
+.view.merge .cell .src { padding-left: 1ch; }
+.view.merge .hunk-head .tools { opacity: 1; }
+.view.merge .hunk + .hunk::before { content: '\22EF'; display: block; padding-left: 2ch; color: var(--ink-3); }
+.view.merge .keep { display: flex; gap: 6px; margin: 4px 16px; }
+.view.merge .diff-bar button:disabled { opacity: .45; }
