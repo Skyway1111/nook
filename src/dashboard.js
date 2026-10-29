@@ -13,12 +13,13 @@ import { isWorktree, changeLine } from './keep.js'
 
 const FILES = 4 // the files a card lists
 const STEPS = 12 // the most steps a plan draws
+const SURE = 4000 // how long Discard waits for its second press, in ms
 const WORDS = { working: 'Working', waiting: 'Waiting on you', done: 'Done', '': 'Idle' }
 
 /** `list()` gives `[{ tab, view, report }]` for every Claude tab, `open(tab)` shows one, `newSession()`
  * starts another, `send(tab, text)` sends one a prompt, and `review(session)` opens all it changed. `button` toggles the dashboard; `onClose` hears
- * it close. `worktree.stat(root)` says what a worktree changed, and `worktree.keep(tab, report)` stages that in its
- * main checkout. */
+ * it close. `worktree.stat(root)` says what a worktree changed, `worktree.keep(tab, report)` stages that in its
+ * main checkout, and `worktree.discard(tab, report)` ends the session and deletes its worktree. */
 export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, answer, fanOut, worktree, onClose }) {
   let box = null
   let timer = 0
@@ -28,6 +29,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
   const picked = ({ tab, view, report }) => !cannotSend(view, report) && (ticks.get(tab) ?? pickedAtFirst(view, report))
   // What each worktree changed, by its root and the turn it's on, so a card asks git once per turn, not per draw.
   const stats = new Map()
+  let discarding = null, discardingAt = 0 // the worktree a first press on Discard asked about, which a second deletes
   function changes(report) {
     const key = `${report.turns}|${report.since}`
     const known = stats.get(report.root)
@@ -106,6 +108,14 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     ].filter(Boolean)
     c.querySelector('footer').textContent = facts.join(' · ')
     if (tree?.files) c.querySelector('.files').append(el('span', { className: 'file keep', textContent: 'Keep', title: `Bring this worktree's changes into ${tree.main}, staged, to look over and commit there` }))
+    if (tree) {
+      const sure = discarding === report.root && Date.now() - discardingAt < SURE
+      c.querySelector('.files').append(el('span', {
+        className: `file discard${sure ? ' sure' : ''}`,
+        textContent: sure ? (tree.files ? `Delete ${changeLine(tree)}?` : 'Delete it?') : 'Discard',
+        title: sure ? 'Press again to delete this worktree and its branch' : 'Close this session and delete its worktree and branch, with every change in it',
+      }))
+    }
     // A session filling up can be compacted from here, where Enter would send the command.
     if (full >= FULL && !why && !busy) c.querySelector('.files').append(el('span', { className: 'file act', textContent: 'Compact', title: 'Run /compact: Claude sums up the conversation so far, to free its context' }))
     // Every file Claude wrote in one diff, then the newest few, each opening its own.
@@ -121,6 +131,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
       if (e.target.closest('.asks .file')) return decide(tab, e.target.closest('.act') != null)
       if (e.target.closest('.act')) return compact(tab)
       if (e.target.closest('.keep')) return keepIt(tab, report)
+      if (e.target.closest('.discard')) return discardIt(tab, report)
       const file = e.target.closest('.file')
       close()
       if (file?.classList.contains('review')) review({ tab, view, report })
@@ -185,6 +196,21 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
       stats.clear()
       say(`Kept ${tab.name}: staged in ${main.split(/[\\/]/).pop()}`)
     }, () => say(`Didn't keep ${tab.name}`))
+  }
+
+  // Discard asks once on the chip itself, and deletes on a second press while it asks.
+  function discardIt(tab, report) {
+    if (discarding !== report.root || Date.now() - discardingAt >= SURE) {
+      discarding = report.root
+      discardingAt = Date.now()
+      return render()
+    }
+    discarding = null
+    say(`Discarding ${tab.name}`)
+    worktree.discard(tab, report).then(() => {
+      stats.delete(report.root)
+      say(`Discarded ${tab.name}`)
+    }, () => say(`Didn't discard ${tab.name}`))
   }
 
   /** How many new sessions the fan-out starts, 1 to 8. */

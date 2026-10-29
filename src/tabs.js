@@ -316,6 +316,12 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     /** The tab in front: `{ type, name, path, viewer }`, where a Claude tab has no viewer. */
     active: () => active,
     close: () => active && close(active),
+    /** Closes a Claude tab, ending its session, unless it's the window's last tab. Says whether it closed. */
+    end(tab) {
+      if (!tab.terminal || tabs.length < 2 || !tabs.includes(tab)) return false
+      drop(tab)
+      return true
+    },
     restyle() {
       look++
       for (const tab of [active, beside]) {

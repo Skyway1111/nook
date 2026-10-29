@@ -190,6 +190,8 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 .sessions .session .file:is(.review, .act) { flex: none; color: var(--accent); }
 .sessions .session .file.keep { flex: none; color: var(--session-done); font-weight: 600; }
 .sessions .session .file.deny { flex: none; }
+.sessions .session .file.discard { flex: none; }
+.sessions .session .file.discard.sure { color: var(--ansi-red); font-weight: 600; }
 .sessions .session .asks { display: flex; align-items: center; gap: 6px; }
 .sessions .session .asks:empty { display: none; }
 .sessions .session .plan { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--ink-2); }

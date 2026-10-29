@@ -1,6 +1,7 @@
 // Sessions started in git worktrees, side by side on one prompt, and keeping the one that did best. `stat` says
 // how much a worktree changed since it left the main checkout, for its dashboard card, and `keep` brings those
-// changes into the main checkout as staged changes, to look over and commit there. Both take
+// changes into the main checkout as staged changes, to look over and commit there; `discard` deletes an attempt.
+// All take
 // `git(dir, args, input)`, which runs git and resolves to its output, so `keep.test.js` runs them under `npm test`.
 
 /** Whether `root` is a worktree Claude made: `<repo>/.claude/worktrees/<name>`. */
@@ -64,5 +65,15 @@ export async function keep(git, root) {
     const which = files.length ? ` in ${files.slice(0, 3).join(', ')}${files.length > 3 ? ' and more' : ''}` : ''
     throw new Error(`It doesn't fit ${was.main} as it is now${which}, so nothing was brought in. Its changes are still in ${root}.`)
   })
+  return was
+}
+
+/** Deletes the worktree at `root` and its branch, with every change in it: for an attempt not kept, or one already
+ * kept. Its session's tab closes first, so nothing runs there. Resolves to `stat` from before. */
+export async function discard(git, root) {
+  const was = await stat(git, root)
+  if (!was) throw new Error(`${root} isn't a worktree`)
+  await git(was.main, ['worktree', 'remove', '--force', root])
+  if (was.branch) await git(was.main, ['branch', '-D', was.branch])
   return was
 }
