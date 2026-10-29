@@ -35,7 +35,7 @@ const { settings, error, configDir, home } = await invoke('boot')
 mark('boot')
 
 let tabs, files, wallpaper, dashboard
-const rebake = holdBackdrops([document.body, ...['pane', 'files', 'git'].map($)])
+const backdrops = holdBackdrops([document.body, ...['pane', 'files', 'git'].map($)])
 const drawer = await startSettings({
   configDir,
   settings,
@@ -43,7 +43,7 @@ const drawer = await startSettings({
   onRestyle: () => {
     tabs?.restyle()
     wallpaper?.restyle()
-    rebake()
+    backdrops.restyle()
     // A growing window shows its own background until the page catches up, so that takes the theme's.
     const [r, g, b] = bytes(getComputedStyle(document.documentElement).getPropertyValue('--bg'))
     getCurrentWebviewWindow().setBackgroundColor([r, g, b, 255]).catch(banner)
@@ -425,6 +425,9 @@ addEventListener('keydown', e => {
 })
 addEventListener('contextmenu', e => e.preventDefault())
 
+// The window's first frame paints the theme's gradients from the bitmaps the last start saved, where the look
+// and sizes are the same, which is about 200 ms sooner than drawing them.
+await backdrops.restore()
 mark('chrome')
 // The Claude sessions open when nook last closed come back, resumed, each starting as its tab first shows,
 // so reopening five costs what opening one does.

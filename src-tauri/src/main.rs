@@ -515,6 +515,8 @@ fn main() {
             theme::install_theme_zip,
             theme::save_theme_zip,
             theme::zip_holds_theme,
+            theme::saved_backdrop,
+            theme::save_backdrop,
             list_dir,
             index::index_files,
             search::search_text,
