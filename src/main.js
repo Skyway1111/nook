@@ -95,7 +95,7 @@ files = startFiles({
   installTheme: drawer.installTheme,
   showChanges: path => git.changes(path),
 })
-const git = startGit({ openView: (...args) => tabs.openView(...args), openFile, insertPath })
+const git = startGit({ openView: (...args) => tabs.openView(...args), openFile, insertPath, onStatus: status => files.git(status) })
 tabs = startTabs({
   settings,
   home,
@@ -257,7 +257,12 @@ addEventListener('keydown', e => {
     files.focus()
   }
 })
-$('toggle-git').onclick = () => { document.body.classList.toggle('git-hidden'); git.refresh(); tabs.focus() }
+// The file browser's git colors come from the panel's status, which isn't read while the panel is hidden.
+$('toggle-git').onclick = () => {
+  files.git(document.body.classList.toggle('git-hidden') ? null : git.status())
+  git.refresh()
+  tabs.focus()
+}
 
 $('open-config').onclick = drawer.toggle
 $('min').onclick = () => win.minimize()

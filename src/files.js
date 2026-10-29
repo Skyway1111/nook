@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { $, el, openMenu, showPreview, hidePreview, dragPath } from './ui.js'
 import { path as paths } from './paths.js'
 import { sortEntries } from './order.js'
+import { gitMarks } from './gitmarks.js'
 
 const { SEP, TOP, isRoot, join, parent, normalize, within: under } = paths
 export const ICON = {
@@ -158,7 +159,18 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     if (picked.has(path)) r.classList.add('picked')
     if (path === cursor) r.classList.add('cursor')
     claudeMark(r)
+    gitMark(r)
     return r
+  }
+
+  // Changed files take git's colors, and folders holding one a fainter tint, in the open tab's repository.
+  let gitOf = () => ''
+  const GIT = { M: 'Modified', A: 'Added', R: 'Renamed', U: 'Conflicted', '?': 'Untracked', dir: 'Holds changes' }
+  function gitMark(r) {
+    const mark = r.dataset.path ? gitOf(r.dataset.path) : ''
+    if (mark) r.dataset.git = mark === '?' ? 'new' : mark.toLowerCase()
+    else delete r.dataset.git
+    if (mark && !r.title) r.title = `${r.dataset.path}\n${GIT[mark]}`
   }
 
   // ——— Keys ———
@@ -651,6 +663,11 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     mark,
     reveal,
     create,
+    /** Colors the rows git counts as changed, from the git panel's status, or none when `status` is null. */
+    git(status) {
+      gitOf = gitMarks(status, paths)
+      for (const r of list.children) gitMark(r)
+    },
     /** Puts the keys in the filter box, showing the file browser if it's hidden. */
     filter() {
       document.body.classList.remove('files-hidden')

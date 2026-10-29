@@ -55,7 +55,7 @@ function ago(seconds) {
   return s < 60 ? 'now' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`
 }
 
-export function startGit({ openView, openFile, insertPath }) {
+export function startGit({ openView, openFile, insertPath, onStatus }) {
   let want = null // the active tab's path
   let s = null // the repository on screen, or null outside one
   let shown = '' // its status as JSON, so a poll that finds nothing new touches nothing
@@ -104,6 +104,7 @@ export function startGit({ openView, openFile, insertPath }) {
       message.value = drafts.get(status?.root) ?? ''
     }
     s = status?.root ? status : null
+    onStatus?.(s)
     panel.classList.toggle('none', !s)
     if (s) render()
     else $('git-none').textContent = status?.error ?? 'Not in a git repository'
@@ -493,5 +494,7 @@ export function startGit({ openView, openFile, insertPath }) {
       refresh()
     },
     refresh,
+    /** The status on screen: `{ root, changes, … }`, or null outside a repository. */
+    status: () => s,
   }
 }
