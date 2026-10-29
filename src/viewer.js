@@ -71,8 +71,9 @@ function change(a, b) {
   return { from, to: a.length - k, insert: b.slice(from, b.length - k) }
 }
 
-/** `onText` hears the editor's text after each load and edit. `autosave` saves a moment after each edit. */
-export function startViewer(view, path, { openFile, onDirty, onText, autosave, mention: toPrompt }) {
+/** `onText` hears the editor's text after each load and edit. `autosave` saves a moment after each edit.
+ * `onPick` hears a moment after the selection changes, so it can ask `pick()` what it is. */
+export function startViewer(view, path, { openFile, onDirty, onText, autosave, mention: toPrompt, onPick }) {
   view.tabIndex = -1 // focusable, so the keyboard scrolls it
   const name = basename(path)
   let shown, failed // on disk at the last read or write: the file's text, or why it can't be shown
@@ -195,6 +196,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
 
   function preview(on) {
     previewing = on
+    picked()
     page.hidden = !on
     editor.dom.hidden = on
     toggle.innerHTML = on ? '<i class="icon">&#xE70F;</i>Edit' : '<i class="icon">&#xE890;</i>Preview'
@@ -212,7 +214,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
       return render()
     }
     const { createEditor } = await editing()
-    editor = createEditor(name, text, changed, autosave ? {} : { status: { eol: () => eol } })
+    editor = createEditor(name, text, changed, { picked, ...(autosave ? {} : { status: { eol: () => eol } }) })
     saved = editor.state.doc
     changed()
     paint('text', [editor.dom, ...(page ? [page, toggle] : []), bar])
@@ -341,6 +343,23 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     toPrompt([first, Math.max(first, end.number - (end.from === to ? 1 : 0))])
   }
 
+  /** The lines picked in the source, for Claude: `{ start, end, text }`, each end `[line, character]` counted
+   * from 0. Null when nothing is picked or the page shows instead. */
+  function pick() {
+    const { from, to, empty } = editor?.state.selection.main ?? { empty: true }
+    if (empty || previewing) return null
+    const at = pos => {
+      const line = editor.state.doc.lineAt(pos)
+      return [line.number - 1, pos - line.from]
+    }
+    return { start: at(from), end: at(to), text: editor.state.sliceDoc(from, to) }
+  }
+  let picking // a pause in a drag or in the caret's moves tells onPick, not each step
+  function picked() {
+    clearTimeout(picking)
+    picking = setTimeout(() => onPick?.(), 150)
+  }
+
   view.addEventListener('keydown', e => {
     // Ctrl+Alt+K, as in Claude's own editor extensions.
     if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'k') (e.preventDefault(), mention())
@@ -395,7 +414,9 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     }),
     focus,
     mention,
+    pick,
     close: () => {
+      clearTimeout(picking)
       removeEventListener('nook-blame', onBlame)
       clearTimeout(reblame)
       clearTimeout(barring)
