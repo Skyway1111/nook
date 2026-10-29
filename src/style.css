@@ -114,8 +114,6 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .xterm-host { position: relative; width: 100%; height: 100%; overflow: hidden; } /* the screen moves for the composer */
 /* Its own layer: a redraw rasters only the text, not the backdrop under it, and the composer's shift only moves it. */
 .xterm-screen { will-change: transform; }
-.xterm-host .xterm { anchor-name: --term; }
-.xterm-host .scrollbar.vertical { anchor-name: --gutter; }
 /* xterm draws its own themed scrollbar; hide the native one underneath. */
 .xterm .xterm-viewport { background: transparent !important; scrollbar-width: none; }
 
@@ -177,10 +175,8 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 
 /* Composer: the card over Claude's prompt. It sits under xterm's helpers, so IME text shows above it at its caret. */
 /* Anchored to the terminal, as tall as the screen and never shifted, so no script sizes the card. */
-.composer {
-  position: absolute; z-index: 4; display: flex; position-anchor: --term;
-  left: anchor(left); bottom: anchor(bottom); right: anchor(--gutter left); max-height: calc(anchor-size(height) * .7);
-}
+/* composer.js places it on the terminal's bottom edge, clear of the scrollbar. */
+.composer { position: absolute; z-index: 4; display: flex; }
 .composer .frame {
   flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0;
   padding: 10px 14px 7px; border-radius: 14px;

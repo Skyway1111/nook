@@ -220,7 +220,7 @@ export function startComposer(term, host, id) {
     layout()
   }
 
-  /** Hides Claude's prompt block under the card, which CSS anchors to the screen's bottom, and moves the screen
+  /** Hides Claude's prompt block under the card, which sits on the terminal's bottom edge, and moves the screen
    * by the card's height less that block, so Claude's rows above the prompt, such as the slash menu, sit right
    * above the card. A frame xterm holds through a resize keeps its bottom row on the screen's bottom row. */
   function layout() {
@@ -269,17 +269,36 @@ export function startComposer(term, host, id) {
     held = null
     render(moved)
   })
-  // The screen's box as laid out, before the shift. The card's own size moves the screen too, as when a font
-  // changes or a thumbnail loads. `layout` sizes nothing, so this never loops.
-  const measure = new ResizeObserver(() => {
+  /** Where `e` sits inside the host as laid out, before any shift. */
+  function offset(e) {
     let left = 0
     let top = 0
-    for (let e = screen; e && e !== host; e = e.offsetParent) { left += e.offsetLeft; top += e.offsetTop }
-    geo = { left, top, width: screen.offsetWidth, height: screen.offsetHeight }
+    for (; e && e !== host; e = e.offsetParent) { left += e.offsetLeft; top += e.offsetTop }
+    return { left, top }
+  }
+  // The screen's box as laid out, before the shift. The card's own size moves the screen too, as when a font
+  // changes or a thumbnail loads. `layout` sizes nothing, so this never loops.
+  // The card sits on the terminal's bottom edge, from its left edge to the scrollbar, and takes at most 70% of
+  // its height. CSS anchor positioning did this, but WebKit then laid out the whole page on each keystroke,
+  // a fifth of the CPU that typing took.
+  const gutter = host.querySelector('.xterm .scrollbar.vertical')
+  const measure = new ResizeObserver(() => {
+    geo = { ...offset(screen), width: screen.offsetWidth, height: screen.offsetHeight }
+    const box = term.element
+    const at = offset(box)
+    const style = {
+      left: `${at.left}px`,
+      bottom: `${host.clientHeight - at.top - box.offsetHeight}px`,
+      right: `${host.clientWidth - (gutter ? offset(gutter).left : at.left + box.offsetWidth)}px`,
+      maxHeight: `${box.offsetHeight * 0.7}px`,
+    }
+    for (const k in style) if (card.style[k] !== style[k]) card.style[k] = style[k]
     layout()
   })
+  measure.observe(host)
   measure.observe(screen)
   measure.observe(card)
+  if (gutter) measure.observe(gutter)
 
   /** Sends xterm a left-button event at the middle of cell `at`, which reaches Claude's mouse tracking. */
   function send(type, at) {
