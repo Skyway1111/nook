@@ -11,6 +11,7 @@ import { startLinks } from './links.js'
 import { fileUrl } from './linkify.js'
 import { ANSI, CLAUDE_SLOTS, slotVar, bytes } from './palette.js'
 import { WINDOWS } from './paths.js'
+import { quote } from './files.js'
 
 const open = path => invoke('open_path', { path })
 // The only link schemes a program's output may hand to the system. Any other could run something.
@@ -281,15 +282,22 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     return true
   })
 
-  // A clipboard holding an image (and no text) becomes Claude Code's own image paste: Alt+V on Windows,
-  // Ctrl+V elsewhere.
+  // With no text on the clipboard, files copied in Explorer, or in nook's file browser, paste as their paths,
+  // and Claude attaches any picture among them. A system file manager's text/uri-list pastes the same way.
+  // Otherwise an image becomes Claude Code's own image paste: Alt+V on Windows, Ctrl+V elsewhere.
   host.addEventListener('paste', e => {
     const data = e.clipboardData
     if (!data || data.types.includes('text/plain')) return
-    if (![...data.items].some(item => item.type.startsWith('image/'))) return
     e.preventDefault()
     e.stopImmediatePropagation()
-    send(WINDOWS ? '\x1bv' : '\x16')
+    const uris = data.getData('text/uri-list').split(/\r?\n/).filter(u => /^file:/i.test(u))
+    const image = [...data.items].some(item => item.type.startsWith('image/'))
+    const pasteFiles = paths => term.paste(paths.map(quote).join(' ') + ' ')
+    if (uris.length) return pasteFiles(uris.map(u => fileUrl(u).path))
+    invoke('copied_paths').catch(() => []).then(paths => {
+      if (paths.length) pasteFiles(paths)
+      else if (image) send(WINDOWS ? '\x1bv' : '\x16')
+    })
   }, true)
 
   // [Image #N] → hover to preview, click to open. Images live where Claude Code saved them.

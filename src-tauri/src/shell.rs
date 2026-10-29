@@ -161,6 +161,15 @@ fn clipboard_files() -> Result<(Vec<String>, bool), String> {
     })
 }
 
+/// The files on the clipboard, as Explorer's Copy or Cut put them there, for a paste into a Claude tab.
+#[tauri::command]
+pub fn copied_paths() -> Vec<String> {
+    if !can_paste() {
+        return Vec::new();
+    }
+    clipboard_files().map(|(paths, _)| paths).unwrap_or_default()
+}
+
 /// Pastes the clipboard's files into `dir`: copies, or after a cut, moves them. True when it finished.
 #[tauri::command]
 pub async fn paste_files(dir: String) -> Result<bool, String> {

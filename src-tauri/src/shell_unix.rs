@@ -85,6 +85,12 @@ pub fn can_paste() -> bool {
     CLIPBOARD.lock().unwrap().as_ref().is_some_and(|(paths, _)| !paths.is_empty())
 }
 
+/// The files on nook's clipboard, for a paste into a Claude tab.
+#[tauri::command]
+pub fn copied_paths() -> Vec<String> {
+    CLIPBOARD.lock().unwrap().as_ref().map(|(paths, _)| paths.clone()).unwrap_or_default()
+}
+
 /// `name` in `dir`, or when that's taken, "name - Copy", then "name - Copy (2)", and so on, as Explorer names
 /// a copy beside its original.
 fn free_name(dir: &Path, name: &str) -> PathBuf {
