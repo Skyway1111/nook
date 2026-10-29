@@ -18,6 +18,7 @@ import { path as paths } from './paths.js'
 import { $, openMenu, openPicker } from './ui.js'
 import { SAFE, worktreeName, fanNames, since } from './launch.js'
 import { expand, offer, saved } from './prompts.js'
+import { stat as worktreeStat, keep } from './keep.js'
 
 const win = getCurrentWindow()
 // For bench/linux.mjs: how far startup got, in ms since nook started.
@@ -207,6 +208,16 @@ dashboard = startDashboard($('pane'), {
   send: (tab, text) => tabs.prompt(tab, text),
   answer: (tab, allow) => tabs.answer(tab, allow),
   fanOut,
+  worktree: {
+    stat: root => worktreeStat(runGit, root),
+    keep: (tab, report) => keep(runGit, report.root).then(kept => {
+      git.refresh()
+      return kept
+    }, e => {
+      banner(`Couldn't keep ${tab.name}: ${e.message ?? e}`)
+      throw e
+    }),
+  },
   onClose: () => tabs.focus(),
 })
 $('new-tab').onclick = newSession
@@ -237,6 +248,7 @@ async function resume(at) {
 }
 // One prompt to several new sessions, each in a git worktree of its own, so they try it side by side without
 // editing the same checkout. Each takes the prompt once its session has started; the tab in front stays.
+const runGit = (dir, args, input) => invoke('git', { dir, args, input }).catch(e => { throw new Error(String(e)) })
 async function fanOut(text, n) {
   const dir = here()
   if (!(await invoke('git_status', { path: dir }).catch(() => null))) return banner(`${dir} isn't in a git repository, so Claude can't start worktrees there`)

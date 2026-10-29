@@ -178,6 +178,7 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .sessions .session .file { padding: 1px 7px; border-radius: 5px; font-size: .78rem; background: var(--hover); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
 .sessions .session .file:hover { background: var(--line); color: var(--ink-1); }
 .sessions .session .file:is(.review, .act) { flex: none; color: var(--accent); }
+.sessions .session .file.keep { flex: none; color: var(--session-done); font-weight: 600; }
 .sessions .session .file.deny { flex: none; }
 .sessions .session .asks { display: flex; align-items: center; gap: 6px; }
 .sessions .session .asks:empty { display: none; }
