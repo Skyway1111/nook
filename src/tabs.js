@@ -11,6 +11,16 @@ import { watchSessions, wanting, ANSWERS } from './sessions.js'
 const win = getCurrentWindow()
 const strip = $('tabs')
 const pane = $('pane')
+// The split's divider: drag it to share the pane, double-click to halve it again.
+const sash = pane.appendChild(el('div', { className: 'split-sash', hidden: true }))
+sash.onpointerdown = e => {
+  if (e.button) return
+  sash.setPointerCapture(e.pointerId)
+  const { left, width } = pane.getBoundingClientRect()
+  sash.onpointermove = e => pane.style.setProperty('--split', `${Math.max(20, Math.min(80, ((e.clientX - left) / width) * 100))}%`)
+  sash.onlostpointercapture = () => { sash.onpointermove = null }
+}
+sash.ondblclick = () => pane.style.removeProperty('--split')
 
 /** `settings.command` is what each new Claude tab runs. */
 export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
@@ -19,6 +29,8 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
   let claude = null // the Claude tab shown last: where paths go while a file tab is showing
   let file = null // the file tab shown last: what a quick prompt's {file} names
   let look = 0 // counts theme changes; each terminal notes the one it last took
+  let beside = null // the tab in the pane's other half while it's split; `active` has the focused half
+  let last = null // the tab shown before the active one: what Ctrl+\\ splits with
 
   function add(type, name, path) {
     const head = el('div', { className: `tab ${type}`, title: path })
@@ -28,29 +40,71 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
     tab.label.textContent = name
     head.onclick = e => (e.target.closest('.close') ? close(tab) : show(tab))
     head.onauxclick = e => e.button === 1 && close(tab)
+    head.oncontextmenu = e => openMenu(e, tab === beside || (tab === active && beside)
+      ? [['Close split', ICON.close, () => split(null)]]
+      : [['Open beside', ICON.split, () => split(tab === active ? other() : tab)]])
+    view.addEventListener('pointerdown', () => tab !== active && show(tab), true) // a click in a half focuses it
     strip.append(head)
     tabs.push(tab)
     return tab
   }
 
   function show(tab) {
-    if (active) {
+    if (active && active !== tab) {
       active.el.classList.remove('active')
-      active.view.hidden = true
+      if (tab === beside) {
+        // Focus crosses to the other half; both stay where they are.
+        beside = active
+        beside.el.classList.add('beside')
+        tab.el.classList.remove('beside')
+      } else {
+        // The tab takes the focused half's place.
+        tab.view.dataset.half = active.view.dataset.half ?? ''
+        active.view.hidden = true
+        active.view.dataset.half = ''
+      }
+      last = active
     }
     active = tab
     tab.el.classList.add('active')
     tab.view.hidden = false
     if (!tab.viewer) claude = tab
     else file = tab
-    // A hidden terminal skips theme changes, so it catches up as it shows. Its size catches up on its own.
-    if (tab.look !== look) tab.terminal?.restyle()
-    tab.look = look
-    tab.viewer?.refresh()
+    catchUp(tab)
     retitle()
     onShow(tab)
     focus()
     sessions.poll() // a done mark clears as its tab shows
+  }
+
+  // A hidden terminal skips theme changes, so it catches up as it shows. Its size catches up on its own.
+  function catchUp(tab) {
+    if (tab.look !== look) tab.terminal?.restyle()
+    tab.look = look
+    tab.viewer?.refresh()
+  }
+
+  /** The tab to split with: the one shown before, else the next in the strip. */
+  const other = () => (last && last !== active && tabs.includes(last) ? last : tabs[(tabs.indexOf(active) + 1) % tabs.length])
+
+  /** Shows `tab` in the pane's right half beside the active tab, or with null shows the active tab alone. */
+  function split(tab) {
+    if (beside) {
+      beside.view.hidden = true
+      beside.view.dataset.half = ''
+      beside.el.classList.remove('beside')
+    }
+    beside = tab && tab !== active ? tab : null
+    if (active) active.view.dataset.half = beside ? 'left' : ''
+    sash.hidden = !beside
+    if (beside) {
+      beside.view.dataset.half = 'right'
+      beside.view.hidden = false
+      beside.el.classList.add('beside')
+      catchUp(beside)
+    }
+    focus()
+    sessions.poll()
   }
 
   // The window's title names the open tab, after how many sessions want the user, so the taskbar shows it.
@@ -68,7 +122,7 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
   const sessions = watchSessions({
     invoke,
     tabs: () => tabs,
-    watched: tab => tab === active && document.hasFocus(),
+    watched: tab => (tab === active || tab === beside) && document.hasFocus(),
     onChange: (tab, view, report) => {
       tab.el.dataset.mark = view.mark
       // A session that moved, as into the worktree `claude --worktree` makes, takes its tab's git panel along.
@@ -99,6 +153,13 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
   function drop(tab) {
     const i = tabs.indexOf(tab)
     if (i < 0) return
+    if (tab === beside) split(null)
+    else if (tab === active && beside) {
+      // Its other half takes the whole pane.
+      const rest = beside
+      split(null)
+      show(rest)
+    }
     tabs.splice(i, 1)
     tab.el.remove()
     tab.view.remove()
@@ -164,6 +225,9 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
       const n = Number(e.code.slice(5))
       const tab = n === 9 ? tabs.at(-1) : tabs[n - 1]
       if (tab) show(tab)
+    } else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'Backslash') {
+      e.preventDefault()
+      split(beside ? null : other())
     } else if (e.ctrlKey && e.key.toLowerCase() === 'w' && active?.viewer) {
       e.preventDefault() // in a Claude tab, Ctrl+W is Claude's
       close(active)
@@ -194,8 +258,10 @@ export function startTabs({ settings, home, onShow, onSessions, openFolder }) {
     focus,
     restyle() {
       look++
-      active?.terminal?.restyle()
-      if (active) active.look = look
+      for (const tab of [active, beside]) {
+        tab?.terminal?.restyle()
+        if (tab) tab.look = look
+      }
     },
     /** Pastes `text` into the Claude tab shown last, and with `submit`, sends it. */
     paste(text, submit = false) {

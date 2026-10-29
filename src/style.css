@@ -105,6 +105,12 @@ body.files-hidden #pane { border-left: 0; border-top-left-radius: 0; }
 body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .view { position: absolute; inset: 0; }
 .view.claude { padding: 12px 4px 8px 16px; }
+/* Split: two tabs side by side, the focused half's tab active in the strip and the other marked beside. */
+.view[data-half=left] { right: calc(100% - var(--split, 50%)); }
+.view[data-half=right] { left: var(--split, 50%); border-left: 1px solid var(--line); }
+.split-sash { position: absolute; z-index: 1; top: 0; bottom: 0; left: calc(var(--split, 50%) - 3px); width: 6px; cursor: col-resize; }
+.split-sash:hover { background: color-mix(in oklch, var(--accent) 40%, transparent); }
+.tab.beside { color: var(--ink-1); box-shadow: inset 0 -2px 0 color-mix(in oklch, var(--accent) 55%, transparent); }
 .xterm-host { position: relative; width: 100%; height: 100%; overflow: hidden; } /* the screen moves for the composer */
 /* Its own layer: a redraw rasters only the text, not the backdrop under it, and the composer's shift only moves it. */
 .xterm-screen { will-change: transform; }
