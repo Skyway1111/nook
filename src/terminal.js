@@ -9,8 +9,10 @@ import { startPictures } from './pictures.js'
 import { ANSI, CLAUDE_SLOTS, slotVar, bytes } from './palette.js'
 
 const open = path => invoke('open_path', { path })
-const HOLD_MS = 500 // the longest xterm holds the last frame for Claude's redraw
+const HOLD_MS = 500 // the longest xterm holds the last frame for Claude's redraw, once Claude has the size
 const QUIET_MS = 16 // how long a redraw's last chunk waits for more when it leaves the cursor hidden
+const MIN_COLS = 20 // the smallest size Claude gets: narrower, its layout falls apart
+const MIN_ROWS = 6
 /** Mouse tracking modes by rank, as DECSET numbers and as xterm's names. */
 const MOUSE = { none: 0, 9: 1, x10: 1, 1000: 2, vt200: 2, 1002: 3, drag: 3, 1003: 4, any: 4 }
 
@@ -85,14 +87,16 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
     else queue.push(message)
     if (posting) return
     posting = true
-    try {
-      while (queue.length) {
-        const m = queue.shift()
+    while (queue.length) {
+      const m = queue.shift()
+      try {
         await (typeof m === 'string' ? invoke('pty_write', { id, data: m }) : invoke('pty_resize', { id, ...m }))
+      } catch (e) {
+        reportError(e) // and go on: what waits behind it, such as the last size, must not wait for a keystroke
       }
-    } finally {
-      posting = false
+      if (typeof m !== 'string') sized()
     }
+    posting = false
   }
 
   const term = new Terminal({
@@ -115,18 +119,25 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
   // one in force is ignored.
   term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, p => p.length === 1 && MOUSE[p[0]] < MOUSE[term.modes.mouseTrackingMode])
   term.open(host)
-  fit.fit()
+  /** The size the host fits, no smaller than MIN_COLS x MIN_ROWS, or null while it has none. */
+  const fits = () => {
+    const size = host.offsetWidth && fit.proposeDimensions()
+    return size?.cols && size.rows ? { cols: Math.max(MIN_COLS, size.cols), rows: Math.max(MIN_ROWS, size.rows) } : null
+  }
+  const first = fits()
+  if (first) term.resize(first.cols, first.rows)
   const pictures = startPictures(term, host.querySelector('.xterm-screen'))
   keepSameRows(host.querySelector('.xterm-rows'), pictures.hide)
 
   // Claude redraws its whole screen within a frame or two of each resize: ESC [ 2 J, then every row, and
   // ConPTY ends the frame by showing the cursor. Until that redraw is in, a synchronized update (DEC 2026)
   // holds xterm's last frame, which the composer keeps on the screen's bottom row, instead of xterm painting
-  // its own cut copy first. Claude never closes the update itself, so the redraw's last chunk does. One
-  // resize waits at a time, and the size goes out again once its frame shows, so a dragged edge reflows
-  // Claude as fast as Claude redraws. fit.fit() would blank every row first. A hidden tab has no size, and
-  // fitting it would shrink Claude to a sliver.
-  let hold = null // the resize waiting for Claude's redraw: { until, redrawn, timer }
+  // its own cut copy first. Claude never closes the update itself, so the redraw's last chunk does, once the
+  // size has reached the PTY: an earlier redraw is an older size's. One resize waits at a time, and the size
+  // goes out again once its frame shows, so a dragged edge reflows Claude as fast as Claude redraws.
+  // fit.fit() would blank every row first. A hidden tab has no size, and fitting it would shrink Claude to a
+  // sliver.
+  let hold = null // the resize waiting for Claude's redraw: { sent, until, redrawn, timer }
   let again = false // whether the host resized while a frame was held
   const output = new Channel()
   // An empty chunk means the shell exited.
@@ -135,7 +146,7 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
     const bytes = new Uint8Array(buf)
     pictures.read(bytes)
     term.write(bytes)
-    if (!hold || !(hold.redrawn ||= clears(bytes))) return
+    if (!hold?.sent || !(hold.redrawn ||= clears(bytes))) return
     clearTimeout(hold.timer)
     if (ends(bytes)) release()
     else hold.timer = setTimeout(release, Math.min(QUIET_MS, hold.until - performance.now()))
@@ -148,15 +159,22 @@ export async function startTerminal(host, { cwd, command, onTitle, onExit }) {
 
   function refit() {
     if (hold) return void (again = true)
-    const size = host.offsetWidth && fit.proposeDimensions()
-    if (!size?.cols || !size.rows || (size.cols === term.cols && size.rows === term.rows)) return
+    const size = fits()
+    if (!size || (size.cols === term.cols && size.rows === term.rows)) return
     if (term.buffer.active.type !== 'alternate') return term.resize(size.cols, size.rows)
     const rows = term.rows
-    hold = { until: performance.now() + HOLD_MS, redrawn: false, timer: setTimeout(release, HOLD_MS) }
+    hold = { sent: false, redrawn: false }
     term.write('\x1b[?2026h', () => {
       term.resize(size.cols, size.rows)
       composer.hold(rows)
     })
+  }
+  /** The held size reached the PTY, so Claude's redraw for it can come. */
+  function sized() {
+    if (!hold || hold.sent) return
+    hold.sent = true
+    hold.until = performance.now() + HOLD_MS
+    hold.timer = setTimeout(release, HOLD_MS)
   }
   function release() {
     if (!hold) return

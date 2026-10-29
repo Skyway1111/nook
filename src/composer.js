@@ -220,9 +220,9 @@ export function startComposer(term, host, id) {
     layout()
   }
 
-  /** Lays the card over Claude's prompt block, as tall as its own content, hides Claude's prompt under it,
-   * and moves the screen by the difference, so Claude's rows above the prompt, such as the slash menu, sit
-   * right above the card. A frame xterm holds through a resize keeps its bottom row on the screen's bottom row. */
+  /** Hides Claude's prompt block under the card, which CSS anchors to the screen's bottom, and moves the screen
+   * by the card's height less that block, so Claude's rows above the prompt, such as the slash menu, sit right
+   * above the card. A frame xterm holds through a resize keeps its bottom row on the screen's bottom row. */
   function layout() {
     if (!geo) return
     const h = geo.height / term.rows
@@ -234,12 +234,6 @@ export function startComposer(term, host, id) {
       screen.style.transform = helpers.style.transform = ''
       return
     }
-    Object.assign(card.style, {
-      left: `${geo.left}px`,
-      width: `${geo.width}px`,
-      bottom: `${geo.bottom}px`,
-      maxHeight: `${Math.round(geo.height * 0.7)}px`,
-    })
     const below = shown.block * h
     rows.style.clipPath = `inset(0 0 ${below + hold}px 0)`
     const shift = snap(card.offsetHeight - below)
@@ -275,16 +269,15 @@ export function startComposer(term, host, id) {
     held = null
     render(moved)
   })
-  // The screen's box as laid out, before the shift: its transform would feed back into the card's place. The
-  // card's own size moves the screen too, as when a font changes or a thumbnail loads.
+  // The screen's box as laid out, before the shift. The card's own size moves the screen too, as when a font
+  // changes or a thumbnail loads. `layout` sizes nothing, so this never loops.
   const measure = new ResizeObserver(() => {
     let left = 0
     let top = 0
     for (let e = screen; e && e !== host; e = e.offsetParent) { left += e.offsetLeft; top += e.offsetTop }
-    geo = { left, top, width: screen.offsetWidth, height: screen.offsetHeight, bottom: host.clientHeight - top - screen.offsetHeight }
+    geo = { left, top, width: screen.offsetWidth, height: screen.offsetHeight }
     layout()
   })
-  measure.observe(host)
   measure.observe(screen)
   measure.observe(card)
 
