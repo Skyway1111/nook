@@ -283,10 +283,31 @@ const INHERITED_SESSION_MARKERS: [&str; 10] = [
     "CLAUDE_CODE_MESSAGING_TOKEN",
 ];
 
+/// WebKitGTK composites with the GPU, and with `gpu` off nook renders on the CPU, as WebView2 does with
+/// `--disable-gpu`. It reads settings.json from where Tauri keeps it, before any thread exists to read the
+/// environment it sets. Software compositing costs far more: on Xvfb, a third of the memory and CPU go.
+#[cfg(target_os = "linux")]
+fn render_on_the_cpu_unless_gpu() {
+    const VAR: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".config")));
+    let gpu = config
+        .and_then(|dir| fs::read_to_string(dir.join("dev.nook.app").join("settings.json")).ok())
+        .and_then(|text| serde_json::from_str::<Settings>(&text).ok())
+        .is_some_and(|s| s.gpu);
+    if !gpu && std::env::var_os(VAR).is_none() {
+        std::env::set_var(VAR, "1");
+    }
+}
+
 fn main() {
     for key in INHERITED_SESSION_MARKERS {
         std::env::remove_var(key); // before any thread exists
     }
+    #[cfg(target_os = "linux")]
+    render_on_the_cpu_unless_gpu();
     tauri::Builder::default()
         .manage(pty::Sessions::default())
         .setup(|app| {
@@ -299,7 +320,8 @@ fn main() {
                 .and_then(dir_arg)
                 .or(Some(settings.last_dir).filter(|d| Path::new(d).is_dir()))
                 .unwrap_or_else(|| Settings::default().last_dir);
-            // Browser args are fixed when the webview starts: a change to `gpu` takes a restart.
+            // Browser args, and on Linux the compositing mode, are fixed when the webview starts: a change
+            // to `gpu` takes a restart.
             let gpu = if settings.gpu { "" } else { " --disable-gpu" };
             WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("nook")
