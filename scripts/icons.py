@@ -32,7 +32,9 @@ ICONS = {
     0xE724: "send",  # a quick prompt sent as typed
     0xE738: "subtract",  # a checkbox's mixed state
     0xE73E: "checkmark",
+    0xE721: "search",  # find in Claude's output
     0xE74A: "arrow_up",
+    0xE74B: "arrow_down",
     0xE74D: "delete",
     0xE74E: "save",
     0xE753: "cloud_arrow_up",  # a remote branch

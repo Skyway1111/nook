@@ -733,3 +733,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .find.none .count { color: var(--ansi-red); }
 .find button { width: 24px; height: 24px; border-radius: 6px; color: var(--ink-2); }
 .find button:hover { background: var(--hover); color: var(--ink-1); }
+
+/* The prompt a jump lands on flashes once. */
+.turn-flash { pointer-events: none; animation: turn-flash 900ms ease-out forwards; }
+@keyframes turn-flash { from { background: var(--selection); } to { background: transparent; } }
