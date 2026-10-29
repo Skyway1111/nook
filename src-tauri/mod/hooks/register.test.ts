@@ -66,7 +66,7 @@ test('a session nook did not start reports nothing', async ($, on) => {
   expect(reports).toEqual([])
 })
 
-import { diagramBox, mathBox, errorLine, failingTests, headerSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, splitBlocks, splitPictures, summary, testCounts } from './register.js'
+import { diagramBox, mathBox, plainInline, plainMath, errorLine, failingTests, headerSize, linkTarget, outcome, pictureLinks, readPaths, searchParts, shellSearch, splitBlocks, splitPictures, summary, testCounts } from './register.js'
 
 test('a test run reads as its own summary says, summed over cargo crates', () => {
   expect(testCounts('running 3 tests\ntest result: ok. 26 passed; 0 failed; 0 ignored\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored')).toEqual({ passed: 28, failed: 1 })
@@ -363,5 +363,29 @@ test('a reply with a display formula draws it in its place, in a tab nook starte
   expect(image?.props).toMatchObject({ source: { file: expect.stringMatching(/^\/nook\/math-\w+\.tex$/) }, rows: 3, alt: 'formula' })
   expect(written[image?.props.source.file]).toBe('\\frac{1}{2}')
   expect((await ui.find({ type: 'Markdown' }))?.props.text).toBe('Done.')
+  await ui.unmount()
+})
+
+test('inline math reads as plain symbols, and prices, code, and what has no plain form stay as written', () => {
+  expect(plainMath('ax^2 + bx + c = 0')).toBe('ax² + bx + c = 0')
+  expect(plainMath('a \\neq 0')).toBe('a ≠ 0')
+  expect(plainMath('n \\in \\mathbb{N}')).toBe('n ∈ ℕ')
+  expect(plainMath('x_{n+1} = x_n^2')).toBe('xₙ₊₁ = xₙ²')
+  expect(plainMath('\\alpha_i \\leq \\frac{1}{2}')).toBe('αᵢ ≤ 1/2')
+  expect(plainMath('O(n \\log n)')).toBe('O(n log n)')
+  expect(plainMath('\\sqrt{x+1}')).toBe('√(x+1)')
+  expect(plainMath('\\begin{pmatrix}a\\end{pmatrix}')).toBe(null)
+  expect(plainMath('x^{q}')).toBe(null) // no superscript q in Unicode
+  expect(plainInline('Roots of $ax^2 + bx + c = 0$ when $a \\neq 0$, at $x$.')).toBe('Roots of ax² + bx + c = 0 when a ≠ 0, at x.')
+  expect(plainInline('It costs $5, or $10 with $2 off.')).toBe('It costs $5, or $10 with $2 off.')
+  expect(plainInline('Run `echo $a$b`, then:\n```sh\nx=$y$\n```\nand $\\alpha$')).toBe('Run `echo $a$b`, then:\n```sh\nx=$y$\n```\nand α')
+  expect(plainInline('While it streams:\n```py\nprint(\'$x$\')')).toBe('While it streams:\n```py\nprint(\'$x$\')')
+  expect(plainInline('$$\nE = mc^2\n$$')).toBe('$$\nE = mc^2\n$$')
+})
+
+test('a reply\'s inline math draws as plain symbols in any terminal', async ($, on) => {
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: `engine: ${e.props.text}` }))
+  const ui = await $.ui.mount({ plugin: 'nook', surface: 'terminal', component: 'AssistantMessage', requestId: 'r1', props: { text: 'So $x^2 \\geq 0$ always.', isFirstOfReply: true } })
+  expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine: So x² ≥ 0 always.')
   await ui.unmount()
 })
