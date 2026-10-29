@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { follow, wanting, ago, modelName, summary, answeredReport, notice, cannotSend, pickedAtFirst, ANSWERS } from './sessions.js'
+import { follow, wanting, ago, modelName, summary, answeredReport, notice, cannotSend, pickedAtFirst, fill, money, limits, ANSWERS } from './sessions.js'
 
 const run = (steps, view) => steps.map(([report, watched]) => (view = follow(view, report, watched)))
 
@@ -95,4 +95,26 @@ test('a prompt goes to several sessions only where Enter sends it, and starts on
   assert.equal(cannotSend({ mark: 'waiting' }, waiting), 'Answer its question first')
   assert.equal(cannotSend(undefined, {}), 'Still starting')
   assert.deepEqual([idle, working, waiting, {}].map(r => pickedAtFirst({ mark: '' }, r)), [true, false, false, false])
+})
+
+test('a card reads the context fill once Claude has replied, and the cost from half a cent', () => {
+  assert.equal(fill({}), null)
+  assert.equal(fill({ context: { window: 200000 } }), null) // a new or cleared session
+  assert.equal(fill({ context: { window: 200000, tokens: 124000, percent: 62 } }), 62)
+  assert.deepEqual([0, 0.004, 0.42, 3.456, 12.6].map(money), ['', '', '$0.42', '$3.46', '$13'])
+})
+
+test('the account\'s limits: the newest unreset reading of each window, the fullest first', () => {
+  const now = Date.parse('2026-10-29T16:00:00Z')
+  const reports = [
+    { limits: [{ kind: 'five_hour', used: 61, resetsAt: '2026-10-29T15:00:00Z' }] }, // reset an hour ago
+    { limits: [{ kind: 'five_hour', used: 12, resetsAt: '2026-10-29T20:00:00Z' }, { kind: 'seven_day', used: 30, resetsAt: '2026-11-02T00:00:00Z' }] },
+    { limits: [{ kind: 'five_hour', used: 14.5, resetsAt: '2026-10-29T20:00:00Z' }] }, // the same window, read later
+    {},
+  ]
+  assert.deepEqual(limits(reports, now), [
+    { name: 'weekly', used: 30, resetsAt: Date.parse('2026-11-02T00:00:00Z') },
+    { name: '5-hour', used: 14.5, resetsAt: Date.parse('2026-10-29T20:00:00Z') },
+  ])
+  assert.deepEqual(limits([{}, { limits: [] }], now), [])
 })

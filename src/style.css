@@ -144,6 +144,8 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .sessions > header { display: flex; align-items: center; gap: 14px; font-size: .86rem; color: var(--ink-3); white-space: nowrap; }
 .sessions > header b { font-weight: 600; font-size: .95rem; color: var(--ink-1); }
 .sessions > header .count { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.sessions > header .limits { font-size: .8rem; }
+.sessions > header .limits.full { color: var(--session-waiting); }
 .sessions > header .new { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; color: var(--ink-2); }
 .sessions > header .new:hover { background: var(--hover); color: var(--ink-1); }
 .sessions .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
@@ -162,12 +164,15 @@ body.git-hidden #pane { border-right: 0; border-top-right-radius: 0; }
 .sessions .session .answer:empty { display: none; }
 .sessions .session:not([data-mark=working], [data-mark=waiting]) .doing:empty { display: none; }
 .sessions .session .doing { font-family: var(--font-term); font-size: .8rem; color: var(--ink-3); min-height: 1.2em; }
+.sessions .session .fill { display: block; height: 3px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--fill), var(--line) var(--fill)); opacity: .8; }
+.sessions .session .fill.full { background: linear-gradient(to right, var(--session-waiting) var(--fill), var(--line) var(--fill)); }
+.sessions .session .fill[hidden] { display: none; }
 .sessions .session footer { font-size: .78rem; color: var(--ink-3); }
 .sessions .session .files { display: flex; gap: 6px; min-height: 0; }
 .sessions .session .files:empty { display: none; }
 .sessions .session .file { padding: 1px 7px; border-radius: 5px; font-size: .78rem; background: var(--hover); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
 .sessions .session .file:hover { background: var(--line); color: var(--ink-1); }
-.sessions .session .file.review { flex: none; color: var(--accent); }
+.sessions .session .file:is(.review, .act) { flex: none; color: var(--accent); }
 .sessions .mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .sessions [data-mark=working] .mark { background: var(--session-working); }
 .sessions [data-mark=waiting] .mark { background: var(--session-waiting); }
