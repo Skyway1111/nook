@@ -41,14 +41,12 @@ export function startThemes({ configDir, home, settings, save, reread }) {
 
   /** Lists the installed themes, each with its screenshot.png when it has one. */
   async function show() {
-    const listed = await invoke('list_dir', { path: dir }).catch(() => [])
-    const names = listed.filter(e => e.dir && !e.name.startsWith('.')).map(e => e.name).sort((a, b) => a.localeCompare(b))
+    const themes = await list()
     const add = el('button', { className: 'theme add', title: 'Install a theme from a .zip', onclick: () => picker.click() })
     add.innerHTML = '<i class="icon">&#xE710;</i><span>Install…</span>'
     const paint = el('button', { className: 'theme add', title: "Make a theme from a picture, in the picture's own colors", onclick: () => pictures.click() })
     paint.innerHTML = '<i class="icon">&#xEB9F;</i><span>From a picture…</span>'
-    const shot = name => `${convertFileSrc(paths.join(dir, name, 'screenshot.png'))}?v=${launched}.${installs.get(name) ?? 0}`
-    gallery.replaceChildren(card(null, preview), ...names.map(n => card(n, shot(n))), add, paint)
+    gallery.replaceChildren(...themes.map(([name, src]) => card(name, src)), add, paint)
     mark(active)
     follow.checked = (await claudeTheme()) === NOOK
   }
@@ -72,10 +70,12 @@ export function startThemes({ configDir, home, settings, save, reread }) {
     await show()
   }
 
+  const watchers = new Set()
   async function installed(name) {
     installs.set(name, (installs.get(name) ?? 0) + 1)
     await show()
     await use(name)
+    for (const watch of watchers) watch()
   }
   const install = path => invoke('install_theme', { path }).then(installed).catch(e => say(`nook can't install that theme: ${e}.`))
   picker.onchange = async () => {
@@ -139,5 +139,12 @@ export function startThemes({ configDir, home, settings, save, reread }) {
   }
   follow.onchange = () => save({ claudeFollows: follow.checked }).then(() => setFollow(follow.checked))
 
-  return { show, mark, install }
+  /** The installed themes' names, null first for nook's own, each with its card's picture. */
+  async function list() {
+    const listed = await invoke('list_dir', { path: dir }).catch(() => [])
+    const names = listed.filter(e => e.dir && !e.name.startsWith('.')).map(e => e.name).sort((a, b) => a.localeCompare(b))
+    return [[null, preview], ...names.map(n => [n, `${convertFileSrc(paths.join(dir, n, 'screenshot.png'))}?v=${launched}.${installs.get(n) ?? 0}`])]
+  }
+
+  return { show, mark, install, list, use, label, active: () => active, fromPicture: () => pictures.click(), watch: f => watchers.add(f) }
 }

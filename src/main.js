@@ -268,3 +268,11 @@ addEventListener('contextmenu', e => e.preventDefault())
 mark('chrome')
 await tabs.openClaude(cwd)
 mark('spawned')
+// First run only: the welcome loads once Claude's tab is up, so it never delays an open.
+if (drawer.firstRun) {
+  import('./welcome.js').then(m => m.showWelcome($('pane'), {
+    themes: drawer.themes,
+    wallpapers: () => $('toggle-wallpaper').click(),
+    onClose: () => tabs.focus(),
+  }))
+}
