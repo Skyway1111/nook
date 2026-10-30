@@ -304,10 +304,17 @@ fn read_text(path: String) -> Result<String, String> {
     Ok(decode(bytes))
 }
 
-/// When a file last changed, and its size. A file tab rereads the file only when this changes.
+/// When a file last changed, and its size. A file tab rereads the file only when this changes, so a fresh file's
+/// stamp holds the time of asking too.
 fn file_stamp(path: String) -> Option<String> {
     let meta = fs::metadata(path).ok()?;
-    Some(format!("{:?} {}", meta.modified().ok()?, meta.len()))
+    let now = if fresh(&meta) { format!(" {:?}", std::time::SystemTime::now()) } else { String::new() };
+    Some(format!("{:?} {}{now}", meta.modified().ok()?, meta.len()))
+}
+
+/// Whether a file was written in the last two seconds: a second write within its time's resolution keeps its stats.
+fn fresh(m: &fs::Metadata) -> bool {
+    m.modified().is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() < 2))
 }
 
 /// What each path names: 0 nothing, 1 a file, 2 a folder. A Claude tab asks about the paths in a row

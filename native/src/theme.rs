@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{config_dir, decode, err, host::Bytes, json::object, read_settings, zip};
+use crate::{config_dir, decode, err, fresh, host::Bytes, json::object, read_settings, zip};
 
 /// A new theme.css. nook applies it over its defaults in `src/theme.css` and the installed theme in use.
 const THEME_SEED: &str = "/* Your CSS, applied over nook's defaults and the theme in use.
@@ -70,11 +70,6 @@ pub fn read_theme(seen: Option<u64>) -> Option<Theme> {
     }
     let read = |p: &Path| fs::read(p).ok().map(decode);
     Some(Theme { css: read(&path), name, pack: pack_css.and_then(|p| read(&p)), stamp: stamp >> 11, first, version })
-}
-
-/// Whether a file was written in the last two seconds: a second write within its time's resolution keeps its stats.
-fn fresh(m: &fs::Metadata) -> bool {
-    m.modified().is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() < 2))
 }
 
 /// The installed theme settings.json names. It's parsed again only when its stats change, or are fresh.
