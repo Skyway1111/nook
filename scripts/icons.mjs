@@ -80,8 +80,7 @@ const FLAG = /[\s,]*([01])/y
 const COMMAND = /[\s,]*([A-Za-z])/y
 
 /** An SVG's paths in font units, as contours of rounded points: [x, y] to start and for each line, and
- * [x1, y1, x2, y2, x, y] for each cubic. It draws as fontTools' SVGPath drew into a T2CharStringPen: a quadratic
- * raised to a cubic in font units from the unrounded point, an arc a cubic per quarter turn. */
+ * [x1, y1, x2, y2, x, y] for each cubic. A quadratic is raised to a cubic in font units from the unrounded last point. */
 function outline(svg) {
   const contours = []
   let contour, px, py
@@ -224,9 +223,9 @@ function encode(segs) {
   return out
 }
 
-/** A glyph as a Type 2 charstring, its width the Private DICT's default. Like fontTools it draws a cubic with its
- * handles on its ends as a line, drops empty lines, and joins two lines in a row along one axis. A last line back to
- * the start goes too: a contour closes itself, and the next moveto starts from where it ended. */
+/** A glyph as a Type 2 charstring, its width the Private DICT's default. A cubic with its handles on its ends is a
+ * line, empty lines go, two lines in a row along one axis join, and a last line back to the start goes: a contour
+ * closes itself, and the next moveto starts from where it ended. */
 function charstring(glyph) {
   const out = []
   let x = 0, y = 0
