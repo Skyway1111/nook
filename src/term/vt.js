@@ -1,6 +1,6 @@
 // A terminal without a screen: parses what a program writes, keeps the normal buffer with its scrollback and the
 // alternate one, and answers what the program asks. Its behavior follows xterm's control sequences, which Claude
-// Code and ConPTY emit. No DOM: the view reads it through `buffer`.
+// Code and nook's console emit. No DOM: the view reads it through `buffer`.
 import { wcwidth } from './wcwidth.js'
 
 // A cell is three words. content: code point | COMBINED | width << 22, where an empty cell has width 1 and the
@@ -384,7 +384,7 @@ class Buffer {
   }
 
   /** Rows below the cursor go first, then the top scrolls off; a Linux PTY pulls scrollback back down as rows grow,
-   * ConPTY gets blank rows. The normal buffer reflows wrapped lines. This and the reflows below are xterm.js's
+   * the Windows console gets blank rows. The normal buffer reflows wrapped lines. This and the reflows below are xterm.js's
    * Buffer and BufferReflow (LICENSES.txt). */
   resize(cols, rows, oldCols, oldRows) {
     const { lines, vt } = this
@@ -780,7 +780,7 @@ const RANK = { none: 0, x10: 1, vt200: 2, drag: 3, any: 4 }
  * - `dcs(ident, params)`: a DCS other than DECRQSS starts; returns `{ put(s), end(ok) }` to take it, or nothing
  * - `pixels()`: `{ cellW, cellH, width, height }` in CSS px for CSI 16 t and 14 t, or nothing
  * - `colors()`: `[fg, bg, cursor]` as [r, g, b] for OSC 10, 11 and 12 queries
- * `pull` makes rows that grow take lines back from scrollback, as on Linux; ConPTY gets blank rows instead.
+ * `pull` makes rows that grow take lines back from scrollback, as on Linux; the Windows console gets blank rows instead.
  */
 export class Vt {
   constructor(cols, rows, h = {}, { scrollback = 10000, pull = false } = {}) {

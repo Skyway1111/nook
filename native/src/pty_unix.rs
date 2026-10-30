@@ -3,7 +3,7 @@
 use std::{
     ffi::{c_char, c_int, c_long, c_ulong, CStr, OsStr, OsString},
     fs::{File, OpenOptions},
-    io,
+    io::{self, Read, Write},
     os::{
         fd::{AsRawFd, FromRawFd},
         unix::{ffi::OsStringExt, fs::OpenOptionsExt, process::CommandExt},
@@ -11,6 +11,9 @@ use std::{
     path::Path,
     process::{Child, Command},
     ptr::null_mut,
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
+    time::Instant,
 };
 
 extern "C" {
@@ -77,15 +80,53 @@ fn set_size(fd: c_int, cols: u16, rows: u16) -> io::Result<()> {
     check(unsafe { ioctl(fd, TIOCSWINSZ, &size) }).map(drop)
 }
 
-/// The pseudoterminal's master side and the session it leads. Dropping it hangs the session up, as closing a
-/// terminal window does: the reader still holds the master open, so the kernel wouldn't.
+/// The pseudoterminal's master side and the session it leads.
 pub struct Pty {
     master: File,
     pid: c_int,
+    closed: AtomicBool,
 }
 
 impl Drop for Pty {
     fn drop(&mut self) {
+        self.close();
+    }
+}
+
+impl Pty {
+    /// Sends what the session writes to `output`, on a thread of its own.
+    pub fn output(&self, mut output: impl FnMut(&[u8]) + Send + 'static) {
+        let Ok(mut reader) = self.master.try_clone() else { return };
+        thread::spawn(move || {
+            let mut buf = vec![0; 1 << 16];
+            // Keep draining after the page is gone: an undrained terminal can stall the session's end.
+            while let Ok(n @ 1..) = reader.read(&mut buf) {
+                output(&buf[..n]);
+            }
+        });
+    }
+
+    pub fn write(&self, keys: &str) -> io::Result<()> {
+        (&self.master).write_all(keys.as_bytes())
+    }
+
+    pub fn resize(&self, cols: u16, rows: u16) {
+        let _ = set_size(self.master.as_raw_fd(), cols, rows);
+    }
+
+    /// The terminal answers no question of its own here, so nothing is ever due.
+    pub fn due(&self) -> Option<Instant> {
+        None
+    }
+
+    pub fn tick(&self) {}
+
+    /// Hangs the session up, once, as closing a terminal window does: the reader still holds the master open, so
+    /// the kernel wouldn't.
+    pub fn close(&self) {
+        if self.closed.swap(true, Ordering::Relaxed) {
+            return;
+        }
         let mut fg: c_int = 0;
         unsafe {
             // A job an interactive shell runs in the foreground has a group of its own.
@@ -94,12 +135,6 @@ impl Drop for Pty {
             }
             kill(-self.pid, SIGHUP);
         }
-    }
-}
-
-impl Pty {
-    pub fn resize(&self, cols: u16, rows: u16) -> io::Result<()> {
-        set_size(self.master.as_raw_fd(), cols, rows)
     }
 }
 
@@ -146,9 +181,9 @@ pub fn open(cols: u16, rows: u16) -> io::Result<Console> {
 }
 
 impl Console {
-    /// Starts `program` with `args` on the terminal, as the leader of its own session: the terminal, its input,
-    /// its output, and the process. The process gets nook's environment with `vars` over it.
-    pub fn spawn(self, program: &str, args: &[String], cwd: &str, vars: &[(&str, OsString)]) -> io::Result<(Pty, File, File, Exit)> {
+    /// Starts `program` with `args` on the terminal, as the leader of its own session: the terminal, and the
+    /// process. The process gets nook's environment with `vars` over it.
+    pub fn spawn(self, program: &str, args: &[String], cwd: &str, vars: &[(&str, OsString)]) -> io::Result<(Pty, Exit)> {
         let Console { master, slave } = self;
         let mut cmd = Command::new(program);
         cmd.args(args).envs(vars.iter().map(|(k, v)| (k, v)));
@@ -179,6 +214,6 @@ impl Console {
         let child = cmd.spawn().map_err(|e| io::Error::other(format!("can't run {program}: {e}")))?;
         drop(cmd); // its copies of the terminal side, so the output ends when the session's processes do
         let pid = child.id() as c_int;
-        Ok((Pty { master: master.try_clone()?, pid }, master.try_clone()?, master, Exit(child)))
+        Ok((Pty { master, pid, closed: AtomicBool::new(false) }, Exit(child)))
     }
 }

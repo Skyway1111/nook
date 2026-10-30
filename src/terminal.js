@@ -19,13 +19,12 @@ const MIN_ROWS = 6
 
 /** Whether output holds ESC [ 2 J, which starts each of Claude's full redraws. */
 const clears = text => text.includes('\x1b[2J')
-/** Whether output ends by showing the cursor, as each of ConPTY's frames does while Claude's prompt has it. */
+/** Whether output ends by showing the cursor, as each of Claude's frames does while its prompt has it. */
 const ends = text => text.endsWith('\x1b[?25h')
 
 export async function startTerminal(host, { cwd, home, command, openPath, onTitle, onExit }) {
   // Keys and sizes go to the PTY as they come: the host takes calls in the order they're posted, and the PTY's
-  // writer writes the keys and applies the sizes in that order. What comes before the PTY exists, such as the
-  // terminal's answers to ConPTY's first questions, waits for it.
+  // writer writes the keys and applies the sizes in that order. What comes before the PTY exists waits for it.
   let id
   let early = []
   function send(m) {
@@ -50,7 +49,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     } else if (n === 1337) images?.iterm(data)
   }
   const term = new Term(host, {
-    // ConPTY reflows on resize and grows the screen with blank rows. A Linux PTY leaves reflow to the terminal.
+    // nook's console on Windows grows the screen with blank rows. A Linux PTY leaves that to the terminal.
     pull: !WINDOWS,
     osc,
     apc: data => pictures.apc(data),
@@ -69,14 +68,14 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   pictures = startPictures(term, reply => send(reply))
   const links = startLinks(term, () => ({ cwd: here, home }), openPath, pictures.pathOf)
 
-  // Claude redraws its whole screen within a frame or two of each resize: ESC [ 2 J, then every row, and
-  // ConPTY ends the frame by showing the cursor. Until that redraw is in, a synchronized update (DEC 2026)
+  // Claude redraws its whole screen within a frame or two of each resize: ESC [ 2 J, then every row, and it
+  // ends the frame by showing the cursor. Until that redraw is in, a synchronized update (DEC 2026)
   // holds the last frame, which the composer keeps on the screen's bottom row, instead of the terminal painting
   // its own cut copy first. Claude never closes the update itself, so the redraw's last chunk does, once the
   // size has reached the PTY: an earlier redraw is an older size's. One resize waits at a time, and the size
   // goes out again once its frame shows, so a dragged edge reflows Claude as fast as Claude redraws. A hidden
   // tab has no size, and fitting it would shrink Claude to a sliver.
-  let hold = null // the resize waiting for Claude's redraw: { sent, until, redrawn, timer }
+  let hold = null // the resize waiting for Claude's redraw, then for it to show: { sent, until, redrawn, timer, done }
   let again = false // whether the host resized while a frame was held
   const output = new Channel()
   // Sixel and iTerm2 pictures load their module the first time output holds one. Output that arrives meanwhile
@@ -116,7 +115,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   }
   function take(text) {
     term.write(text)
-    if (!hold?.sent || !(hold.redrawn ||= clears(text))) return
+    if (!hold?.sent || hold.done || !(hold.redrawn ||= clears(text))) return
     clearTimeout(hold.timer)
     if (ends(text)) release()
     else hold.timer = setTimeout(release, Math.min(QUIET_MS, hold.until - performance.now()))
@@ -149,12 +148,13 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     hold.timer = setTimeout(release, HOLD_MS)
   }
   function release() {
-    if (!hold) return
+    if (!hold || hold.done) return
     clearTimeout(hold.timer)
-    hold = null
+    hold.done = true
     term.write('\x1b[?2026l')
   }
   term.onRender(() => {
+    if (hold?.done) hold = null
     if (again && !hold) {
       again = false
       refit()

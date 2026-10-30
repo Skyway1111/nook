@@ -18,10 +18,6 @@ const windows = process.platform === 'win32'
 
 // What ships beside nook.exe, as [from in the repo, to in the install]. A folder copies whole.
 const PAYLOAD = [
-  ...(windows ? [
-    ['native/conpty/conpty.dll', 'conpty.dll'],
-    ['native/conpty/OpenConsole.exe', 'OpenConsole.exe'],
-  ] : []),
   ['LICENSES.txt', 'LICENSES.txt'],
   ['mod/.claude-plugin/plugin.json', 'mod/.claude-plugin/plugin.json'],
   ['mod/hooks/hooks.json', 'mod/hooks/hooks.json'],

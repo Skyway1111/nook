@@ -17,7 +17,7 @@ Fluent UI System Icons (https://github.com/microsoft/fluentui-system-icons): the
   Copyright (c) 2020 Microsoft Corporation
   Under the MIT License, below.
 
-ConPTY (Microsoft.Windows.Console.ConPTY): conpty.dll and OpenConsole.exe on Windows.
+OpenConsole (https://github.com/microsoft/terminal): native/src/console follows its console host, and ports parts of it.
   Copyright (c) Microsoft Corporation. All rights reserved.
   Under the MIT License, below.
 

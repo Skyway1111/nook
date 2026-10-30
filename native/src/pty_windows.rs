@@ -1,74 +1,50 @@
-//! A Windows pseudoconsole, through the conpty.dll beside nook (with its own OpenConsole.exe), or else Windows' own.
-use crate::sys::*;
+//! A tab's console, which nook serves itself (`console`), and the process started in it.
+use crate::{console, sys::*};
 use std::{
     collections::BTreeMap,
     ffi::{c_void, OsStr, OsString},
-    fs::File,
     io,
-    mem::{size_of, transmute},
+    mem::size_of,
     os::windows::{
         ffi::{OsStrExt, OsStringExt},
         io::{AsRawHandle, FromRawHandle, OwnedHandle},
     },
     path::{Path, PathBuf},
     ptr::{null, null_mut},
-    sync::OnceLock,
+    time::Instant,
 };
 
-type Create = unsafe extern "system" fn(COORD, HANDLE, HANDLE, u32, *mut HANDLE) -> i32;
-type Resize = unsafe extern "system" fn(HANDLE, COORD) -> i32;
-type Close = unsafe extern "system" fn(HANDLE);
-
-struct Fns {
-    create: Create,
-    resize: Resize,
-    close: Close,
-}
-
-/// The pseudoconsole functions: conpty.dll's when it loads from where nook ships it, else kernel32's.
-fn conpty() -> &'static Fns {
-    static FNS: OnceLock<Fns> = OnceLock::new();
-    FNS.get_or_init(|| {
-        let system = Fns { create: CreatePseudoConsole, resize: ResizePseudoConsole, close: ClosePseudoConsole };
-        let dll = wide(crate::resource("conpty.dll"));
-        // SAFETY: a full path, so no other folder is searched, and these three exports have these signatures.
-        unsafe {
-            let module = LoadLibraryExW(dll.as_ptr(), null_mut(), LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
-            if module.is_null() {
-                return system;
-            }
-            let f = |name: &[u8]| GetProcAddress(module, name.as_ptr());
-            let (c, r, x) = (f(b"CreatePseudoConsole\0"), f(b"ResizePseudoConsole\0"), f(b"ClosePseudoConsole\0"));
-            if c.is_null() || r.is_null() || x.is_null() {
-                return system;
-            }
-            Fns { create: transmute::<*const c_void, Create>(c), resize: transmute::<*const c_void, Resize>(r), close: transmute::<*const c_void, Close>(x) }
-        }
-    })
-}
-
-fn coord(cols: u16, rows: u16) -> COORD {
-    COORD { X: cols as i16, Y: rows as i16 }
-}
-
-/// A pseudoconsole.
-pub struct Pty(HANDLE);
-
-// SAFETY: a pseudoconsole handle is used from any thread.
-unsafe impl Send for Pty {}
-
-impl Drop for Pty {
-    fn drop(&mut self) {
-        unsafe { (conpty().close)(self.0) }
-    }
-}
+/// A console with its process running.
+pub struct Pty(console::Console);
 
 impl Pty {
-    pub fn resize(&self, cols: u16, rows: u16) -> io::Result<()> {
-        match unsafe { (conpty().resize)(self.0, coord(cols, rows)) } {
-            0 => Ok(()),
-            hr => Err(io::Error::other(format!("failed to resize console to {cols}x{rows}: HRESULT: {hr}"))),
-        }
+    /// Sends what programs write to `output`, from the first byte they wrote.
+    pub fn output(&self, output: console::Sink) {
+        self.0.output(output)
+    }
+
+    /// The tab's keys, and the terminal's answers.
+    pub fn write(&self, keys: &str) -> io::Result<()> {
+        self.0.write(keys);
+        Ok(())
+    }
+
+    pub fn resize(&self, cols: u16, rows: u16) {
+        self.0.resize(cols, rows)
+    }
+
+    /// When `tick` is next due: while the console waits on the terminal's answer to a resize.
+    pub fn due(&self) -> Option<Instant> {
+        self.0.due()
+    }
+
+    pub fn tick(&self) {
+        self.0.tick()
+    }
+
+    /// Ends every process attached to the console, and blocks meanwhile.
+    pub fn close(&self) {
+        self.0.close()
     }
 }
 
@@ -81,40 +57,20 @@ impl Exit {
     }
 }
 
-fn pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
-    let (mut read, mut write) = (null_mut(), null_mut());
-    if unsafe { CreatePipe(&mut read, &mut write, null(), 0) } == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(unsafe { (OwnedHandle::from_raw_handle(read), OwnedHandle::from_raw_handle(write)) })
-}
+/// A console yet to run its process.
+pub struct Console(console::Console);
 
-/// A pseudoconsole yet to run its process, with nook's ends of its input and output.
-pub struct Console {
-    pty: Pty,
-    input: File,
-    output: File,
-}
-
-/// Opens a pseudoconsole of `cols` by `rows`. Its OpenConsole starts up while the caller gets the process ready.
+/// Opens a console of `cols` by `rows`.
 pub fn open(cols: u16, rows: u16) -> io::Result<Console> {
-    let (con_in, input) = pipe()?;
-    let (output, con_out) = pipe()?;
-    let mut hpc = null_mut();
-    let flags = PSEUDOCONSOLE_INHERIT_CURSOR | PSEUDOCONSOLE_RESIZE_QUIRK | PSEUDOCONSOLE_WIN32_INPUT_MODE;
-    let hr = unsafe { (conpty().create)(coord(cols, rows), con_in.as_raw_handle(), con_out.as_raw_handle(), flags, &mut hpc) };
-    if hr != 0 {
-        return Err(io::Error::other(format!("failed to create a console: HRESULT {hr}")));
-    }
-    // The console holds its own copies of its ends: with ours closed, the output ends when the console does.
-    Ok(Console { pty: Pty(hpc), input: input.into(), output: output.into() })
+    // A parent's "ignore Ctrl+C" would pass on to every process in it.
+    unsafe { SetConsoleCtrlHandler(null(), 0) };
+    console::Console::open(cols, rows).map(Console)
 }
 
 impl Console {
-    /// Starts `program` with `args` in the console: the console, its input, its output, and the process. The
-    /// process gets the environment a new login would, Windows' variables read fresh from the registry, with
-    /// `vars` over them.
-    pub fn spawn(self, program: &str, args: &[String], cwd: &str, vars: &[(&str, OsString)]) -> io::Result<(Pty, File, File, Exit)> {
+    /// Starts `program` with `args` in the console: the console, and the process. The process gets the environment
+    /// a new login would, Windows' variables read fresh from the registry, with `vars` over them.
+    pub fn spawn(mut self, program: &str, args: &[String], cwd: &str, vars: &[(&str, OsString)]) -> io::Result<(Pty, Exit)> {
         let (env, block) = environment(vars);
         let get = |key: &str| env.get(key).map(|(_, v)| v.as_os_str());
         let exe = resolve(program, get("PATH"), get("PATHEXT"));
@@ -134,12 +90,12 @@ impl Console {
         unsafe { InitializeProcThreadAttributeList(null_mut(), 1, 0, &mut size) };
         let mut buf = vec![0usize; size.div_ceil(size_of::<usize>())];
         let list = buf.as_mut_ptr().cast::<c_void>();
-        // SAFETY: the list is as large as Windows asked, and outlives CreateProcessW.
+        // SAFETY: the list is as large as Windows asked, and outlives CreateProcessW, as does the console it names.
         unsafe {
             if InitializeProcThreadAttributeList(list, 1, 0, &mut size) == 0 {
                 return Err(io::Error::last_os_error());
             }
-            let ok = UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, self.pty.0, size_of::<HANDLE>(), null_mut(), null());
+            let ok = UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, self.0.attribute(), size_of::<HANDLE>(), null_mut(), null());
             let mut info = PROCESS_INFORMATION::default();
             let started = ok != 0 && {
                 let si = STARTUPINFOEXW {
@@ -163,7 +119,8 @@ impl Console {
                 return Err(io::Error::other(format!("can't run {}: {error}", exe.display())));
             }
             CloseHandle(info.hThread);
-            Ok((self.pty, self.input, self.output, Exit(OwnedHandle::from_raw_handle(info.hProcess))))
+            self.0.started();
+            Ok((Pty(self.0), Exit(OwnedHandle::from_raw_handle(info.hProcess))))
         }
     }
 }

@@ -21,7 +21,7 @@ pub use assets::ROOT;
 pub(crate) use ipc::cmd;
 pub use ipc::{emit, Args, Bytes, Command, Commands, Out, Reply, Run, Stream};
 #[cfg(windows)]
-pub use win::hwnd;
+pub use win::{hwnd, post};
 
 pub struct Config {
     pub title: &'static str,

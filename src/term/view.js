@@ -418,7 +418,7 @@ export class Term {
       clearTimeout(this.holdTimer)
       this.holdTimer = 0
     }
-    // ConPTY sends each frame between hiding the cursor and showing it again, in chunks a millisecond apart, so
+    // Claude sends each frame between hiding the cursor and showing it again, and a frame can arrive in pieces, so
     // a frame that would show the cursor gone waits for it to come back: one frame shows a key's whole echo.
     if (this.vt.cursorHidden && this.cursorShown) {
       this.burstTimer ||= setTimeout(() => {
