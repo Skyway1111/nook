@@ -786,6 +786,12 @@ const RANK = { none: 0, x10: 1, vt200: 2, drag: 3, any: 4 }
  */
 export class Vt {
   constructor(cols, rows, h = {}, { scrollback = 10000, pull = false } = {}) {
+    this.changed = true // set by every write, resize and scroll; the view clears it
+    this.cursorHidden = false
+    this.cursorInit = false // whether the cursor shows yet: after a focus, a key or a buffer switch
+    this.blink = false // DECSET 12, an option a reset keeps
+    this.plen = this.sublen = this.collect = 0
+    this.rejectDigits = this.rejectSub = this.digitIsSub = false
     this.cols = Math.max(cols, 2)
     this.rows = Math.max(rows, 1)
     this.h = h
@@ -829,9 +835,6 @@ export class Vt {
     this.wrap = true
     this.cursorStyle = undefined
     this.cursorBlink = undefined
-    this.blink ??= false // DECSET 12, an option a reset keeps
-    this.cursorHidden ??= false
-    this.cursorInit ??= false
     this.mouse = 'none' // 'none' | 'x10' | 'vt200' | 'drag' | 'any'
     this.mouseEncoding = 'default' // 'default' | 'sgr' | 'sgr-pixels'
     this.charsets = [null, null, null, null]
