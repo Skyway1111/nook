@@ -149,7 +149,6 @@ extern "C" {
     pub(crate) fn g_free(p: Ptr);
     fn g_strfreev(v: *mut *mut c_char);
     fn g_filename_from_uri(uri: *const c_char, host: *mut *mut c_char, error: *mut Ptr) -> *mut c_char;
-    pub(crate) fn g_filename_to_uri(path: *const c_char, host: *const c_char, error: *mut Ptr) -> *mut c_char;
     fn g_bytes_new_with_free_func(data: *const u8, size: usize, free: Notify, user: Ptr) -> Ptr;
     fn g_bytes_unref(b: Ptr);
     fn g_variant_new(format: *const c_char, ...) -> Ptr;

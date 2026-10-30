@@ -18,6 +18,7 @@ mod pdf;
 mod priority;
 mod pty;
 mod replace;
+mod sandbox;
 mod search;
 mod settings;
 #[cfg_attr(not(windows), path = "shell_unix.rs")]
@@ -419,6 +420,10 @@ fn bench(event: String, ms: Option<f64>) {
 }
 
 fn main() {
+    // Started by nook as its sandboxed PDF worker: nothing else of nook runs.
+    if std::env::var_os(sandbox::WORKER).is_some() {
+        return sandbox::serve(pdf::answer);
+    }
     STARTED.get_or_init(Instant::now);
     for key in INHERITED_SESSION_MARKERS {
         std::env::remove_var(key); // before any thread exists

@@ -1,17 +1,45 @@
-//! A PDF's first page as a PNG, for its picture in Claude's transcript. The OS draws it: Windows.Data.Pdf on a
-//! software Direct3D device, encoded by WIC, or on Linux poppler-glib, loaded with `dlopen`, and cairo, so a
-//! system without poppler draws nothing. Neither runs the file's scripts. Both draw its annotations and form
-//! fields, as a viewer does.
-use crate::host::Bytes;
+//! A PDF's first page as a PNG, for its picture in Claude's transcript. The OS draws it, in a worker sandboxed from
+//! the user's files and the network (sandbox.rs), which gets only the file's bytes: Windows.Data.Pdf on a software
+//! Direct3D device, encoded by WIC, or on Linux poppler-glib, loaded with `dlopen`, and cairo, so a system without
+//! poppler draws nothing. Neither runs the file's scripts. Both draw its annotations and form fields, as a viewer does.
+use crate::{host::Bytes, sandbox};
+use std::io::Read;
+
+/// The largest PDF nook reads into memory for its first page.
+const MAX_PDF: u64 = 256 << 20;
+
 /// The first page of the PDF at `path`, fit inside `width` by `height` pixels and 4096 on its longer side, on
 /// white, as PNG bytes.
 pub fn pdf_page(path: String, width: u32, height: u32) -> Result<Bytes, String> {
-    os::first_page(&path, |w, h| {
+    let fail = |e: &dyn std::fmt::Display| format!("can't draw {path}: {e}");
+    let file = std::fs::File::open(&path).map_err(|e| fail(&e))?;
+    let len = file.metadata().map_err(|e| fail(&e))?.len();
+    if len > MAX_PDF {
+        return Err(fail(&"it's over 256 MiB"));
+    }
+    let mut pdf = Vec::with_capacity(len as usize);
+    file.take(MAX_PDF).read_to_end(&mut pdf).map_err(|e| fail(&e))?;
+    let reply = sandbox::ask(&[&width.to_le_bytes(), &height.to_le_bytes(), &pdf]).map_err(|e| fail(&e))?;
+    match reply.split_first() {
+        Some((0, png)) => Ok(Bytes(png.to_vec())),
+        Some((_, why)) => Err(fail(&String::from_utf8_lossy(why))),
+        None => Err(fail(&"the sandbox said nothing")),
+    }
+}
+
+/// The worker's answer to `pdf_page`'s message: 0 and the PNG, or 1 and why not.
+pub fn answer(message: Vec<u8>) -> Vec<u8> {
+    let Some((size, pdf)) = message.split_first_chunk::<8>() else { return b"\x01a short request".to_vec() };
+    let [width, height] = [0, 4].map(|i| u32::from_le_bytes(size[i..i + 4].try_into().unwrap()));
+    let fit = |w: f64, h: f64| {
         let s = (width as f64 / w).min(height as f64 / h).min(4096. / w.max(h));
         let px = |v: f64| (v * s).round().max(1.) as u32;
         (px(w), px(h))
-    })
-    .map(Bytes)
+    };
+    match os::first_page(pdf, fit) {
+        Ok(png) => [&[0][..], &png].concat(),
+        Err(e) => [&[1][..], e.as_bytes()].concat(),
+    }
 }
 
 #[cfg(windows)]
@@ -106,29 +134,18 @@ mod os {
         _depth_pitch: u32,
     }
 
-    /// The first page of the PDF at `path` as PNG bytes, at the pixel size `fit` picks for the page's size.
-    pub fn first_page(path: &str, fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, String> {
-        render(path, fit).map_err(|hr| format!("Windows.Data.Pdf can't draw {path}: {hr:#010x}"))
+    /// The first page of the PDF in `pdf` as PNG bytes, at the pixel size `fit` picks for the page's size.
+    pub fn first_page(pdf: &[u8], fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, String> {
+        render(pdf, fit).map_err(|hr| format!("Windows.Data.Pdf: {hr:#010x}"))
     }
 
-    /// `path` in full behind `\\?\`, so a path past MAX_PATH opens too, as std's own file calls do.
-    fn verbatim(path: &str) -> Option<Vec<u16>> {
-        let full = std::path::absolute(path).ok()?.into_os_string().into_string().ok()?;
-        let full = match full.strip_prefix(r"\\") {
-            None => format!(r"\\?\{full}"),
-            Some(share) if !share.starts_with(['?', '.']) => format!(r"\\?\UNC\{share}"),
-            _ => full,
-        };
-        Some(wide(full))
-    }
-
-    fn render(path: &str, fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, i32> {
+    fn render(pdf: &[u8], fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, i32> {
         let &(create_device, create_renderer) = FNS.get_or_init(load).as_ref().ok_or(0x8007007e_u32 as i32)?; // ERROR_MOD_NOT_FOUND
-        let path = verbatim(path).ok_or(0x800700a1_u32 as i32)?; // ERROR_BAD_PATHNAME
+        let len = u32::try_from(pdf.len()).map_err(|_| 0x80070057_u32 as i32)?; // E_INVALIDARG
         let class = wide("Windows.Data.Pdf.PdfDocument");
         unsafe {
-            let mut file = null_mut();
-            ok(CreateRandomAccessStreamOnFile(path.as_ptr(), 0, &RANDOM_ACCESS_STREAM, &mut file))?; // read, sharing all
+            let (memory, mut file) = (Com::new(SHCreateMemStream(pdf.as_ptr(), len))?, null_mut());
+            ok(CreateRandomAccessStreamOverStream(memory.0, 0, &RANDOM_ACCESS_STREAM, &mut file))?; // BSOS_DEFAULT
             let file = Com::new(file)?;
             // A reference string borrows `class`, so nothing frees it.
             let (mut header, mut name, mut statics) = ([0; 3], null_mut(), null_mut());
@@ -205,11 +222,11 @@ mod os {
 
 #[cfg(not(windows))]
 mod os {
-    use crate::host::gtk::{g_filename_to_uri, g_free, g_object_unref};
+    use crate::host::gtk::g_object_unref;
     use std::{
-        ffi::{c_char, c_int, c_uint, c_void, CStr, CString},
+        ffi::{c_char, c_int, c_uint, c_void, CStr},
         ptr::{null, null_mut},
-        sync::{Mutex, OnceLock},
+        sync::OnceLock,
     };
 
     type P = *mut c_void;
@@ -234,33 +251,33 @@ mod os {
 
     /// What this uses of poppler-glib.
     struct Fns {
-        new_from_file: unsafe extern "C" fn(*const c_char, *const c_char, P) -> P,
+        new_from_data: unsafe extern "C" fn(*const c_char, c_int, *const c_char, P) -> P,
         get_page: unsafe extern "C" fn(P, c_int) -> P,
         get_size: unsafe extern "C" fn(P, *mut f64, *mut f64),
         page_render: unsafe extern "C" fn(P, P),
     }
 
-    /// Locked for a whole render: every poppler document draws its fonts through one FreeType library, which
-    /// takes one thread at a time.
-    static FNS: OnceLock<Option<Mutex<Fns>>> = OnceLock::new();
+    /// The worker draws one page at a time, as poppler needs: every document draws its fonts through one FreeType
+    /// library, which takes one thread at a time.
+    static FNS: OnceLock<Option<Fns>> = OnceLock::new();
 
     unsafe fn sym<F>(lib: P, name: &CStr) -> Option<F> {
         let f = unsafe { dlsym(lib, name.as_ptr()) };
         (!f.is_null()).then(|| unsafe { std::mem::transmute_copy::<P, F>(&f) })
     }
 
-    fn load() -> Option<Mutex<Fns>> {
+    fn load() -> Option<Fns> {
         unsafe {
             let lib = dlopen(c"libpoppler-glib.so.8".as_ptr(), 2); // RTLD_NOW
             if lib.is_null() {
                 return None;
             }
-            Some(Mutex::new(Fns {
-                new_from_file: sym(lib, c"poppler_document_new_from_file")?,
+            Some(Fns {
+                new_from_data: sym(lib, c"poppler_document_new_from_data")?,
                 get_page: sym(lib, c"poppler_document_get_page")?,
                 get_size: sym(lib, c"poppler_page_get_size")?,
                 page_render: sym(lib, c"poppler_page_render")?,
-            }))
+            })
         }
     }
 
@@ -269,18 +286,14 @@ mod os {
         0 // CAIRO_STATUS_SUCCESS
     }
 
-    /// The first page of the PDF at `path` as PNG bytes, at the pixel size `fit` picks for the page's size.
-    pub fn first_page(path: &str, fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, String> {
-        let f = FNS.get_or_init(load).as_ref().ok_or("poppler-glib isn't installed")?.lock().unwrap_or_else(|e| e.into_inner());
-        let path = CString::new(path).map_err(|e| e.to_string())?;
+    /// The first page of the PDF in `pdf` as PNG bytes, at the pixel size `fit` picks for the page's size.
+    pub fn first_page(pdf: &[u8], fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, String> {
+        let f = FNS.get_or_init(load).as_ref().ok_or("poppler-glib isn't installed")?;
+        let len = c_int::try_from(pdf.len()).map_err(|e| e.to_string())?;
         let mut png = Vec::new();
         unsafe {
-            let uri = g_filename_to_uri(path.as_ptr(), null(), null_mut());
-            if uri.is_null() {
-                return Err("not an absolute path".into());
-            }
-            let doc = (f.new_from_file)(uri, null(), null_mut());
-            g_free(uri.cast());
+            // poppler reads `pdf` in place, so it outlives the document.
+            let doc = (f.new_from_data)(pdf.as_ptr().cast(), len, null(), null_mut());
             if doc.is_null() {
                 return Err("poppler can't open the PDF".into());
             }
