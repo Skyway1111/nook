@@ -5,7 +5,7 @@ import { showPreview, hidePreview, letter } from './ui.js'
 import { startComposer } from './composer.js'
 import { startPictures } from './pictures.js'
 import { imageStart, FOUND, NONE, clipboardText } from './sequences.js'
-import { startLinks } from './links.js'
+import { startLinks, cells } from './links.js'
 import { startTurns } from './turns.js'
 import { fileUrl } from './linkify.js'
 import { WINDOWS } from './paths.js'
@@ -251,15 +251,18 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   }, true)
 
   // [Image #N] → hover to preview, click to open. Images live where Claude Code saved them.
+  const cell = term.vt.buffer.getNullCell()
   term.registerLinkProvider({
     provideLinks(y, callback) {
-      const text = term.vt.buffer.getLine(y - 1)?.translateToString(true) ?? ''
+      const line = term.vt.buffer.getLine(y - 1)
+      if (!line?.translateToString(true).includes('[Image #')) return callback([])
+      const { text, xs } = cells(line, term.cols, cell)
       callback([...text.matchAll(/\[Image #(\d+)\]/g)].map(m => {
         const image = () => invoke('session_image', { id, n: Number(m[1]) })
         let hovering = false
         return {
           text: m[0],
-          range: { start: { x: m.index + 1, y }, end: { x: m.index + m[0].length, y } },
+          range: { start: { x: xs[m.index] + 1, y }, end: { x: xs[m.index + m[0].length - 1] + 1, y } },
           hover: async e => {
             hovering = true
             const p = await image()
