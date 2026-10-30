@@ -81,7 +81,7 @@ fn read_range(file: &mut File, from: u64, len: u64) -> String {
     if file.seek(SeekFrom::Start(from)).is_ok() {
         let _ = file.take(len).read_to_end(&mut buf);
     }
-    String::from_utf8_lossy(&buf).into_owned()
+    String::from_utf8(buf).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 fn saved(path: &Path, modified: u64) -> Option<Saved> {

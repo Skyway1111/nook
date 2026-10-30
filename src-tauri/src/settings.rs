@@ -1,10 +1,9 @@
-//! What settings.json holds, its defaults, and its JSON: read over the defaults as serde read it, errors
-//! included, and written in field order.
+//! What settings.json holds, its defaults, and its JSON: read over the defaults, and written in field order.
 use crate::json::{self, obj, Error, Out, Reader, W};
 use std::path::Path;
 
 /// Declares `Settings` with each field's key in settings.json, where the fields keep this order, and the
-/// setter that reads one key.
+/// reader that sets each field.
 macro_rules! settings {
     ($($(#[$doc:meta])* $field:ident $key:literal: $t:ty,)*) => {
         pub struct Settings {
@@ -18,18 +17,12 @@ macro_rules! settings {
         }
 
         impl Settings {
-            /// Reads the value ahead into the field settings.json calls `key`, and names it. A key it doesn't
-            /// hold reads nothing.
-            fn set(&mut self, p: &mut Reader, key: &str) -> Result<Option<&'static str>, Error> {
-                Ok(Some(match key {
-                    $($key => {
-                        self.$field = Take::take(p)?;
-                        $key
-                    })*
-                    _ => return Ok(None),
-                }))
-            }
+            const KEYS: &[&str] = &[$($key),*];
+            /// For each key, in `KEYS`' order, what reads the value ahead into its field.
+            const SET: &[fn(&mut Settings, &mut Reader) -> Result<(), Error>] = &[$(|s, p| Take::take(p).map(|v| s.$field = v)),*];
         }
+
+        const _: () = assert!(Settings::KEYS.len() <= 64, "`fields` keeps one bit per key");
     };
 }
 
@@ -130,14 +123,14 @@ impl Settings {
     pub fn parse(text: &str) -> Result<Settings, String> {
         let mut s = Settings::default();
         let mut p = Reader::new(text);
-        fields(&mut p, "struct Settings", |p, k| s.set(p, k)).and_then(|()| p.end()).map_err(|e| e.to_string())?;
+        fields(&mut p, "struct Settings", Self::KEYS, |p, i| Self::SET[i](&mut s, p)).and_then(|()| p.end()).map_err(|e| e.to_string())?;
         Ok(s)
     }
 
     /// Sets the keys of `patch`, a JSON object. Fails, saying what but not where, on a value of the wrong type.
     pub fn merge(&mut self, patch: &str) -> Result<(), String> {
         let mut p = Reader::new(patch);
-        fields(&mut p, "struct Settings", |p, k| self.set(p, k)).and_then(|()| p.end()).map_err(|e| e.what().into())
+        fields(&mut p, "struct Settings", Self::KEYS, |p, i| Self::SET[i](self, p)).and_then(|()| p.end()).map_err(|e| e.what().into())
     }
 }
 
@@ -153,26 +146,21 @@ impl W for Prompt {
     }
 }
 
-/// Reads the object ahead as `what`, handing `set` each key with the reader at its value: `set` reads it and
-/// names the field it set, or reads nothing for a key it doesn't hold. As serde does, a field twice is refused.
-fn fields<'a>(p: &mut Reader<'a>, what: &str, mut set: impl FnMut(&mut Reader<'a>, &str) -> Result<Option<&'static str>, Error>) -> Result<(), Error> {
-    let (mut seen, mut n) = ([""; 16], 0);
-    p.map(what, |p, key| {
-        if seen[..n].iter().any(|f| *f == key) {
-            return Err(p.at_key(format!("duplicate field `{key}`")));
+/// Reads the object ahead as `what`, handing `set` the index in `keys` of each key it holds, with the reader at
+/// its value. Any other key's value is skipped, and a key twice is refused, placed on its colon.
+fn fields<'a>(p: &mut Reader<'a>, what: &str, keys: &[&str], mut set: impl FnMut(&mut Reader<'a>, usize) -> Result<(), Error>) -> Result<(), Error> {
+    let mut seen = 0u64;
+    p.map(what, |p, key| match keys.iter().position(|k| *k == key) {
+        Some(i) if seen & 1 << i != 0 => Err(p.at_key(format!("duplicate field `{key}`"))),
+        Some(i) => {
+            seen |= 1 << i;
+            set(p, i)
         }
-        match set(p, &key)? {
-            Some(field) => {
-                seen[n] = field;
-                n += 1;
-            }
-            None => p.skip()?,
-        }
-        Ok(())
+        None => p.skip(),
     })
 }
 
-/// A value settings.json holds, read as serde reads it.
+/// A value settings.json holds.
 trait Take: Sized {
     fn take(p: &mut Reader) -> Result<Self, Error>;
 }
@@ -209,49 +197,33 @@ impl<T: Take> Take for Vec<T> {
     }
 }
 
-/// Reads the value ahead into `slot`, the field `name`.
-fn put<T: Take>(slot: &mut Option<T>, p: &mut Reader, name: &'static str) -> Result<&'static str, Error> {
-    *slot = Some(T::take(p)?);
-    Ok(name)
-}
-
-/// serde's error for a struct's `field` that wasn't there, placed past the struct.
-fn missing(p: &Reader, field: &str) -> Error {
-    p.here(format!("missing field `{field}`"))
+/// `field` of `value`, or the error for its absence, placed past the object.
+fn needs<T>(p: &Reader, value: Option<T>, field: &str) -> Result<T, Error> {
+    value.ok_or_else(|| p.here(format!("missing field `{field}`")))
 }
 
 impl Take for Prompt {
     fn take(p: &mut Reader) -> Result<Self, Error> {
-        let (mut name, mut text) = (None, None);
-        fields(p, "struct Prompt", |p, k| {
-            Ok(Some(match k {
-                "name" => put(&mut name, p, "name")?,
-                "text" => put(&mut text, p, "text")?,
-                _ => return Ok(None),
-            }))
-        })?;
-        Ok(Prompt { name: name.ok_or_else(|| missing(p, "name"))?, text: text.ok_or_else(|| missing(p, "text"))? })
+        let mut v = [None, None];
+        fields(p, "struct Prompt", &["name", "text"], |p, i| String::take(p).map(|s| v[i] = Some(s)))?;
+        let [name, text] = v;
+        Ok(Prompt { name: needs(p, name, "name")?, text: needs(p, text, "text")? })
     }
 }
 
 impl Take for OpenSession {
     fn take(p: &mut Reader) -> Result<Self, Error> {
-        let (mut dir, mut id, mut prompt, mut active) = (None, None, None, None);
-        fields(p, "struct OpenSession", |p, k| {
-            Ok(Some(match k {
-                "dir" => put(&mut dir, p, "dir")?,
-                "id" => put(&mut id, p, "id")?,
-                "prompt" => put(&mut prompt, p, "prompt")?,
-                "active" => put(&mut active, p, "active")?,
-                _ => return Ok(None),
-            }))
+        let (mut dir, mut id, mut prompt, mut active) = (None, None, String::new(), false);
+        fields(p, "struct OpenSession", &["dir", "id", "prompt", "active"], |p, i| {
+            match i {
+                0 => dir = Some(String::take(p)?),
+                1 => id = Some(String::take(p)?),
+                2 => prompt = String::take(p)?,
+                _ => active = bool::take(p)?,
+            }
+            Ok(())
         })?;
-        Ok(OpenSession {
-            dir: dir.ok_or_else(|| missing(p, "dir"))?,
-            id: id.ok_or_else(|| missing(p, "id"))?,
-            prompt: prompt.unwrap_or_default(),
-            active: active.unwrap_or_default(),
-        })
+        Ok(OpenSession { dir: needs(p, dir, "dir")?, id: needs(p, id, "id")?, prompt, active })
     }
 }
 

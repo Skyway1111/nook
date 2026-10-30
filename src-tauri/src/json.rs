@@ -1,8 +1,11 @@
-//! JSON as nook reads and writes it. `parse` builds a tree that borrows its text: a string is copied only when
-//! it holds an escape, and a number stays as its text. A `Reader` reads typed values straight off the text
-//! instead, as serde does. What either accepts, and each error's words, line, and column, are serde_json's,
-//! and `to_string` and `pretty` write serde_json's bytes.
-use std::{borrow::Cow, fmt, path::PathBuf};
+//! JSON as nook reads and writes it (RFC 8259, no BOM). `parse` builds a tree that borrows its text: a string
+//! is copied only when it holds an escape, and a number stays as its text. A `Reader` reads typed values
+//! straight off the text instead. `to_string` writes compact JSON, `pretty` indented.
+use std::{
+    borrow::Cow,
+    fmt::{self, Write},
+    path::PathBuf,
+};
 
 /// A JSON value. An object keeps its keys in the text's order, repeats included.
 #[derive(Debug, PartialEq)]
@@ -20,7 +23,7 @@ static NULL: J = J::Null;
 impl<'a> std::ops::Index<&str> for J<'a> {
     type Output = J<'a>;
 
-    /// The value under `key`, the last one should it repeat, as serde_json keeps it; Null when there's none.
+    /// The value under `key`, the last one should it repeat; Null when there's none.
     fn index(&self, key: &str) -> &J<'a> {
         match self {
             J::Obj(m) => m.iter().rev().find(|(k, _)| k == key).map_or(&NULL, |(_, v)| v),
@@ -55,7 +58,7 @@ impl PartialEq<bool> for J<'_> {
     }
 }
 
-/// Why a text isn't the JSON asked for, and where, in serde_json's words.
+/// Why a text isn't the JSON asked for, and where.
 #[derive(Debug)]
 pub struct Error {
     what: Cow<'static, str>,
@@ -107,8 +110,8 @@ const EOF_OBJECT: &str = "EOF while parsing an object";
 const EOF_STRING: &str = "EOF while parsing a string";
 const EOF_VALUE: &str = "EOF while parsing a value";
 
-/// Reads JSON a value at a time. Each error sits where serde_json puts it: past the byte it consumed, or on
-/// the byte it peeked at, and a value of the wrong type is refused as serde's typed reads refuse it.
+/// Reads JSON a value at a time. An error points at the last byte read, or at the byte ahead when it was only
+/// peeked at, and a value of the wrong type is refused past its end.
 pub struct Reader<'a> {
     text: &'a str,
     s: &'a [u8],
@@ -131,12 +134,12 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// `what`, placed where the reader is: past a value it just read, as serde places a wrong one.
+    /// `what`, placed where the reader is: past the value it just read.
     pub fn here(&self, what: impl Into<Cow<'static, str>>) -> Error {
         self.fail(what, self.i)
     }
 
-    /// `what`, placed on the colon of the key whose value is next, as serde places a repeated key.
+    /// `what`, placed on the colon of the key whose value is next.
     pub fn at_key(&self, what: impl Into<Cow<'static, str>>) -> Error {
         self.fail(what, self.i - 1)
     }
@@ -169,17 +172,13 @@ impl<'a> Reader<'a> {
         match self.ws() {
             Some(b'-' | b'0'..=b'9') => {
                 let n = self.number()?;
-                n.parse().map_err(|_| {
-                    let found = found_number(n);
-                    let kind = if found.starts_with("integer") { "value" } else { "type" };
-                    self.here(format!("invalid {kind}: {found}, expected u32"))
-                })
+                n.parse().map_err(|_| self.here(format!("invalid value: {n}, expected u32")))
             }
             next => Err(self.wrong(next, "u32")),
         }
     }
 
-    /// Reads a `null` if one is next, as serde reads an Option.
+    /// Reads a `null` if one is next, and says whether it did.
     pub fn null(&mut self) -> Result<bool, Error> {
         match self.ws() {
             Some(b'n') => self.word(b"null", true),
@@ -203,7 +202,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// The value ahead, `next`, isn't `expected`: serde's words for what it is, placed past it if it's a scalar.
+    /// The value ahead, `next`, isn't `expected`: says what it is, placed past it if it's a scalar.
     #[cold]
     fn wrong(&mut self, next: Option<u8>, expected: &str) -> Error {
         match self.found(next) {
@@ -218,7 +217,7 @@ impl<'a> Reader<'a> {
             Some(b'n') => self.word(b"null", "null".into())?,
             Some(b't') => self.word(b"true", "boolean `true`".into())?,
             Some(b'f') => self.word(b"false", "boolean `false`".into())?,
-            Some(b'-' | b'0'..=b'9') => found_number(self.number()?),
+            Some(b'-' | b'0'..=b'9') => format!("number {}", self.number()?),
             Some(b'"') => {
                 self.i += 1;
                 format!("string {:?}", self.string::<true>()?)
@@ -234,8 +233,7 @@ impl<'a> Reader<'a> {
         self.fail(what, (self.i + 1).min(self.s.len()))
     }
 
-    /// `what` at byte `i`, whose line and column count as serde_json's: the column is the bytes from the line's
-    /// start.
+    /// `what` at byte `i`. Lines count from 1, and the column is the bytes from the line's start.
     #[cold]
     fn fail(&self, what: impl Into<Cow<'static, str>>, i: usize) -> Error {
         let start = self.s[..i].iter().rposition(|&b| b == b'\n').map_or(0, |n| n + 1);
@@ -297,7 +295,7 @@ impl<'a> Reader<'a> {
         })
     }
 
-    /// One more level of nesting, past its bracket: the 128th is refused, as serde_json refuses it.
+    /// One more level of nesting, past its bracket: the 128th is refused, so the stack can't overflow.
     fn enter(&mut self) -> Result<(), Error> {
         self.depth += 1;
         if self.depth == 128 {
@@ -394,7 +392,7 @@ impl<'a> Reader<'a> {
         self.i - from
     }
 
-    /// A number's text. One too big for an f64 is refused, as serde_json refuses it.
+    /// A number's text.
     fn number(&mut self) -> Result<&'a str, Error> {
         let start = self.i;
         if self.s[start] == b'-' {
@@ -410,18 +408,14 @@ impl<'a> Reader<'a> {
             }
             _ => return Err(self.here("invalid number")),
         }
-        let whole = self.i - start;
         if self.peek() == b'.' {
             self.i += 1;
             if self.digits() == 0 {
                 return Err(self.peek_err(if self.i < self.s.len() { "invalid number" } else { EOF_VALUE }));
             }
         }
-        // Past 1e300 or so, only the f64 itself can say whether it overflows.
-        let mut huge = whole > 300;
         if matches!(self.peek(), b'e' | b'E') {
             self.i += 1;
-            let up = self.peek() != b'-';
             if matches!(self.peek(), b'+' | b'-') {
                 self.i += 1;
             }
@@ -430,15 +424,9 @@ impl<'a> Reader<'a> {
             if !c.is_ascii_digit() {
                 return Err(self.here("invalid number"));
             }
-            let from = self.i - 1;
-            let n = self.digits() + 1;
-            huge |= up && (n > 3 || whole + self.text[from..self.i].parse::<usize>().unwrap_or(0) > 300);
+            self.digits();
         }
-        let text = &self.text[start..self.i];
-        if huge && text.parse::<f64>().map_or(true, f64::is_infinite) {
-            return Err(self.here("number out of range"));
-        }
-        Ok(text)
+        Ok(&self.text[start..self.i])
     }
 
     /// Moves to the next `"`, `\`, or control character in a string, eight bytes at a time.
@@ -557,28 +545,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// What serde_json calls a number in an error: an integer, or the f64 it reads, plain from 1e-5 up to 1e16
-/// and with an exponent past either.
-fn found_number(n: &str) -> String {
-    match (n.parse::<u64>(), n.parse::<i64>()) {
-        (Ok(n), _) => format!("integer `{n}`"),
-        (_, Ok(n)) if n < 0 => format!("integer `{n}`"),
-        _ => {
-            let f: f64 = n.parse().unwrap_or_default();
-            let e = format!("{f:e}");
-            let (digits, exp) = e.split_once('e').unwrap_or_default();
-            match exp.parse().unwrap_or_default() {
-                -5..=15 => {
-                    let plain = f.to_string();
-                    format!("floating point `{plain}{}`", if plain.contains('.') { "" } else { ".0" })
-                }
-                exp => format!("floating point `{digits}e{exp:+}`"),
-            }
-        }
-    }
-}
-
-/// JSON being written: compact, or pretty as serde_json's `to_string_pretty` lays it out.
+/// JSON being written: compact, or pretty, two spaces a level and `[]` or `{}` when empty.
 pub struct Out {
     s: String,
     pretty: bool,
@@ -696,8 +663,7 @@ static ESCAPE: [u8; 256] = {
 };
 
 impl W for str {
-    /// Escapes what serde_json escapes: `"`, `\`, and control characters, `\u00xx` in lowercase hex
-    /// when they have no short form.
+    /// Escapes `"`, `\`, and control characters, `\u00xx` in lowercase hex when they have no short form.
     fn w(&self, o: &mut Out) {
         const HEX: &[u8; 16] = b"0123456789abcdef";
         let s = &mut o.s;
@@ -742,16 +708,7 @@ macro_rules! integers {
     ($($t:ident)*) => {$(
         impl W for $t {
             fn w(&self, o: &mut Out) {
-                let (mut n, mut digits, mut at) = (*self, [0; 40], 40);
-                loop {
-                    at -= 1;
-                    digits[at] = b'0' + (n % 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                o.s.extend(digits[at..].iter().map(|&d| d as char));
+                let _ = write!(o.s, "{self}");
             }
         }
     )*};

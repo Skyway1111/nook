@@ -200,7 +200,8 @@ pub fn pty_states(ids: Vec<u64>) -> Vec<Option<String>> {
 #[tauri::command(async)]
 pub fn session_image(id: u64, n: u32) -> Option<PathBuf> {
     let state = pty_state(id)?;
-    let path = PathBuf::from(crate::json::parse(&state).ok()?["images"].as_str()?).join(format!("{n}.png"));
+    let [images] = crate::json::fields(&state, ["images"]).ok()?;
+    let path = PathBuf::from(images.as_str()?).join(format!("{n}.png"));
     path.is_file().then_some(path)
 }
 
