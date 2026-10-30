@@ -385,8 +385,9 @@ const expandTabs = (s, col) => {
   return out
 }
 
+/** The end of the spaces at `i`. It never reads past the end, which would drop V8's fast path for it. */
 const spaces = (s, i) => {
-  while (s.charCodeAt(i) === 32) i++
+  while (i < s.length && s.charCodeAt(i) === 32) i++
   return i
 }
 /** Whether `s` is only whitespace, as `trim` reads it. */
