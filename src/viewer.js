@@ -2,7 +2,7 @@
 // with no script open rendered and toggle to their source. previews.js draws all but Markdown, and loads when one first opens.
 import { invoke, convertFileSrc } from './host.js'
 import { IMAGE, basename } from './files.js'
-import { el, letter, openMenu } from './ui.js'
+import { el, flag, letter, openMenu } from './ui.js'
 import { path as paths } from './paths.js'
 
 const SCHEME = /^[a-z][\w+.-]*:/i
@@ -48,11 +48,11 @@ async function markdown(text, path) {
 const button = (html, onclick) => el('button', { innerHTML: html, onclick })
 
 // Blame is on or off for every file tab at once, and stays as it was left. Alt+B, or the gutter's menu, turns it.
-const BLAME_KEY = 'nook.blame'
-let blameOn = (() => { try { return localStorage.getItem(BLAME_KEY) === '1' } catch { return false } })()
+const [blameKept, keepBlame] = flag('nook.blame')
+let blameOn = blameKept()
 function setBlameOn(on) {
   blameOn = on
-  try { localStorage.setItem(BLAME_KEY, on ? '1' : '0') } catch {}
+  keepBlame(on)
   dispatchEvent(new Event('nook-blame'))
 }
 

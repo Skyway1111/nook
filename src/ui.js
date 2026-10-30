@@ -4,6 +4,11 @@ import { path as paths } from './paths.js'
 
 export const $ = id => document.getElementById(id)
 export const el = (tag, props) => Object.assign(document.createElement(tag), props)
+/** A switch kept in localStorage under `key`: [get, set], where get gives `fallback` until set has run. */
+export const flag = (key, fallback = false) => [
+  () => { try { const v = localStorage.getItem(key); return v === null ? fallback : v === '1' } catch { return fallback } },
+  on => { try { localStorage.setItem(key, on ? '1' : '0') } catch {} },
+]
 /** Adds the stylesheet at `url` to the page's head, after the others; resolves once it applies. */
 export const sheet = url => new Promise(done => document.head.append(el('link', { rel: 'stylesheet', href: url, onload: done, onerror: done })))
 /** The letter a key names as a shortcut, lowercased: the a-z the layout types, or where it types another script's

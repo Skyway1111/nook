@@ -2,7 +2,7 @@
 // end. Only the rows on screen exist. The commit picked shows its message and changes beside the list, drawn
 // by diff.js; its menu checks it out, branches from it, cherry-picks or reverts it.
 import { invoke } from './host.js'
-import { el, openMenu, openPicker, sheet } from './ui.js'
+import { el, flag, openMenu, openPicker, sheet } from './ui.js'
 import { ICON } from './files.js'
 import { LOG_FORMAT, parseLog, layout } from './graph.js'
 import { startDiff } from './diff.js'
@@ -17,9 +17,7 @@ const ROW = 28 // px per commit
 const LANE = 14 // px per lane of the graph
 const LANES = 14 // lanes drawn; a repository with more branches than this clips the rest
 const COLORS = ['blue', 'magenta', 'green', 'yellow', 'cyan', 'red'].map(c => `var(--ansi-${c})`)
-const ALL_KEY = 'nook.history.all'
-const remembered = key => { try { return localStorage.getItem(key) !== '0' } catch { return true } }
-const remember = (key, on) => { try { localStorage.setItem(key, on ? '1' : '0') } catch {} }
+const [allKept, keepAll] = flag('nook.history.all', true)
 
 const SVG = 'http://www.w3.org/2000/svg'
 const svg = (tag, attrs) => {
@@ -61,7 +59,7 @@ function chips(refs) {
  */
 export function startHistory(view, { root, rel, openFile, run }) {
   view.classList.add('history')
-  let all = remembered(ALL_KEY)
+  let all = allKept()
   let query = ''
   let commits = []
   let lanes // the graph's state below the last page laid out
@@ -96,7 +94,7 @@ export function startHistory(view, { root, rel, openFile, run }) {
 
   function paintScope() {
     scope.replaceChildren(...[['This branch', false], ['All branches', true]].map(([label, on]) =>
-      el('button', { textContent: label, className: all === on ? 'on' : '', onclick: () => { all = on; remember(ALL_KEY, on); paintScope(); reload() } })))
+      el('button', { textContent: label, className: all === on ? 'on' : '', onclick: () => { all = on; keepAll(on); paintScope(); reload() } })))
   }
   paintScope()
 
