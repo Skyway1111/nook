@@ -298,7 +298,7 @@ function layeredSize({ lr, nodes, edges, inside = new Map(), members = new Map()
   // the edges inside it add no ranks.
   const expand = id => (members.has(id) ? [...members.get(id)].filter(n => !members.has(n)) : [id])
   const out = new Map([...nodes.keys()].map(id => [id, []]))
-  for (const [a, b, len] of edges) for (const x of expand(a)) for (const y of expand(b)) if (x !== y && out.has(x) && out.has(y) && !turned.some(t => t.has(x) && t.has(y))) out.get(x).push([y, len])
+  for (const [a, b, len, lab] of edges) for (const x of expand(a)) for (const y of expand(b)) if (x !== y && out.has(x) && out.has(y) && !turned.some(t => t.has(x) && t.has(y))) out.get(x).push([y, len, lab])
   // Ranks: each node past its deepest parent; an edge back up its chain is left out, and widens the drawing.
   const rank = new Map(), state = new Map(), order = []
   let back = 0
@@ -313,6 +313,9 @@ function layeredSize({ lr, nodes, edges, inside = new Map(), members = new Map()
   order.reverse()
   const at = new Map(order.map((id, i) => [id, i]))
   for (const id of order) for (const [b, len] of out.get(id)) if (at.get(b) > at.get(id)) rank.set(b, Math.max(rank.get(b) ?? 0, (rank.get(id) ?? 0) + len))
+  // A rank a labeled edge arrives at sits farther off, past its label.
+  const far = new Set()
+  for (const id of order) for (const [b, , lab] of out.get(id)) if (lab && at.get(b) > at.get(id)) far.add(rank.get(b))
   // Along the ranks: each rank's deepest node. Across: each rank's nodes side by side, a subgraph taking its
   // widest rank's width at every rank it spans.
   const ranks = [], groups = new Map()
@@ -331,8 +334,8 @@ function layeredSize({ lr, nodes, edges, inside = new Map(), members = new Map()
     const wide = Math.max(...box.rows.values()) + 24
     for (let r = box.lo; r <= box.hi; r++) (ranks[r] ??= { along: 0, across: 0 }).across += wide
   }
-  const gap = labeled ? rankGap + 11 + (lr ? labelW / labeled : 24) : rankGap
-  const along = ranks.reduce((s, r) => s + (r?.along ?? 0), 0) + (ranks.length - 1) * gap + deepest * 60
+  const gap = r => (far.has(r) ? rankGap + 11 + (lr ? labelW / labeled : 24) : rankGap)
+  const along = Array.from(ranks, (x, r) => (x?.along ?? 0) + (r ? gap(r) : 0)).reduce((s, n) => s + n, 0) + deepest * 60
   const across = Math.max(0, ...Array.from(ranks, r => r?.across ?? 0)) + back * 24
   return lr ? [along, across] : [across, along]
 }
@@ -380,6 +383,9 @@ function flowSize(lines) {
       from = to
     }
   }
+  // With labels, a flowchart's subgraph borders and long arrows take ranks of their own too: every gap
+  // counts as a label's.
+  if (g.labeled) for (const e of g.edges) e[3] = true
   return layeredSize(g)
 }
 
@@ -422,7 +428,7 @@ function classSize(lines) {
       cls(m[1])
       cls(m[4])
       const [a, b] = [m[1], m[4]].map(id => id.replace(/[~[:].*$/, '').replace(/[`"]/g, ''))
-      g.edges.push(!m[2] && /^(?:\|>|\*|o)$/.test(m[3] ?? '') ? [b, a, 1] : [a, b, 1])
+      g.edges.push([...(!m[2] && /^(?:\|>|\*|o)$/.test(m[3] ?? '') ? [b, a] : [a, b]), 1, !!m[5]])
       if (m[5]) g.labeled++, (g.labelW += m[5].length * CHAR_PX)
     } else if ((m = /^([^\s:]+)\s*:\s*(.+)$/.exec(line))) add(cls(m[1]), m[2])
   }
@@ -449,7 +455,7 @@ function stateSize(lines) {
       continue
     }
     if ((m = /^(.+?)\s*-->\s*(.+?)\s*(?::(.*))?$/.exec(line))) {
-      g.edges.push([node(m[1].replace(/:::.*/, ''), true), node(m[2].replace(/:::.*/, ''), false), 1])
+      g.edges.push([node(m[1].replace(/:::.*/, ''), true), node(m[2].replace(/:::.*/, ''), false), 1, !!m[3]?.trim()])
       if (m[3]?.trim()) g.labeled++, (g.labelW += m[3].trim().length * CHAR_PX)
     } else if ((m = /^state\s+(?:"([^"]*)"\s+as\s+(\S+)|(\S+))\s*(<<\w+>>)?\s*(\{)?/.exec(line))) {
       const id = m[2] ?? m[3]
@@ -501,7 +507,7 @@ function erSize(lines) {
     if ((m = /^(.+?)\s*(?:\|o|\|\||\}o|\}\|)(?:--|\.\.|\.-|-\.)(?:o\||\|\||o\{|\|\{)\s*(.+?)\s*(?::\s*(.*))?$/.exec(line))) {
       entity(m[1])
       entity(m[2])
-      g.edges.push([m[1].replace(/\[.*$/, '').trim(), m[2].replace(/\[.*$/, '').trim(), 1])
+      g.edges.push([m[1].replace(/\[.*$/, '').trim(), m[2].replace(/\[.*$/, '').trim(), 1, !!m[3]])
       if (m[3]) g.labeled++, (g.labelW += m[3].length * CHAR_PX)
     } else if ((m = /^(.+?)\s*\{\s*(\})?$/.exec(line))) {
       const t = entity(m[1])
