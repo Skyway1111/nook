@@ -3,6 +3,7 @@
 //! Direct3D device, encoded by WIC, or on Linux poppler-glib, loaded with `dlopen`, and cairo, so a system without
 //! poppler draws nothing. Neither runs the file's scripts. Both draw its annotations and form fields, as a viewer does.
 use crate::{host::Bytes, sandbox};
+use std::{fs::File, io::Read};
 
 /// The largest PDF nook reads into memory for its first page.
 const MAX_PDF: u64 = 256 << 20;
@@ -11,11 +12,16 @@ const MAX_PDF: u64 = 256 << 20;
 /// white, as PNG bytes.
 pub fn pdf_page(path: String, width: u32, height: u32) -> Result<Bytes, String> {
     let fail = |e: &dyn std::fmt::Display| format!("can't draw {path}: {e}");
-    if std::fs::metadata(&path).map_err(|e| fail(&e))?.len() > MAX_PDF {
+    let mut file = File::open(&path).map_err(|e| fail(&e))?;
+    let len = file.metadata().map_err(|e| fail(&e))?.len();
+    if len > MAX_PDF {
         return Err(fail(&"it's over 256 MiB"));
     }
-    let pdf = std::fs::read(&path).map_err(|e| fail(&e))?;
-    let reply = sandbox::ask(&[&width.to_le_bytes(), &height.to_le_bytes(), &pdf]).map_err(|e| fail(&e))?;
+    let mut message = Vec::with_capacity(8 + len as usize);
+    message.extend_from_slice(&width.to_le_bytes());
+    message.extend_from_slice(&height.to_le_bytes());
+    file.read_to_end(&mut message).map_err(|e| fail(&e))?;
+    let reply = sandbox::ask(message).map_err(|e| fail(&e))?;
     match reply.split_first() {
         Some((0, png)) => Ok(Bytes(png.to_vec())),
         Some((_, why)) => Err(fail(&String::from_utf8_lossy(why))),

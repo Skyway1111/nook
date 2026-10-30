@@ -1,8 +1,9 @@
 //! Workers with as little power as the OS allows, for parsing files nook didn't write (pdf.rs). nook starts its own
 //! program again with `WORKER` set, which no start folder can, and each worker talks to nook over a pipe each way in
 //! messages: a u32 length, then the bytes. A worker takes one request at a time, and up to `MAX` run at once, so a
-//! burst draws in parallel. A worker that dies, or answers nothing within `TIMEOUT`, fails its one request and is
-//! ended; one idle for `IDLE` is ended too, and later requests start new ones.
+//! burst draws in parallel. Only a worker's own thread waits on its pipes, so a worker that dies, or doesn't take a
+//! request and answer it within `TIMEOUT`, fails that one request and is ended. One idle for `IDLE` is ended too, and
+//! later requests start new ones.
 use std::{
     fs::File,
     io::{self, Read, Write},
@@ -23,26 +24,48 @@ const MAX_REPLY: u32 = 64 << 20;
 /// Workers at once: a burst of 50 pages takes 0.47 s with 4, 0.36 s with 8, and 0.56 s drawn in nook itself.
 const MAX: usize = 4;
 
-/// The answer a worker's reader thread read last, and the signal it sends with one.
-type Inbox = Arc<(Mutex<Option<io::Result<Vec<u8>>>>, Condvar)>;
+/// A request and its answer, between `ask` and the worker's thread.
+#[derive(Default)]
+struct Line {
+    /// The message, until the thread takes it.
+    message: Option<Arc<Vec<u8>>>,
+    /// The answer, or why not: `Err(None)` when the message didn't reach the worker.
+    answer: Option<Result<Vec<u8>, Option<io::Error>>>,
+    /// Set when the worker is dropped, which ends its thread.
+    closed: bool,
+}
+
+type Shared = Arc<(Mutex<Line>, Condvar)>;
 
 struct Worker {
-    input: File,
-    inbox: Inbox,
+    line: Shared,
     last: Instant,
     /// Ends the worker when dropped.
     process: os::Process,
 }
 
 impl Worker {
-    fn reply(&mut self) -> Result<Vec<u8>, String> {
-        let (slot, ready) = &*self.inbox;
-        let slot = slot.lock().unwrap_or_else(|e| e.into_inner());
-        let mut slot = ready.wait_timeout_while(slot, TIMEOUT, |r| r.is_none()).unwrap_or_else(|e| e.into_inner()).0;
-        match slot.take() {
-            Some(r) => r.map_err(|e| if e.kind() == io::ErrorKind::UnexpectedEof { "the sandbox ended".into() } else { e.to_string() }),
-            None => Err(format!("the sandbox answered nothing in {} s", TIMEOUT.as_secs())),
+    /// Hands the worker's thread `message` and waits for the answer: `Err(None)` if it didn't reach the worker.
+    fn ask(&self, message: &Arc<Vec<u8>>) -> Result<Vec<u8>, Option<String>> {
+        let (line, signal) = &*self.line;
+        let mut l = guard(line);
+        l.message = Some(message.clone());
+        signal.notify_one();
+        let mut l = signal.wait_timeout_while(l, TIMEOUT, |l| l.answer.is_none()).unwrap_or_else(|e| e.into_inner()).0;
+        match l.answer.take() {
+            Some(Ok(answer)) => Ok(answer),
+            Some(Err(None)) => Err(None),
+            Some(Err(Some(e))) if e.kind() == io::ErrorKind::UnexpectedEof => Err(Some("the sandbox ended".into())),
+            Some(Err(Some(e))) => Err(Some(e.to_string())),
+            None => Err(Some(format!("the sandbox answered nothing in {} s", TIMEOUT.as_secs()))),
         }
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        guard(&self.line.0).closed = true;
+        self.line.1.notify_one();
     }
 }
 
@@ -57,34 +80,35 @@ static POOL: Mutex<Pool> = Mutex::new(Pool { idle: Vec::new(), busy: 0 });
 static FREED: Condvar = Condvar::new();
 static REAPING: AtomicBool = AtomicBool::new(false);
 
-fn lock() -> MutexGuard<'static, Pool> {
-    POOL.lock().unwrap_or_else(|e| e.into_inner())
+fn guard<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// A worker's answer to the message `parts` make. A worker that ended while idle can still look alive for a moment;
-/// a request that couldn't reach it, so can't have ended it, goes to another.
-pub fn ask(parts: &[&[u8]]) -> Result<Vec<u8>, String> {
+/// A worker's answer to `message`. A worker that ended while idle can still look alive for a moment; a request that
+/// couldn't reach it, so can't have ended it, goes to another.
+pub fn ask(message: Vec<u8>) -> Result<Vec<u8>, String> {
+    let message = Arc::new(message);
     let mut retry = true;
     loop {
         let mut w = take()?;
-        let sent = write(&mut w.input, parts).map_err(|e| e.to_string());
-        let reply = sent.clone().and_then(|()| w.reply());
-        let mut pool = lock();
+        let answer = w.ask(&message);
+        let mut pool = guard(&POOL);
         pool.busy -= 1;
-        if reply.is_ok() {
+        if answer.is_ok() {
             w.last = Instant::now();
             pool.idle.push(w);
         }
         FREED.notify_one();
-        if sent.is_ok() || !std::mem::take(&mut retry) {
-            return reply;
+        match answer {
+            Err(None) if std::mem::take(&mut retry) => {}
+            answer => return answer.map_err(|e| e.unwrap_or_else(|| "the sandbox ended".into())),
         }
     }
 }
 
 /// The idle worker used last, or a new one while fewer than `MAX` run; otherwise waits for one.
 fn take() -> Result<Worker, String> {
-    let mut pool = lock();
+    let mut pool = guard(&POOL);
     loop {
         while let Some(mut w) = pool.idle.pop() {
             if w.process.alive() {
@@ -96,7 +120,7 @@ fn take() -> Result<Worker, String> {
             pool.busy += 1;
             drop(pool);
             return start().map_err(|e| {
-                lock().busy -= 1;
+                guard(&POOL).busy -= 1;
                 FREED.notify_one();
                 format!("can't start the sandbox: {e}")
             });
@@ -105,23 +129,33 @@ fn take() -> Result<Worker, String> {
     }
 }
 
+/// Starts a worker, and the thread that writes each request to it and reads the answer.
 fn start() -> io::Result<Worker> {
-    let (process, input, mut output) = os::spawn()?;
-    let inbox = Inbox::default();
-    let to = inbox.clone();
-    thread::spawn(move || loop {
-        let reply = read(&mut output, MAX_REPLY);
-        let end = reply.is_err();
-        *to.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(reply);
-        to.1.notify_one();
-        if end {
-            return;
+    let (process, mut input, mut output) = os::spawn()?;
+    let line = Shared::default();
+    let to = line.clone();
+    thread::spawn(move || {
+        let (line, signal) = &*to;
+        loop {
+            let mut l = signal.wait_while(guard(line), |l| l.message.is_none() && !l.closed).unwrap_or_else(|e| e.into_inner());
+            let Some(message) = l.message.take() else { return };
+            drop(l);
+            let answer = match write(&mut input, &message) {
+                Ok(()) => read(&mut output, MAX_REPLY).map_err(Some),
+                Err(_) => Err(None),
+            };
+            let end = answer.is_err();
+            guard(line).answer = Some(answer);
+            signal.notify_one();
+            if end {
+                return;
+            }
         }
     });
     if !REAPING.swap(true, Ordering::Relaxed) {
         thread::spawn(reap);
     }
-    Ok(Worker { input, inbox, last: Instant::now(), process })
+    Ok(Worker { line, last: Instant::now(), process })
 }
 
 /// Ends each worker once it has been idle for `IDLE`, and itself once no worker is left.
@@ -129,7 +163,7 @@ fn reap() {
     let mut wait = IDLE;
     loop {
         thread::sleep(wait);
-        let mut pool = lock();
+        let mut pool = guard(&POOL);
         pool.idle.retain(|w| w.last.elapsed() < IDLE);
         if pool.idle.is_empty() && pool.busy == 0 {
             REAPING.store(false, Ordering::Relaxed);
@@ -143,13 +177,13 @@ fn reap() {
 pub fn serve(mut answer: impl FnMut(Vec<u8>) -> Vec<u8>) {
     let (mut input, mut output) = os::enter();
     while let Ok(message) = read(&mut input, u32::MAX) {
-        if write(&mut output, &[&answer(message)]).is_err() {
+        if write(&mut output, &answer(message)).is_err() {
             return;
         }
     }
 }
 
-fn read(from: &mut impl Read, max: u32) -> io::Result<Vec<u8>> {
+fn read(from: &mut File, max: u32) -> io::Result<Vec<u8>> {
     let mut len = [0; 4];
     from.read_exact(&mut len)?;
     let len = u32::from_le_bytes(len);
@@ -161,11 +195,10 @@ fn read(from: &mut impl Read, max: u32) -> io::Result<Vec<u8>> {
     Ok(message)
 }
 
-fn write(to: &mut impl Write, parts: &[&[u8]]) -> io::Result<()> {
-    let len = u32::try_from(parts.iter().map(|p| p.len()).sum::<usize>()).map_err(|_| io::ErrorKind::InvalidInput)?;
+fn write(to: &mut File, message: &[u8]) -> io::Result<()> {
+    let len = u32::try_from(message.len()).map_err(|_| io::ErrorKind::InvalidInput)?;
     to.write_all(&len.to_le_bytes())?;
-    parts.iter().try_for_each(|p| to.write_all(p))?;
-    to.flush()
+    to.write_all(message)
 }
 
 /// Windows: an AppContainer with no capabilities, built on a token with every privilege but one removed, so it reads
