@@ -736,8 +736,14 @@ function deb(stage, { name, version, arch, about, home }) {
   add(`./usr/bin/${name}`, null, 0o777, `../lib/${name}/nook`)
   add(`./usr/share/applications/${name}.desktop`, Buffer.from(`[Desktop Entry]\nType=Application\nName=${name}\nComment=${about}\n` +
     `Exec=${name} %f\nIcon=${name}\nTerminal=false\nCategories=Development;\nStartupWMClass=${name}\n`))
-  for (const [icon, size] of [['32x32', '32x32'], ['128x128', '128x128'], ['128x128@2x', '256x256'], ['icon', '512x512']])
-    add(`./usr/share/icons/hicolor/${size}/apps/${name}.png`, readFileSync(join(native, 'icons', `${icon}.png`)))
+  // The icon at each size icon.ico holds as a PNG (a 16-byte entry per size after a 6-byte header), and icon.svg at any other.
+  const ico = readFileSync(join(root, 'native', 'icons', 'icon.ico'))
+  for (let e = 6; e < 6 + 16 * ico.readUInt16LE(4); e += 16) {
+    const [n, at] = [ico[e] || 256, ico.readUInt32LE(e + 12)]
+    const png = ico.subarray(at, at + ico.readUInt32LE(e + 8))
+    if (png.readUInt32BE(0) === 0x89504e47) add(`./usr/share/icons/hicolor/${n}x${n}/apps/${name}.png`, png)
+  }
+  add(`./usr/share/icons/hicolor/scalable/apps/${name}.svg`, readFileSync(join(root, 'icon.svg')))
   files.sort((a, b) => (a[0] < b[0] ? -1 : 1))
   const size = files.reduce((n, f) => n + (f[1]?.length ?? 0), 0)
   const control = `Package: ${name}\nVersion: ${version}\nArchitecture: ${arch}\nMaintainer: ${name}\n` +
