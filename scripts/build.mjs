@@ -269,6 +269,304 @@ function evaluation(m, skip = new Set()) {
   return out
 }
 
+// Words that never name a binding. A module declaring one fails the build, as one calling eval or using with does.
+const NOT_NAMES = new Set(('arguments await break case catch class const continue debugger default delete do else enum ' +
+  'export extends false finally for function if implements import in instanceof interface let new null package private ' +
+  'protected public return static super switch this throw true try typeof var void while with yield').split(' '))
+// Short names: a first character, then any of NEXT. E, F, and J alone are the bundle's.
+const FIRST = 'etnsriaoludcmphfgbvywkxqjzTNSRIAOLUDCMPHGBVYWKXQZ_$'
+const NEXT = FIRST + 'EFJ0123456789'
+
+/** Gives each name `m` declares a short one. A scope's bindings take the slots after its parents', so none hides
+ * another, the slots used most get the shortest names, and no name is one the module uses without declaring. */
+function mangle(m) {
+  const code = [] // the tokens that aren't space, comments, or left out
+  const nl = [] // whether a line ends before code[k]
+  let line = false
+  for (const t of m.tokens) {
+    if (t[0] === 'n' || (t[0] === 'c' && /[\n\r\u2028\u2029]/.test(t[1]))) line = true
+    else if (t[0] !== ' ' && t[0] !== 'c' && t[0] !== 'x') { code.push(t); nl.push(line); line = false }
+  }
+  const close = new Int32Array(code.length) // at an opener, its closer
+  const opened = []
+  code.forEach(([type, x], i) => {
+    if (type === 'p' ? x === ')' || x === ']' || x === '}' : type === 't' && x[0] === '}') close[opened.pop()] = i
+    if (type === 'p' ? x === '(' || x === '[' || x === '{' : type === 't' && x.endsWith('${')) opened.push(i)
+  })
+  let k = 0
+  let limit = -1 // where a for's target ends, at its of
+  const fail = what => {
+    const t = code[Math.min(k, code.length - 1)]
+    throw new Error(`${relative(root, m.file)}:${m.tokens.slice(0, t[3]).map(t => t[1]).join('').split('\n').length}: ${what}`)
+  }
+  const is = (i, x) => code[i]?.[1] === x
+  const word = i => code[i]?.[0] === 'w'
+  const touching = i => code[i + 1]?.[3] === code[i][3] + 1
+  const arrow = i => is(i, '=') && is(i + 1, '>') && touching(i)
+  const scope = (up, fn) => { const s = { up, fn, names: new Map(), kids: [] }; up?.kids.push(s); return s }
+  const top = scope(null, true)
+  const uses = [] // [token, scope] of every name read or written
+  // A shorthand { a } is marked, so a new name goes in as { a: x }.
+  const bind = (s, t, short) => {
+    if (t?.[0] !== 'w' || NOT_NAMES.has(t[1]) || /^\d|\\/.test(t[1])) fail(`${t?.[1]}: not a name the bundle can rename`)
+    if (!s.names.has(t[1])) s.names.set(t[1], { uses: [] })
+    s.names.get(t[1]).uses.push(t)
+    if (short) t[2] = 's'
+  }
+  const use = (s, t, short) => {
+    if (t[1] === 'eval' || t[1].includes('\\')) fail(`${t[1]}: not a name the bundle can rename around`)
+    uses.push([t, s])
+    if (short) t[2] = 's'
+  }
+  const semi = () => { if (is(k, ';')) k++ }
+  const expect = (end, what = 'what comes before it') => { if (k !== end) fail(`${code[k]?.[1]}: the bundle misread ${what}`) }
+  const statements = (s, end) => {
+    while (k < end) {
+      const from = k
+      statement(s)
+      if (k === from) fail(`${code[k][1]}: the bundle can't read this`)
+    }
+  }
+  const block = s => { const end = close[k++]; statements(scope(s, false), end); expect(end); k++ }
+  // At ( or [: what's inside, up to its closer.
+  const inside = s => { const end = close[k++]; expression(s, true); expect(end); k++ }
+
+  function statement(s) {
+    const x = code[k][1]
+    if (x === ';') return void k++
+    if (x === '{') return block(s)
+    if (word(k)) switch (x) {
+      case 'var': case 'let': case 'const': declarations(s, x); return semi()
+      case 'function': return func(s, true)
+      case 'async': if (is(k + 1, 'function') && !nl[k + 1]) { k++; return func(s, true) } break
+      case 'class': return klass(s, true)
+      case 'if': k++; inside(s); statement(s); if (is(k, 'else')) { k++; statement(s) } return
+      case 'for': { k++; if (is(k, 'await')) k++; const f = scope(s, false); head(f); return statement(f) }
+      case 'while': k++; inside(s); return statement(s)
+      case 'do': k++; statement(s); if (!is(k++, 'while')) fail('do without while'); inside(s); return semi()
+      case 'try':
+        k++
+        block(s)
+        if (is(k, 'catch')) {
+          k++
+          const c = scope(s, false)
+          if (is(k, '(')) { const end = close[k++]; pattern(c, c); expect(end); k++ }
+          block(c)
+        }
+        if (is(k, 'finally')) { k++; block(s) }
+        return
+      case 'switch': {
+        k++
+        inside(s)
+        const c = scope(s, false), end = close[k++]
+        while (k < end) {
+          if (is(k, 'case')) { k++; expression(c, false); if (!is(k++, ':')) fail('case without :') }
+          else if (is(k, 'default') && is(k + 1, ':')) k += 2
+          else statement(c)
+        }
+        expect(end)
+        return void k++
+      }
+      case 'return': case 'throw': k++; if (!nl[k] && k < code.length && !is(k, ';') && !is(k, '}')) expression(s, true); return semi()
+      case 'break': case 'continue': k++; if (!nl[k] && word(k)) k++; return semi()
+      case 'debugger': k++; return semi()
+      case 'with': fail('with: the bundle can\'t rename around it')
+      default: if (is(k + 1, ':') && !NOT_NAMES.has(x)) { k += 2; return statement(s) } // a label
+    }
+    expression(s, true)
+    semi()
+  }
+  // At a for's (: its own declarations go in f, the loop's scope.
+  function head(f) {
+    const end = close[k++]
+    if (is(k, 'var') || is(k, 'let') || is(k, 'const')) declarations(f, code[k][1])
+    else if (!is(k, ';')) {
+      for (let i = k; i < end && !is(i, ';') && limit < 0; i = is(i, '(') || is(i, '[') || is(i, '{') ? close[i] + 1 : i + 1) if (is(i, 'of')) limit = i
+      expression(f, true)
+      limit = -1
+    }
+    if (is(k, 'of') || is(k, 'in')) { k++; expression(f, true) }
+    while (k < end) if (is(k, ';')) k++; else expression(f, true)
+    expect(end, 'the for')
+    k++
+  }
+  function declarations(s, kind) {
+    let into = s
+    if (kind === 'var') while (!into.fn) into = into.up
+    do { k++; pattern(s, into) } while (is(k, ','))
+  }
+  const initializer = s => { if (is(k, '=')) { k++; expression(s, false) } }
+  // A binding pattern at k: its names bound in `into`, its defaults read in s.
+  function pattern(s, into) {
+    if (is(k, '.')) k += 3 // ...rest
+    if (is(k, '[')) {
+      const end = close[k++]
+      while (k < end) if (is(k, ',')) k++; else pattern(s, into)
+      expect(end, 'the pattern')
+      k++
+    } else if (is(k, '{')) {
+      const end = close[k++]
+      while (k < end) {
+        if (is(k, ',')) k++
+        else if (is(k, '.')) pattern(s, into)
+        else if (is(k, '[') || is(k + 1, ':')) { key(s); k++; pattern(s, into) }
+        else { bind(into, code[k++], true); initializer(s) }
+      }
+      expect(end, 'the pattern')
+      k++
+    } else bind(into, code[k++])
+    initializer(s)
+  }
+  const params = f => {
+    const end = close[k++]
+    while (k < end) if (is(k, ',')) k++; else pattern(f, f)
+    expect(end, 'the parameters')
+    k++
+  }
+  // At function: its name, bound in s for a declaration and in a scope of its own for an expression; then the rest.
+  function func(s, declared) {
+    k++
+    if (is(k, '*')) k++
+    let f = s
+    if (word(k)) { if (!declared) f = scope(s, false); bind(f, code[k++]) }
+    f = scope(f, true)
+    params(f)
+    block(f)
+  }
+  // At an arrow's parameter, or the ( of its list.
+  function arrowFn(s) {
+    const f = scope(s, true)
+    if (word(k)) bind(f, code[k++])
+    else params(f)
+    k += 2
+    if (is(k, '{')) block(f)
+    else expression(f, false)
+  }
+  function klass(s, declared) {
+    k++
+    if (word(k) && !is(k, 'extends')) { if (!declared) s = scope(s, false); bind(s, code[k++]) }
+    if (is(k, 'extends')) { k++; expression(s, true, true) }
+    const end = close[k++]
+    while (k < end) {
+      if (is(k, ';')) k++
+      else if (is(k, 'static') && is(k + 1, '{')) { k++; block(scope(s, true)) }
+      else member(s, true)
+    }
+    expect(end, 'the class')
+    k++
+  }
+  const keyStart = i => word(i) || code[i]?.[0] === 's' || is(i, '[') || is(i, '#') || is(i, '*')
+  const key = s => { if (is(k, '[')) inside(s); else { if (is(k, '#')) k++; k++ } }
+  // A member of a class or an object literal: its key names a property, never a binding.
+  function member(s, inClass) {
+    while (is(k, '*') || ((is(k, 'get') || is(k, 'set') || (is(k, 'static') && inClass) || (is(k, 'async') && !nl[k + 1])) && keyStart(k + 1))) k++
+    const name = code[k]
+    key(s)
+    if (is(k, '(')) { const f = scope(s, true); params(f); return block(f) }
+    if (inClass) { initializer(scope(s, true)); return semi() }
+    if (is(k, ':')) { k++; return expression(s, false) }
+    if (name[0] !== 'w') fail(`${name[1]}: the bundle misread the object`)
+    use(s, name, true)
+    initializer(s)
+  }
+  function object(s) {
+    const end = close[k++]
+    while (k < end) {
+      if (is(k, ',')) k++
+      else if (is(k, '.')) { k += 3; expression(s, false) }
+      else member(s, false)
+    }
+    expect(end, 'the object')
+    k++
+  }
+  // Whether code[i], first on its line, goes on with the expression before it rather than starting a statement.
+  function goesOn(i) {
+    const [pt, px] = code[i - 1], [type, x] = code[i]
+    if (pt === 'p' ? OPEN.has(px) : pt === 'w' && BEFORE_REGEX.has(px) && px !== 'yield' && px !== 'of') return true
+    if (type === 'p') return GOES_ON.has(x) || x === '(' || x === '[' || x === '/' || (x === '!' && is(i + 1, '=') && touching(i))
+    return type === 't' ? x[0] === '`' : type === 'w' && (x === 'in' || x === 'instanceof')
+  }
+  // An expression from k to what ends it: a closer, a ;, or a line end it can't go on past; for one value (not all),
+  // also a comma or a : that closes no ? of its own; for a class's heritage (brace), its body's {.
+  function expression(s, all, brace) {
+    let open = 0 // ? still waiting for their :
+    for (const from = k; k < code.length;) {
+      const [type, x] = code[k]
+      if ((k > from && nl[k] && !goesOn(k)) || k === limit) return
+      if (type === 't') {
+        if (x[0] === '}') return
+        while (code[k][1].endsWith('${')) { const end = close[k++]; expression(s, true); expect(end, 'the template') }
+        k++
+      } else if (type === 'w') {
+        if (arrow(k + 1)) arrowFn(s)
+        else if (x === 'function') func(s, false)
+        else if (x === 'class') klass(s, false)
+        else if (x === 'async' && !nl[k + 1] && (is(k + 1, 'function') || (is(k + 1, '(') && arrow(close[k + 1] + 1)) || (word(k + 1) && arrow(k + 2)))) {
+          k++
+          if (is(k, 'function')) func(s, false)
+          else arrowFn(s)
+        } else {
+          if (!NOT_NAMES.has(x) && !/^\d/.test(x)) use(s, code[k])
+          k++
+        }
+      } else if (type !== 'p') k++
+      else if (x === ')' || x === ']' || x === '}' || x === ';' || (x === '{' && brace)) return
+      else if (x === ':' && open) { open--; k++ }
+      else if (x === ',' || x === ':') {
+        if (!all) return
+        if (x === ':') fail('a : the bundle can\'t place')
+        k++
+      } else if (x === '?') {
+        if (touching(k) && is(k + 1, '?')) k += 2
+        else if (touching(k) && is(k + 1, '.') && !/^\d/.test(code[k + 2]?.[1])) { k += 2; property() }
+        else { open++; k++ }
+      } else if (x === '.') {
+        if (is(k + 1, '.') && touching(k)) k += 3
+        else { k++; property() }
+      } else if (x === '#') k += 2
+      else if (x === '(') { if (arrow(close[k] + 1)) arrowFn(s); else inside(s) }
+      else if (x === '[') inside(s)
+      else if (x === '{') object(s)
+      else k++
+    }
+  }
+  // After . or ?.: a name there is a property's.
+  const property = () => { if (is(k, '#')) k++; if (word(k)) k++ }
+
+  for (const i of m.imports) for (const name of i.json ? [i.json] : i.namespace ? [i.namespace] : i.names.map(n => n[1])) top.names.set(name, { uses: [] })
+  statements(top, code.length)
+  const free = new Set(RESERVED)
+  for (const [t, s] of uses) {
+    let b
+    for (let c = s; c && !(b = c.names.get(t[1])); c = c.up);
+    if (b) b.uses.push(t)
+    else free.add(t[1])
+  }
+  const count = [] // per slot, how often its names are written
+  const slot = (s, n) => {
+    for (const b of s.names.values()) { b.slot = n; count[n] = (count[n] ?? 0) + b.uses.length + 1; n++ }
+    for (const c of s.kids) slot(c, n)
+  }
+  slot(top, 0)
+  const names = []
+  for (let i = 0; names.length < count.length; i++) {
+    let n = FIRST[i % FIRST.length]
+    for (let j = Math.floor(i / FIRST.length); j; j = Math.floor((j - 1) / NEXT.length)) n += NEXT[(j - 1) % NEXT.length]
+    if (!free.has(n) && !NOT_NAMES.has(n)) names.push(n)
+  }
+  const named = []
+  count.map((_, i) => i).sort((a, b) => count[b] - count[a]).forEach((n, i) => { named[n] = names[i] })
+  const rename = s => {
+    for (const [name, b] of s.names) {
+      b.name = named[b.slot]
+      for (const t of b.uses) t[1] = b.name === name ? name : t[2] === 's' ? `${name}:${b.name}` : b.name
+    }
+    s.kids.forEach(rename)
+  }
+  rename(top)
+  m.name = local => top.names.get(local).name
+}
+
 /** V8 parses `body`: a plain function rejects an await outside every async function inside it, an async one
  * takes it. The check is also the build's syntax check. */
 const AsyncFunction = (async () => {}).constructor
@@ -302,7 +600,8 @@ const style = file => squeezeCss(readFileSync(file, 'utf8')).replace(/url\((['"]
 
 /** dist/: index.html, index.css with the stylesheets it links, index.js with every module main.js imports, a chunk per
  * set of import() targets sharing modules, and the assets they name. In index.js each module runs in a function of
- * its own, which V8 can let go once it has run, and main.js in a block, where it can wait. */
+ * its own, which V8 can let go once it has run, and main.js in a block, where it can wait. A chunk's modules are
+ * functions in parentheses, which V8 compiles with the chunk rather than again when each first runs. */
 function bundle() {
   const started = performance.now()
   let html = readFileSync(join(root, 'index.html'), 'utf8').replace(/\r\n?/g, '\n')
@@ -337,27 +636,35 @@ function bundle() {
     if (name === 'index.js' || all.some(m => m.chunk === name)) throw new Error(`two files in dist named ${name}`)
     for (const m of list) m.chunk = name
   }
+  const added = new Map() // stylesheet → how many modules add it
+  for (const m of all) for (const a of m.assets) if (a.sheet) added.set(a.to, (added.get(a.to) ?? 0) + 1)
   for (const m of all) {
+    mangle(m)
     for (const { module, tokens } of m.dynamic) {
       const files = [...new Set(needs.get(module).map(n => n.chunk))]
       tokens[0][1] = `J.i(${JSON.stringify(files)},${module.n})`
       for (const t of tokens.slice(1)) t[0] = 'x'
     }
-    for (const a of m.assets) a.token[1] = JSON.stringify(asset(a.to, a.sheet))
+    for (const a of m.assets) {
+      // A stylesheet that only this lazy module adds comes in its chunk, unless it names other files.
+      const css = a.sheet && !eager.has(m) && added.get(a.to) === 1 && readFileSync(a.to, 'utf8')
+      a.token[1] = JSON.stringify(css && !css.includes('url(') ? `data:text/css,${squeezeCss(css).replace(/[%#]/g, encodeURIComponent)}` : asset(a.to, a.sheet))
+    }
     m.body = squeeze(m.tokens)
     m.async = waits(m, m.body)
   }
   for (const m of all) if (!eager.has(m)) m.async ||= evaluation(m, eager).some(d => d.async)
   for (const m of startup) if (m.async && m !== main) throw new Error(`${relative(root, m.file)} waits at its top level, so main.js can't import it`)
   const pairs = list => `{${list.map(([a, b]) => a === b ? a : `${a}:${b}`).join()}}`
-  const imports = m => m.imports.map(i => `const${i.json ? ` ${i.json}=${i.text}` : `${i.namespace ? ` ${i.namespace}` : pairs(i.names)}=${
+  const exports = m => pairs(m.exports.map(([name, local]) => [name, m.name(local)]))
+  const imports = m => m.imports.map(i => `const${i.json ? ` ${m.name(i.json)}=${i.text}` : `${i.namespace ? ` ${m.name(i.namespace)}` : pairs(i.names.map(([name, local]) => [name, m.name(local)]))}=${
     eager.has(m) ? `E[${i.module.n}]` : `${i.module.async ? 'await ' : ''}J(${i.module.n})`}`};`).join('')
 
   put('index.js', RUNTIME + startup.map(m => m === main
     ? `{${imports(m)}\n${m.body}\n}`
-    : `E[${m.n}]=(()=>{${imports(m)}\n${m.body}\nreturn${pairs(m.exports)}})()\n`).join(''))
+    : `E[${m.n}]=(()=>{${imports(m)}\n${m.body}\nreturn${exports(m)}})()\n`).join(''))
   for (const [, list] of chunks) put(list[0].chunk, `export default{${list.map(m =>
-    `${m.n}:(${m.async ? 'async function(J)' : 'J=>'}{${imports(m)}\n${m.body}\nreturn${pairs(m.exports)}})`).join(',\n')}}\n`)
+    `${m.n}:(${m.async ? 'async function(J)' : 'J=>'}{${imports(m)}\n${m.body}\nreturn${exports(m)}})`).join(',\n')}}\n`)
   for (const f of readdirSync(dist, { recursive: true })) if (!written.has(join(dist, f)) && statSync(join(dist, f)).isFile()) rmSync(join(dist, f))
   const kb = n => `${(n / 1024).toFixed(1)} KB`
   const open = ['index.html', 'index.js', 'index.css'].reduce((s, f) => s + statSync(join(dist, f)).size, 0)
