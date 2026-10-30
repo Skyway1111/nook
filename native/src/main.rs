@@ -431,6 +431,7 @@ fn main() {
         self::bench("mark:setup".into(), None);
     }
     priority::keep_typing_path_elevated(settings.command.first().map_or("", String::as_str));
+    std::thread::spawn(ide::sweep);
     // `nook <dir>` opens there; otherwise in the last session's folder.
     let asked = std::env::args().nth(1).as_deref().and_then(dir_arg);
     // A folder asked for opens a new session there instead of reopening the last ones.

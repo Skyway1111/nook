@@ -19,6 +19,8 @@ pub const INFINITE: u32 = u32::MAX;
 // Processes and pseudoconsoles
 pub const TH32CS_SNAPPROCESS: u32 = 0x2;
 pub const PROCESS_SET_INFORMATION: u32 = 0x200;
+pub const SYNCHRONIZE: u32 = 0x10_0000;
+pub const WAIT_TIMEOUT: u32 = 0x102;
 pub const ABOVE_NORMAL_PRIORITY_CLASS: u32 = 0x8000;
 pub const STARTF_USESTDHANDLES: u32 = 0x100;
 pub const CREATE_UNICODE_ENVIRONMENT: u32 = 0x400;
