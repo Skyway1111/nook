@@ -2,10 +2,11 @@
 // folder, and Claude's own theme, which follows nook's when the user wants. An installed theme is a
 // folder in `themes` beside settings.json, and `theme.rs` reads and installs it.
 import { invoke, convertFileSrc } from './host.js'
-import preview from './nook.jpg'
 import { $, el } from './ui.js'
 import { path as paths } from './paths.js'
 
+/** nook's own theme's card picture. */
+const PREVIEW = new URL('./nook.jpg', import.meta.url).href
 /** nook's Claude theme, from its mod (src-tauri/mod/themes/nook.json), as Claude's settings name it. */
 const NOOK = 'custom:nook:nook'
 const label = name => name.replace(/[-_]+/g, ' ').replace(/(^|\s)\p{L}/gu, c => c.toUpperCase())
@@ -216,7 +217,7 @@ export function startThemes({ configDir, home, settings, save, reread, showTheme
   async function list() {
     const listed = await invoke('list_dir', { path: dir }).catch(() => [])
     const names = known = listed.filter(e => e.dir && !e.name.startsWith('.')).map(e => e.name).sort((a, b) => a.localeCompare(b))
-    return [[null, preview], ...names.map(n => [n, `${convertFileSrc(paths.join(dir, n, 'screenshot.png'))}?v=${launched}.${installs.get(n) ?? 0}`])]
+    return [[null, PREVIEW], ...names.map(n => [n, `${convertFileSrc(paths.join(dir, n, 'screenshot.png'))}?v=${launched}.${installs.get(n) ?? 0}`])]
   }
 
   /** nook's own (null) and each installed theme's name, as last listed. It lists them again, at most every few

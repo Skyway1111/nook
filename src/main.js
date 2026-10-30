@@ -1,5 +1,3 @@
-import './theme.css'
-import './style.css'
 import { invoke, win } from './host.js'
 import { startTabs } from './tabs.js'
 import { startFiles, quote, ICON } from './files.js'

@@ -4,6 +4,8 @@ import { path as paths } from './paths.js'
 
 export const $ = id => document.getElementById(id)
 export const el = (tag, props) => Object.assign(document.createElement(tag), props)
+/** Adds the stylesheet at `url` to the page's head, after the others; resolves once it applies. */
+export const sheet = url => new Promise(done => document.head.append(el('link', { rel: 'stylesheet', href: url, onload: done, onerror: done })))
 
 const menu = $('menu')
 const preview = $('preview')

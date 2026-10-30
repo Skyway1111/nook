@@ -2,11 +2,12 @@
 // at once, but those dropped from the list. Matching runs in Rust (replace.rs) once typing pauses, with case,
 // whole words and regular expressions as toggled. A replace rewrites only files that still hold what the
 // search read and that have no unsaved edits in a tab, and Undo puts back what it changed.
-import './replace.css'
 import { invoke } from './host.js'
-import { el } from './ui.js'
+import { el, sheet } from './ui.js'
 import { ICON } from './files.js'
 import { path as paths } from './paths.js'
+
+await sheet(new URL('./replace.css', import.meta.url))
 
 const OPTIONS_KEY = 'nook.replace.options'
 const remembered = () => { try { return JSON.parse(localStorage.getItem(OPTIONS_KEY)) ?? {} } catch { return {} } }

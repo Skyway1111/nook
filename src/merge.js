@@ -1,11 +1,12 @@
 // A merge tab: a conflicted file's conflicts, each with its two sides next to each other and buttons that settle
 // it by taking one side or both. Each one settled rewrites the file; "Mark resolved" stages it for the commit
 // that finishes the merge. conflicts.js reads the markers.
-import './merge.css'
 import { invoke } from './host.js'
-import { el } from './ui.js'
+import { el, sheet } from './ui.js'
 import { parseConflicts, isConflict, resolve } from './conflicts.js'
 import { colorize } from './diff.js'
+
+await sheet(new URL('./merge.css', import.meta.url))
 
 /** Lines of settled text shown around each conflict. */
 const CONTEXT = 3

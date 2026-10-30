@@ -1,12 +1,13 @@
 // A history tab: a repository's commits as a graph, newest first, read a page at a time as the list nears its
 // end. Only the rows on screen exist. The commit picked shows its message and changes beside the list, drawn
 // by diff.js; its menu checks it out, branches from it, cherry-picks or reverts it.
-import './history.css'
 import { invoke } from './host.js'
-import { el, openMenu, openPicker } from './ui.js'
+import { el, openMenu, openPicker, sheet } from './ui.js'
 import { ICON } from './files.js'
 import { LOG_FORMAT, parseLog, layout } from './graph.js'
 import { startDiff } from './diff.js'
+
+await sheet(new URL('./history.css', import.meta.url))
 
 // Commits read at a time: a first page that shows at once, then larger ones. Without a commit-graph file git
 // reads every commit to sort them, children before parents, for each page; with one it reads only those shown.

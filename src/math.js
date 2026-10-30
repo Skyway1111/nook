@@ -4,7 +4,9 @@
 // a formula that doesn't parse shows as its source. Every node is built through the DOM, so no text from the
 // formula is ever read as markup.
 import { invoke } from './host.js'
-import './math.css'
+import { sheet } from './ui.js'
+
+await sheet(new URL('./math.css', import.meta.url))
 
 const NS = 'http://www.w3.org/1998/Math/MathML'
 

@@ -2,7 +2,6 @@
 // nook's defaults in theme.css apply first, then the installed theme in use, then the user's theme.css.
 // Each knob edits its line in the CSS box, so the file stays the one home for the user's CSS, and the box saves it.
 import { invoke, convertFileSrc } from './host.js'
-import defaults from './theme.css?raw'
 import { startViewer } from './viewer.js'
 import { $, el, openPicker } from './ui.js'
 import { startThemes } from './themes.js'
@@ -171,7 +170,7 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
   $('settings-defaults').ontoggle = async () => {
     const pre = $('settings-defaults').querySelector('pre')
     if (pre.firstChild) return
-    const { highlight } = await import('./highlight.js')
+    const [{ highlight }, defaults] = await Promise.all([import('./highlight.js'), fetch(new URL('./theme.css', import.meta.url)).then(r => r.text())])
     pre.replaceChildren(highlight(defaults, 'css') ?? defaults)
   }
 
