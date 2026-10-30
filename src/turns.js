@@ -16,7 +16,7 @@ const WAIT_MS = 600 // how long to wait for a redraw that may not come, at eithe
 const PAGE_UP = '\x1b[5~'
 const PAGE_DOWN = '\x1b[6~'
 const TO_BOTTOM = '\x1b[1;5F' // Ctrl+End
-const RULE = /^─{8,}\s*$/
+const RULE = /^─{8,}(?: .+ ─+)?\s*$/ // with the session's name in it, once named
 
 /** The row where Claude's transcript ends on its fullscreen view: the top rule of its input box. */
 export function transcriptEnd(screen) {
@@ -133,7 +133,7 @@ export function startTurns(term, send) {
     try {
       let rows = screen()
       let from = landed && rows[landed.row] === landed.text ? landed.row : 1 // where the jump goes on from
-      for (let page = 0; page < PAGES; page++) {
+      for (let n = 0; n < PAGES; n++) {
         const prompts = promptRows(rows)
         const half = transcriptEnd(rows) / 2
         if (up) {
