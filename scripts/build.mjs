@@ -5,7 +5,7 @@
 // NOOK_ID and NOOK_NAME, the build's identity, reach both cargo builds through the environment. On Linux the
 // build stops after the stage.
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -197,8 +197,9 @@ function parse(file) {
   }
   for (let k = 0; k < code.length; k++) {
     const t = code[k]
-    if (t[0] === 'w' && RESERVED.has(t[1])) fail(t, `${t[1]} is the bundle's own name`)
-    if (t[0] !== 'w' || code[k - 1]?.[1] === '.' || code[k + 1]?.[1] === ':') continue
+    if (t[0] !== 'w' || code[k - 1]?.[1] === '.') continue
+    if (RESERVED.has(t[1])) fail(t, `${t[1]} is the bundle's own name`)
+    if (code[k + 1]?.[1] === ':') continue
     if (t[1] === 'import' && code[k + 1][1] === '(') {
       if (code[k + 3]?.[1] !== ')') fail(t, 'import() takes one path in quotes')
       const to = target(code[k + 2])
@@ -209,7 +210,7 @@ function parse(file) {
       if (n?.[1] !== 'new' || u[1] !== 'URL' || open[1] !== '(' || comma[1] !== ',' || code.slice(k + 1, k + 6).map(t => t[1]).join('') !== '.meta.url)') fail(t, "import.meta goes only in new URL('./file', import.meta.url)")
       m.assets.push({ to: target(path), token: path, sheet: code[k - 7]?.[1] === 'sheet' && code[k - 6][1] === '(' })
     } else if (t[1] === 'import') {
-      const i = { line: t }
+      const i = {}
       let j = k + 1
       if (code[j][1] === '{') [i.names, j] = names(j)
       else if (code[j][1] === '*') { i.namespace = code[j + 2][1]; j += 2 } else if (code[j][0] === 'w') i.json = code[j][1]
@@ -306,6 +307,7 @@ function bundle() {
   let html = readFileSync(join(root, 'index.html'), 'utf8')
   const sheets = [...html.matchAll(/<link rel="stylesheet" href="\/(src\/[^"]+)" \/>\n */g)]
   const entry = /<script type="module" src="\/(src\/[^"]+)"><\/script>/.exec(html)
+  if (!sheets.length || !entry) throw new Error('index.html: expected <link rel="stylesheet" href="/src/…" /> lines and a <script type="module" src="/src/…">')
   writeFileSync(join(dist, 'index.css'), sheets.map(([, href]) => style(join(root, href))).join(''))
   html = html.replace(sheets[0][0], '<link rel="stylesheet" href="/index.css" />\n').replace(entry[0], '<script type="module" src="/index.js"></script>')
   for (const [link] of sheets.slice(1)) html = html.replace(link, '')
@@ -348,15 +350,13 @@ function bundle() {
   const imports = m => m.imports.map(i => `const${i.json ? ` ${i.json}=${i.text}` : `${i.namespace ? ` ${i.namespace}` : pairs(i.names)}=${
     eager.has(m) ? `E[${i.module.n}]` : `${i.module.async ? 'await ' : ''}J(${i.module.n})`}`};`).join('')
 
-  const sizes = {}
-  const write = (name, text) => { writeFileSync(join(dist, name), text); sizes[name] = Buffer.byteLength(text) }
-  write('index.js', RUNTIME + startup.map(m => m === main
+  writeFileSync(join(dist, 'index.js'), RUNTIME + startup.map(m => m === main
     ? `{${imports(m)}\n${m.body}\n}`
     : `{${imports(m)}\n${m.body}\n;E[${m.n}]=${pairs(m.exports)}}\n`).join(''))
-  for (const [, list] of chunks) write(list[0].chunk, `export default{${list.map(m =>
+  for (const [, list] of chunks) writeFileSync(join(dist, list[0].chunk), `export default{${list.map(m =>
     `${m.n}:${m.async ? 'async ' : ''}J=>{${imports(m)}\n${m.body}\nreturn${pairs(m.exports)}}`).join(',\n')}}\n`)
   const kb = n => `${(n / 1024).toFixed(1)} KB`
-  const open = ['index.html', 'index.js', 'index.css'].reduce((s, f) => s + (sizes[f] ?? readFileSync(join(dist, f)).length), 0)
+  const open = ['index.html', 'index.js', 'index.css'].reduce((s, f) => s + statSync(join(dist, f)).size, 0)
   console.log(`dist: ${startup.length} modules to open (${kb(open)} with the page and its CSS), ${all.length - startup.length} more in ${chunks.size} chunks, in ${Math.round(performance.now() - started)} ms`)
 }
 
