@@ -3,8 +3,10 @@
 // highlight.js loads. It reads only those lines, and only after the mouse has rested, so a pass over a row
 // of paths costs nothing.
 import { invoke } from './host.js'
-import { el, place } from './ui.js'
+import { el, place, sheet } from './ui.js'
 import { path as paths } from './paths.js'
+
+await sheet(new URL('./peek.css', import.meta.url))
 
 const REST_MS = 300 // how long the mouse rests on a path before its card shows
 const LINES = 12

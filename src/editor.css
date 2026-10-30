@@ -1,0 +1,80 @@
+/* Loaded with editor.js, so its rules cost nothing until a file tab or the settings drawer edits text. */
+
+/* The editor (editor.js): rows of gutter cells and a line, scrolling sideways together, with selections and matches
+   in a layer behind the text and the cursors in one over it. */
+.cm-editor { position: relative; display: flex; flex-direction: column; color: var(--term-fg); }
+.cm-editor .cm-scroller { flex: 1; min-height: 0; overflow: auto; position: relative; z-index: 0; overflow-anchor: none; font: var(--term-font-size)/1.5 var(--font-term); }
+.cm-editor .cm-content { position: relative; box-sizing: border-box; width: max-content; min-width: 100%; min-height: 100%; padding: 16px 0 24px; tab-size: 4; cursor: text; }
+.cm-editor.cm-lineWrapping .cm-content { width: auto; }
+.cm-editor .cm-content.cm-crosshair { cursor: crosshair; }
+.cm-editor .cm-row { display: flex; }
+.cm-editor .cm-line { flex: 1 0 auto; padding: 0 2px 0 6px; white-space: pre; }
+.cm-editor.cm-lineWrapping .cm-line { flex-shrink: 1; min-width: 0; white-space: break-spaces; word-break: break-word; overflow-wrap: anywhere; }
+.cm-editor.cm-lineWrapping .cm-line.cm-huge { word-break: break-all; }
+.cm-editor .cm-probe { position: absolute; top: 0; left: 0; visibility: hidden; white-space: pre; pointer-events: none; }
+.cm-editor .cm-input {
+  position: absolute; top: 0; left: 0; width: 1px; height: 1.5em; padding: 0; border: 0; margin: 0; resize: none; overflow: hidden;
+  opacity: 0; white-space: pre; font: var(--term-font-size)/1.5 var(--font-term); pointer-events: none;
+}
+.cm-editor .cm-gutterElement { flex: none; box-sizing: border-box; color: var(--ink-3); cursor: default; }
+.cm-editor .cm-gutterElement.cm-lineNumbers { min-width: calc(var(--digits, 1) * 1ch + 32px); padding: 0 8px 0 24px; text-align: right; white-space: nowrap; }
+.cm-editor .cm-gutterElement.cm-foldGutter { width: calc(.7em + 12px); padding: 0 12px 0 0; cursor: pointer; text-align: center; }
+.cm-editor .fold { font-size: .7em; color: var(--ink-3); opacity: 0; transition: opacity .15s; }
+.cm-editor.cm-gutterHover .fold, .cm-editor .fold.shut { opacity: 1; }
+.cm-editor .cm-foldGutter:hover > .fold { color: var(--accent); }
+.cm-editor .cm-foldPlaceholder { margin: 0 4px; padding: 0 6px; border-radius: 4px; background: var(--hover); color: var(--ink-2); cursor: pointer; }
+.cm-editor .cm-specialChar { color: var(--ansi-red); }
+.cm-editor .cm-selectionLayer { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.cm-editor .cm-selectionLayer > div, .cm-editor .cm-cursorLayer > div { position: absolute; }
+.cm-editor .cm-cursorLayer { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; display: none; }
+.cm-editor.cm-focused .cm-cursorLayer { display: block; animation: cm-blink 1.2s steps(1) infinite; }
+.cm-editor .cm-cursor, .cm-editor .cm-dropCursor { margin-left: -.6px; border-left: 2px solid var(--cursor); }
+.cm-editor .cm-dropCursor { display: block; }
+@keyframes cm-blink { 50% { opacity: 0; } }
+@keyframes cm-blink2 { 50% { opacity: 0; } }
+.cm-editor .cm-activeLine { background: var(--hover); }
+.cm-editor .cm-activeLineGutter { color: var(--ink-1); }
+.cm-editor .cm-selectionBackground, .cm-editor.cm-focused .cm-matchingBracket { background: var(--selection); }
+.cm-editor.cm-focused .cm-nonmatchingBracket { background: color-mix(in oklch, var(--ansi-red) 30%, transparent); }
+.cm-editor .cm-selectionMatch { background: var(--hover); }
+.cm-editor .cm-searchMatch { background: color-mix(in oklch, var(--ansi-yellow) 30%, transparent); }
+.cm-editor .cm-searchMatch-selected { background: color-mix(in oklch, var(--accent) 45%, transparent); }
+/* A file tab's status line, and the find panel above it. */
+.cm-editor .cm-panels { flex: none; background: var(--raised); color: var(--ink-1); }
+.cm-editor .cm-panels-bottom:not(:empty) { border-top: 1px solid var(--line); }
+.cm-editor .cm-status { display: flex; align-items: center; gap: 18px; height: 24px; padding: 0 14px; font-size: .8rem; color: var(--ink-3); white-space: nowrap; }
+.cm-editor .cm-status .fill { flex: 1; }
+.cm-editor .cm-status button { padding: 0; color: inherit; background: none; }
+.cm-editor .cm-status button:hover { color: var(--accent); }
+.cm-editor .cm-search { position: relative; padding: 2px 6px 4px; }
+.cm-editor .cm-search + .cm-status { border-top: 1px solid var(--line); }
+.cm-editor .cm-search :is(input, button, label) { margin: .2em .6em .2em 0; vertical-align: middle; }
+.cm-editor .cm-search input[type=checkbox] { margin-right: .2em; }
+.cm-editor .cm-search label { font-size: 80%; white-space: pre; }
+.cm-editor .cm-search [name=close] { position: absolute; top: 0; right: 4px; padding: 0; margin: 0; border: 0; background: inherit; color: var(--ink-2); font: inherit; font-size: 1rem; cursor: pointer; }
+.cm-editor :is(.cm-textfield, .cm-button) { font: inherit; padding: 2px 8px; color: var(--ink-1); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; }
+.cm-editor .cm-button { cursor: pointer; }
+.cm-editor .cm-button:hover { color: var(--accent); }
+.cm-editor .cm-textfield { user-select: text; -webkit-user-select: text; }
+.cm-editor .cm-textfield:focus { border-color: var(--accent); outline: none; }
+/* Completions: a list under the word being typed. */
+.cm-editor .cm-tooltip { position: fixed; z-index: 500; background: var(--raised); color: var(--ink-1); border: 1px solid var(--line); border-radius: 7px; box-shadow: var(--shadow); overflow: hidden; }
+.cm-editor .cm-tooltip-autocomplete > ul { margin: 0; padding: 0; list-style: none; min-width: 250px; max-width: min(700px, 95vw); max-height: 14em; overflow: hidden auto; white-space: nowrap; font: var(--term-font-size)/1.5 var(--font-term); }
+.cm-editor .cm-tooltip-autocomplete > ul > li { padding: 1px 10px; overflow-x: hidden; text-overflow: ellipsis; cursor: pointer; }
+.cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected] { background: var(--hover); color: var(--ink-1); box-shadow: inset 2px 0 0 var(--accent); }
+.cm-editor .cm-completionMatchedText { color: var(--accent); font-weight: 600; }
+/* Blame: who last changed each run of lines, its bar brighter the more recent the commit. */
+.cm-editor .cm-gutterElement.cm-blame { padding-left: 12px; cursor: pointer; }
+.cm-editor .blame {
+  width: 26ch; height: 100%; padding: 0 12px 0 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font: .86em var(--font-ui); color: var(--ink-3);
+  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--accent) calc(12% + var(--age) * 88%), transparent);
+}
+.cm-editor .cm-blame:hover .blame { color: var(--ink-1); }
+/* Change bars: a cell of no width, its bars drawn in the line numbers' right padding, so showing them moves no text. */
+.cm-editor .cm-gutterElement.cm-changes { width: 0; position: relative; }
+.cm-editor .cm-changes .gitbar { position: absolute; top: 0; bottom: 0; left: -6px; width: 3px; border-radius: 1px; }
+.cm-editor .gitbar.add { background: var(--ansi-green); }
+.cm-editor .gitbar.change { background: var(--ansi-yellow); }
+.cm-editor .gitbar.delete { bottom: auto; top: -4px; left: -7px; width: 0; height: 0; border: 4px solid transparent; border-left: 5px solid var(--ansi-red); border-radius: 0; }
+.cm-editor .gitbar.delete.below { top: auto; bottom: -4px; }

@@ -1,16 +1,18 @@
 // A file tab's editor. It draws only the rows that show, each a flex row of gutter cells and the line, colored by
 // highlight.js; selections, cursors and matches are boxes in layers behind and over the text. A hidden textarea at the
 // caret takes the keyboard, IME and the clipboard. Commands are edits.js's, find and replace find.js's, and
-// completion complete.js's. style.css styles the .cm-* classes.
+// completion complete.js's. editor.css styles the .cm-* classes.
 import { Doc, split, mapPos, column, offsetAt, normal, sel1, from, to } from './doc.js'
 import { lexLine, className, plain, textBracket } from './highlight.js'
 import { lang } from './langs.js'
-import { el } from './ui.js'
+import { el, sheet } from './ui.js'
 import { UNCOMMITTED, runs, ages, since } from './blame.js'
 import { lineChanges } from './linediff.js'
 import { KEYS, keyName, type, foldRange, foldable, bracketAt, wordAt, groupAt } from './edits.js'
 import { startFind } from './find.js'
 import { startComplete } from './complete.js'
+
+await sheet(new URL('./editor.css', import.meta.url))
 
 const PLAIN = { name: 'Plain text', lex: '' }
 // Characters drawn as a placeholder: control characters, invisible spaces and marks, and bidi controls.

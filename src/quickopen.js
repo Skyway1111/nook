@@ -3,11 +3,13 @@
 // `:` goes to a line in the open file, `@` to a symbol in it, `#` to where a name is defined anywhere in the
 // repository, and `%` finds text inside the files. Nothing is indexed until the box first opens, and each later open shows the last index at once while a fresh one builds behind it.
 import { invoke } from './host.js'
-import { $, el, letter } from './ui.js'
+import { $, el, letter, sheet } from './ui.js'
 import { rank } from './fuzzy.js'
 import { kind, ICON } from './files.js'
 import { path as paths } from './paths.js'
 import { recentFiles, opened, RECENT_MAX } from './recent.js'
+
+await sheet(new URL('./quickopen.css', import.meta.url))
 
 /** An index older than this rebuilds in the background when the box opens. */
 const STALE_MS = 5000
