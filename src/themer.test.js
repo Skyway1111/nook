@@ -1,10 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { oklab, palette, roles, css, zip, crc32, nameOf } from './themer.js'
+import { oklab, palette, roles, css, nameOf } from './themer.js'
 
 /** RGBA pixels: `n` of each [r, g, b] given. */
 const pixels = (...runs) => new Uint8Array(runs.flatMap(([n, rgb]) => Array.from({ length: n }, () => [...rgb, 255]).flat()))
@@ -58,21 +54,6 @@ test('a brighter picture gets a darker veil', () => {
   const dark = css('d', palette(pixels([1000, [20, 20, 40]])), 'a', 'b')
   const bright = css('b', palette(pixels([1000, [240, 240, 220]])), 'a', 'b')
   assert.ok(veil(bright) > veil(dark))
-})
-
-test('crc32 matches the standard check value', () => {
-  assert.equal(crc32(new TextEncoder().encode('123456789')), 0xcbf43926)
-})
-
-test('zip writes a .zip that unzip reads back', t => {
-  const files = [['theme.css', new TextEncoder().encode(':root { --h: 20; }\n')], ['picture.jpg', new Uint8Array([1, 2, 3, 255, 0])]]
-  const bytes = zip(files)
-  const dir = mkdtempSync(join(tmpdir(), 'nook-zip-'))
-  writeFileSync(join(dir, 't.zip'), bytes)
-  try { execFileSync('unzip', ['-v'], { stdio: 'ignore' }) } catch { return t.skip('no unzip here') }
-  execFileSync('unzip', ['-q', '-o', join(dir, 't.zip'), '-d', join(dir, 'out')])
-  assert.equal(readFileSync(join(dir, 'out', 'theme.css'), 'utf8'), ':root { --h: 20; }\n')
-  assert.deepEqual([...readFileSync(join(dir, 'out', 'picture.jpg'))], [1, 2, 3, 255, 0])
 })
 
 test('nameOf keeps a file name\'s stem in plain characters', () => {

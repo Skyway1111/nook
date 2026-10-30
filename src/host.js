@@ -71,7 +71,7 @@ document.addEventListener('mousedown', e => {
 
 // The commands that carry bytes, in or out. They go by fetch: a Uint8Array as the body, or the arguments as JSON,
 // and bytes come back as an ArrayBuffer.
-const FETCHED = new Set(['install_theme_zip', 'save_theme_zip', 'save_backdrop', 'saved_backdrop', 'pdf_page'])
+const FETCHED = new Set(['install_theme_zip', 'install_theme_files', 'save_backdrop', 'saved_backdrop', 'pdf_page'])
 
 /** Runs native command `cmd` with `args`. */
 export function invoke(cmd, args = {}) {
