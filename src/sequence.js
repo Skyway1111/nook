@@ -12,7 +12,7 @@ const MESSAGE = new RegExp(`^(.+?)\\s*(${ARROWS})\\s*([+-]?)\\s*(.+?)\\s*(?::(.*
 const tint = c => (/^(?:#[\da-f]{3,8}|(?:rgb|hsl)a?\([\d\s.,%/]+\)|[a-z]+)$/i.test(c) && CSS.supports('color', c) ? c : '')
 
 /** The sequence diagram in `src` (its first line the header) as { w, h, svg }. */
-export function sequence(src) {
+export function draw(src) {
   const parts = [], byId = new Map()
   const events = []
   const groups = [] // participant boxes: { color, lab, members }

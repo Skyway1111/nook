@@ -1,7 +1,8 @@
-// Layered layout for flowcharts. Ranks by network simplex, dummy nodes on long edges and at edge labels,
-// barycenter sweeps that keep each subgraph contiguous, x by network simplex on graphviz's auxiliary graph,
-// and edges as polylines through their dummies. It lays out top to bottom; the other directions transpose
-// or mirror the result.
+// Layered layout for flowcharts and class, state and ER diagrams. Ranks by network simplex, dummy nodes on
+// long edges and at edge labels, barycenter sweeps that keep each subgraph contiguous, x by network simplex
+// on graphviz's auxiliary graph, and edges as polylines through their dummies. It lays out top to bottom;
+// the other directions transpose or mirror the result.
+import { r } from './labels.js'
 
 /** The values minimizing Σ weight × (rank[to] - rank[from]) with each edge at least `len` long, by network
  * simplex with graphviz's incremental updates, for an acyclic graph whose edges join a pair of nodes at most
@@ -185,8 +186,8 @@ const Ω = [1, 2, 8] // how hard an edge pulls straight: between nodes, a node a
 
 /**
  * Lays out a flowchart. `g`:
- * - nodes: [{ w, h, cluster, loop }]: size, the subgraph it's in (-1 for none), and room its self-loops take
- *   on its right (below, left to right);
+ * - nodes: [{ w, h, cluster, loop, pre }]: size, the subgraph it's in (-1 for none), and room kept clear on
+ *   its right for its self-loops (`loop`) and on its left (`pre`), below and above when left to right;
  * - clusters: [{ parent, dir, w, h }]: the subgraph's parent (-1 for none), the direction it sets (or none),
  *   and its title's size;
  * - edges: [{ v, w, minlen, label }]: a node's index, or ~index for a subgraph; label is { w, h } or null;
@@ -277,7 +278,8 @@ function place(g) {
   // (w) and the rank axis (h), so left to right lays out as top to bottom with sizes swapped.
   const W = [], H = [], cl = [], dummy = []
   for (const n of g.nodes) W.push(lr ? n.h : n.w), H.push(lr ? n.w : n.h), cl.push(n.cluster), dummy.push(0)
-  const ex = v => (v < N ? g.nodes[v].loop || 0 : 0) // room a node's self-loops take past its right
+  const ex = v => (v < N ? g.nodes[v].loop || 0 : 0) // room a node keeps past its right
+  const pre = v => (v < N ? g.nodes[v].pre || 0 : 0) // and past its left
   for (let c = 0; c < C; c++) {
     const { w, h } = g.clusters[c], titled = !lr
     // The title sits in the band of the border that ends up on top; left to right, beside the members.
@@ -530,7 +532,7 @@ function place(g) {
       while (common < open.length && common < p.length && open[common] === p[common]) common++
       while (open.length > common) step(cside + 2 * open.pop() + 1, 0)
       while (open.length < p.length) open.push(p[open.length]), step(cside + 2 * open[open.length - 1], 0)
-      step(v, W[v] / 2)
+      step(v, W[v] / 2 + pre(v))
     }
     while (open.length) step(cside + 2 * open.pop() + 1, 0)
   }
@@ -592,7 +594,7 @@ function place(g) {
     return { x0, x1, y0, y1 }
   })
   let minX = Infinity, maxX = -Infinity, maxY = 0
-  for (let v = 0; v < N; v++) minX = Math.min(minX, x[v] - W[v] / 2), (maxX = Math.max(maxX, x[v] + W[v] / 2 + ex(v)))
+  for (let v = 0; v < N; v++) minX = Math.min(minX, x[v] - W[v] / 2 - pre(v)), (maxX = Math.max(maxX, x[v] + W[v] / 2 + ex(v)))
   for (let v = N + 2 * C; v < V; v++) minX = Math.min(minX, x[v] - W[v] / 2), (maxX = Math.max(maxX, x[v] + W[v] / 2))
   for (const b of boxes) minX = Math.min(minX, b.x0), (maxX = Math.max(maxX, b.x1))
   maxY = R ? y[R - 1] + height[R - 1] / 2 : 0
@@ -649,7 +651,7 @@ function place(g) {
     const e = g.edges[i]
     if (e.v < 0) clipBox(pts, clusters[~e.v], false)
     if (e.w < 0) clipBox(pts, clusters[~e.w], true)
-    if (!label && e.label) label = midpoint(pts)
+    if (!label && e.label) label = along(pts, 0.5).slice(0, 2)
     return { points: pts, label }
   })
   return { width: lr ? span1 : span0, height: lr ? span0 : span1, nodes, clusters, edges }
@@ -674,14 +676,85 @@ function clipBox(pts, b, end) {
   if (end) pts.reverse()
 }
 
-/** The point halfway along a polyline. */
-function midpoint(pts) {
+/** Where the segment from (sx, sy), inside a shape centered at (cx, cy), toward (px, py) leaves it. A shape
+ * is a polygon (`pts`, around its center), a circle (`round`, its radius), or an ellipse (`ellipse`, w × h). */
+function clip(o, cx, cy, sx, sy, px, py) {
+  const ox = sx - cx, oy = sy - cy, dx = px - sx, dy = py - sy
+  let t = Infinity
+  if (o.round || o.ellipse) {
+    // A circle, or an ellipse scaled to one: the larger root of |o + t·d| = 1.
+    const rx = o.round || o.w / 2, ry = o.round || o.h / 2
+    const ux = ox / rx, uy = oy / ry, vx = dx / rx, vy = dy / ry
+    const A = vx * vx + vy * vy, B = ux * vx + uy * vy, C = ux * ux + uy * uy - 1
+    if (A) t = (-B + Math.sqrt(Math.max(0, B * B - A * C))) / A
+  } else {
+    const p = o.pts
+    for (let k = 0; k < p.length; k++) {
+      const ax = p[k][0] - ox, ay = p[k][1] - oy, ex = p[(k + 1) % p.length][0] - p[k][0], ey = p[(k + 1) % p.length][1] - p[k][1]
+      const den = dx * ey - dy * ex
+      if (!den) continue
+      const u = (ax * ey - ay * ex) / den, v = (ax * dy - ay * dx) / den
+      if (u > 0 && u < t && v >= 0 && v <= 1) t = u
+    }
+  }
+  return t <= 1 ? [sx + dx * t, sy + dy * t] : [px, py]
+}
+
+/** A w × h rectangle's outline, for `trace`. */
+export const box = (w, h) => ({ pts: [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]] })
+
+/** An edge's polyline from `layout`, its ends clipped to the shapes there (each [shape, x, y], or null for
+ * an end on a subgraph's box), less `cutA` and `cutB` px at its start and end for markers to fill. */
+export function trace(points, a, b, cutA = 0, cutB = 0) {
+  const pts = points.map(p => p.slice())
+  if (a) pts[0] = clip(a[0], a[1], a[2], ...pts[0], ...pts[1])
+  if (b) pts[pts.length - 1] = clip(b[0], b[1], b[2], ...pts[pts.length - 1], ...pts[pts.length - 2])
+  // Points the clip left on top of each other would turn an arrowhead at random.
+  for (let k = pts.length - 2; k > 0; k--) if (Math.hypot(pts[k][0] - pts[k + 1][0], pts[k][1] - pts[k + 1][1]) < 1) pts.splice(k, 1)
+  if (pts.length > 2 && Math.hypot(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1]) < 1) pts.splice(1, 1)
+  if (cutB) shorten(pts, cutB)
+  if (cutA) pts.reverse(), shorten(pts, cutA), pts.reverse()
+  return pts
+}
+
+/** d3's curveBasis through the points: a B-spline that starts and ends on the polyline's ends. */
+export function basis(pts) {
+  if (pts.length < 3) return `M${pts.map(([x, y]) => `${r(x)},${r(y)}`).join('L')}`
+  let [x0, y0] = pts[0], [x1, y1] = pts[1]
+  let d = `M${r(x0)},${r(y0)}L${r((5 * x0 + x1) / 6)},${r((5 * y0 + y1) / 6)}`
+  const to = (x, y) => {
+    d += `C${r((2 * x0 + x1) / 3)},${r((2 * y0 + y1) / 3)} ${r((x0 + 2 * x1) / 3)},${r((y0 + 2 * y1) / 3)} ${r((x0 + 4 * x1 + x) / 6)},${r((y0 + 4 * y1 + y) / 6)}`
+    x0 = x1, y0 = y1, x1 = x, y1 = y
+  }
+  for (let k = 2; k < pts.length; k++) to(pts[k][0], pts[k][1])
+  to(x1, y1)
+  return d + `L${r(x1)},${r(y1)}`
+}
+
+/** A self-loop's polyline at a w × h node centered at (x, y): out its right side and back, or its bottom
+ * when left to right, in the room the node's `loop` kept. */
+export const selfLoop = (x, y, w, h, lr) => (lr
+  ? [[x - h / 4, y + h / 2], [x - h / 4, y + h / 2 + 22], [x + h / 4, y + h / 2 + 22], [x + h / 4, y + h / 2]]
+  : [[x + w / 2, y - h / 4], [x + w / 2 + 22, y - h / 4], [x + w / 2 + 22, y + h / 4], [x + w / 2, y + h / 4]])
+
+/** Moves the polyline's end back by `by` px along its last segment, for an arrowhead to fill. */
+export function shorten(pts, by) {
+  const [ax, ay] = pts[pts.length - 2], [bx, by2] = pts[pts.length - 1]
+  const d = Math.hypot(bx - ax, by2 - ay)
+  if (d < 1) return
+  const k = Math.min(by, d - 0.5) / d
+  pts[pts.length - 1] = [bx - (bx - ax) * k, by2 - (by2 - ay) * k]
+}
+
+/** The point at `t` (0 to 1) of the way along a polyline, and the direction it runs there. */
+export function along(pts, t) {
   let total = 0
   for (let k = 1; k < pts.length; k++) total += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1])
-  for (let k = 1, half = total / 2; k < pts.length; k++) {
-    const d = Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1])
-    if (d >= half) return [pts[k - 1][0] + ((pts[k][0] - pts[k - 1][0]) * half) / (d || 1), pts[k - 1][1] + ((pts[k][1] - pts[k - 1][1]) * half) / (d || 1)]
-    half -= d
+  let left = total * t
+  for (let k = 1; k < pts.length; k++) {
+    const dx = pts[k][0] - pts[k - 1][0], dy = pts[k][1] - pts[k - 1][1], d = Math.hypot(dx, dy)
+    if (d >= left && d) return [pts[k - 1][0] + (dx * left) / d, pts[k - 1][1] + (dy * left) / d, dx / d, dy / d]
+    left -= d
   }
-  return pts[0]
+  return [...pts[pts.length - 1], 0, 1]
 }

@@ -3,37 +3,92 @@
 // colors. The SVG draws as a background image, which runs no script, and every label in it is escaped.
 // A diagram this can't read shows its source instead, so the box is never blank.
 import { invoke } from './host.js'
-import { flowchart, css as flowCss } from './flowchart.js'
-import { sequence, css as sequenceCss } from './sequence.js'
+import * as flowchart from './flowchart.js'
+import * as sequence from './sequence.js'
+import * as classes from './classes.js'
+import * as states from './states.js'
+import * as er from './er.js'
+import * as pie from './pie.js'
+import * as gantt from './gantt.js'
+import * as mindmap from './mindmap.js'
+import * as timeline from './timeline.js'
+import * as gitgraph from './gitgraph.js'
 import { FONT, FAMILY, esc, measure, label, text as labelText, r } from './labels.js'
 
 const MARGIN = 4 // px around the drawing
 const MONO = '13px "Cascadia Mono", Consolas, monospace'
-const LEGACY = /^(?:classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram|gantt|pie|gitGraph|mindmap|timeline|journey|quadrantChart|xychart(?:-beta)?|sankey(?:-beta)?|C4\w+|block(?:-beta)?|architecture(?:-beta)?|requirementDiagram|packet(?:-beta)?|kanban|radar-beta|treemap(?:-beta)?)$/
+// Each kind nook draws, by the word that starts it: a module's `draw(src, colors)` and `css(colors)`.
+const KINDS = {
+  flowchart, 'flowchart-v2': flowchart, 'flowchart-elk': flowchart, graph: flowchart, sequenceDiagram: sequence,
+  classDiagram: classes, 'classDiagram-v2': classes, stateDiagram: states, 'stateDiagram-v2': states, erDiagram: er,
+  pie, gantt, mindmap, timeline, journey: timeline, gitGraph: gitgraph,
+}
 
-/** A theme variable's color as `rgb()`, whatever color syntax the theme wrote. */
+/** A theme variable's color as sRGB channels (0-255), whatever color syntax the theme wrote. */
 function color(name) {
   const g = (color.canvas ??= new OffscreenCanvas(1, 1)).getContext('2d', { willReadFrequently: true })
   g.clearRect(0, 0, 1, 1)
   g.fillStyle = '#000'
   g.fillStyle = getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'
   g.fillRect(0, 0, 1, 1)
-  const [r, gr, b] = g.getImageData(0, 0, 1, 1).data
-  return `rgb(${r},${gr},${b})`
+  return [...g.getImageData(0, 0, 1, 1).data.slice(0, 3)]
+}
+
+/** sRGB channels (0-255) as OKLCH: lightness, chroma, and hue in degrees. */
+function oklch(rgb) {
+  const [R, G, B] = rgb.map(c => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B)
+  const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B)
+  const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B)
+  const a = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, b = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, Math.hypot(a, b), (Math.atan2(b, a) * 180) / Math.PI]
+}
+
+/** OKLCH as linear sRGB channels, outside 0-1 where it's out of gamut. */
+function linear(L, C, h) {
+  const a = C * Math.cos((h * Math.PI) / 180), b = C * Math.sin((h * Math.PI) / 180)
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3, m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3
+  return [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s]
+}
+
+/** OKLCH as an sRGB `rgb()`, with less chroma until it fits. */
+function paint(L, C, h) {
+  let lo = 0, hi = C
+  for (let i = 0; i < 12; i++) {
+    const mid = (lo + hi) / 2
+    if (linear(L, mid, h).every(c => c >= -1e-4 && c <= 1.0001)) lo = mid
+    else hi = mid
+  }
+  const [R, G, B] = linear(L, lo, h).map(c => Math.round(255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.max(0, c) ** (1 / 2.4) - 0.055)))
+  return `rgb(${R},${G},${B})`
+}
+
+/** The theme's colors for a diagram. `cat(k)` colors a chart's kth category: the accent's hue turned k golden
+ * angles, at about its lightness and chroma. `onCat` is text on those, and `crit` a red at their lightness. */
+function palette() {
+  const [bg, raised, ink, ink2, accent] = ['--bg', '--raised', '--ink-1', '--ink-2', '--accent'].map(color)
+  const [L0, C0, h] = oklch(accent)
+  const L = Math.min(0.8, Math.max(0.6, L0)), C = Math.min(0.16, Math.max(0.1, C0)), cats = []
+  const rgb = c => `rgb(${c.join(',')})`
+  return {
+    bg: rgb(bg), raised: rgb(raised), ink: rgb(ink), ink2: rgb(ink2), accent: rgb(accent),
+    cat: k => (cats[k] ??= paint(L, C, h + k * 137.508)),
+    onCat: rgb(Math.abs(oklch(ink)[0] - L) > Math.abs(oklch(bg)[0] - L) ? ink : bg),
+    crit: paint(L, Math.max(C, 0.14), 25),
+  }
 }
 
 /** The diagram in the .mmd file at `path`, as an SVG blob URL, fit to `box` ({ width, height, fontSize }
  * in px): its text never larger than 1.15 × the terminal's, as a formula's. */
 export async function diagramUrl(path, box) {
-  const text = await invoke('read_text', { path })
   // The theme can change between diagrams, so each render takes its colors anew.
-  const [bg, raised, ink, ink2, accent] = ['--bg', '--raised', '--ink-1', '--ink-2', '--accent'].map(color)
-  const svg = await diagram(text, { bg, raised, ink, ink2, accent }, box)
+  const svg = diagram(await invoke('read_text', { path }), palette(), box)
   return URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
 }
 
 /** `text`, a mermaid diagram, as an SVG document. */
-async function diagram(text, c, box) {
+function diagram(text, c, box) {
   const lines = text.replace(/\r/g, '').split('\n')
   // Front matter (---) holds settings and maybe a title; %% lines are comments; the next line names the kind.
   let k = 0, title = ''
@@ -42,13 +97,11 @@ async function diagram(text, c, box) {
     k++
   }
   while (k < lines.length && (!lines[k].trim() || /^\s*%%/.test(lines[k]))) k++
-  const src = lines.slice(k).join('\n')
-  const kind = /^\s*([\w-]+)/.exec(src)?.[1] ?? ''
+  const src = lines.slice(k).filter(l => !/^\s*%%/.test(l)).join('\n')
+  const kind = KINDS[/^\s*([\w-]+)/.exec(src)?.[1]]
   let d = null
   try {
-    if (/^(?:flowchart(?:-v2|-elk)?|graph)$/.test(kind)) d = { ...flowchart(src), css: flowCss(c) }
-    else if (kind === 'sequenceDiagram') d = { ...sequence(src), css: sequenceCss(c) }
-    else if (LEGACY.test(kind)) return await legacy(text, c)
+    if (kind) d = { ...kind.draw(src, c), css: kind.css(c) }
   } catch (e) {
     console.warn('diagram', e)
   }
@@ -79,26 +132,4 @@ function frame(d, c, box) {
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${r(vw)}" height="${r(vh)}" viewBox="${r(-MARGIN)} ${r(-MARGIN - top)} ${r(vw)} ${r(vh)}">`
     + `<style>text{font-family:${FAMILY};font-size:${FONT}px;fill:${c.ink}}${d.css}</style>${d.svg}</svg>`
-}
-
-let mermaid // the library, for the kinds drawn here not yet
-/** A kind this module doesn't draw yet, by mermaid. */
-async function legacy(text, c) {
-  const m = await (mermaid ??= import('mermaid').then(m => m.default))
-  m.initialize({
-    startOnLoad: false,
-    securityLevel: 'strict',
-    theme: 'base',
-    fontFamily: FAMILY,
-    htmlLabels: false,
-    themeVariables: {
-      darkMode: getComputedStyle(document.documentElement).getPropertyValue('--scheme').trim() !== 'light',
-      background: c.bg, mainBkg: c.raised, primaryColor: c.raised, secondaryColor: c.raised, tertiaryColor: c.bg,
-      primaryTextColor: c.ink, secondaryTextColor: c.ink, tertiaryTextColor: c.ink, textColor: c.ink, titleColor: c.ink,
-      primaryBorderColor: c.accent, secondaryBorderColor: c.ink2, tertiaryBorderColor: c.ink2, lineColor: c.ink2,
-      noteBkgColor: c.raised, noteTextColor: c.ink, noteBorderColor: c.ink2, labelBoxBkgColor: c.raised, labelTextColor: c.ink,
-      edgeLabelBackground: c.bg, clusterBkg: c.bg, clusterBorder: c.ink2, fontSize: '18px',
-    },
-  })
-  return (await m.render(`nook-diagram-${(legacy.made = (legacy.made ?? 0) + 1)}`, text)).svg
 }

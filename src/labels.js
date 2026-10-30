@@ -1,5 +1,5 @@
-// Text in diagrams: labels parsed from mermaid's syntax, measured once on a canvas in the family the SVG
-// draws with, wrapped, and written as escaped SVG text.
+// Text and styles in diagrams: labels parsed from mermaid's syntax, measured once on a canvas in the family
+// the SVG draws with, wrapped, and written as escaped SVG text; style lists cut down to safe CSS.
 
 export const FONT = 18 // px, every label's size
 export const LINE = 22 // px between a label's lines
@@ -14,7 +14,7 @@ let ctx
 const widths = new Map()
 /** `text`'s width in px at FONT, bold and italic as `style` says (bit 1 bold, bit 2 italic), or in `font`. */
 export function measure(text, style = 0, font) {
-  const k = (font ?? style) + '\0' + text
+  const k = (font ?? style & 3) + '\0' + text
   let w = widths.get(k)
   if (w === undefined) {
     ctx ??= new OffscreenCanvas(1, 1).getContext('2d')
@@ -43,14 +43,14 @@ export function decode(text) {
 }
 
 /**
- * A label: its lines, each a list of runs [text, style], wrapped at WRAP px, with its size. `<br>` breaks a
- * line, and <b> and <i> style their runs; in a markdown string (`md`) a newline breaks, and **bold** and
- * *italic* style.
+ * A label: its lines, each a list of runs [text, style], wrapped at `wrap` px, with its size. `<br>` breaks
+ * a line, and <b> and <i> style their runs; in a markdown string (`md`) a newline breaks, and **bold** and
+ * *italic* style. `base` styles all of it: bit 1 bold, bit 2 italic, bit 4 underlined.
  */
-export function label(text, md = false, wrap = WRAP) {
+export function label(text, md = false, wrap = WRAP, base = 0) {
   const lines = []
   for (const raw of decode(text).split(md ? /<br\s*\/?>|\n/i : /<br\s*\/?>|\\n/i)) {
-    const runs = md ? markdown(raw.trim()) : tags(raw.trim())
+    const runs = md ? markdown(raw.trim()) : tags(raw.trim(), base)
     // Words with their styles, then filled into lines no wider than `wrap`.
     let line = [], w = 0
     const space = measure(' ')
@@ -80,9 +80,9 @@ function join(words) {
 }
 
 /** Runs styled by <b>, <strong>, <i> and <em>, as an HTML label would show them. */
-function tags(text) {
+function tags(text, style) {
   const runs = []
-  let style = 0, at = 0
+  let at = 0
   for (const m of text.matchAll(/<(\/?)(b|strong|i|em)>/gi)) {
     if (m.index > at) runs.push([text.slice(at, m.index), style])
     const bit = /^[bs]/i.test(m[2]) ? 1 : 2
@@ -112,10 +112,25 @@ export function text(lab, x, y, cls = '', style = '', start = false) {
   let out = `<text${cls ? ` class="${cls}"` : ''}${start ? '' : ' text-anchor="middle"'}${style ? ` style="${esc(style)}"` : ''}>`
   lab.lines.forEach((line, i) => {
     out += `<tspan x="${r(x)}" y="${r(top + i * LINE)}">`
-    for (const [t, s] of line.runs) out += s ? `<tspan${s & 1 ? ' font-weight="bold"' : ''}${s & 2 ? ' font-style="italic"' : ''}>${esc(t)}</tspan>` : esc(t)
+    for (const [t, s] of line.runs) out += s ? `<tspan${s & 1 ? ' font-weight="bold"' : ''}${s & 2 ? ' font-style="italic"' : ''}${s & 4 ? ' text-decoration="underline"' : ''}>${esc(t)}</tspan>` : esc(t)
     out += '</tspan>'
   })
   return out + '</text>'
+}
+
+const STYLES = new Set(['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'color', 'opacity', 'fill-opacity', 'stroke-opacity', 'font-weight', 'font-style'])
+const VALUE = /^(?:#[\da-f]{3,8}|[a-z]+|(?:rgb|hsl)a?\([\d\s.,%deg/]+\)|[\d.]+(?:px|em|%)?(?:[\s,]+[\d.]+(?:px|em|%)?)*)$/i
+
+/** A `prop:value,prop:value` list as safe CSS: only drawing properties, only colors, lengths and dashes. */
+export function styles(list) {
+  const out = []
+  for (const part of list.replace(/;\s*$/, '').split(/,(?![^(]*\))/)) {
+    const i = part.indexOf(':')
+    if (i < 0) continue
+    const k = part.slice(0, i).trim().toLowerCase(), v = part.slice(i + 1).trim().replace(/\s*!important$/, '')
+    if (STYLES.has(k) && VALUE.test(v)) out.push(`${k}:${v}`)
+  }
+  return out
 }
 
 /** A number for SVG: at most one decimal. */

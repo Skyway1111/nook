@@ -1,7 +1,7 @@
 // mermaid's flowchart (and graph): parsed leniently, laid out by layered.js, drawn as SVG. A line it can't
 // read is skipped, so a diagram with a mistake still draws what it can.
-import { layout } from './layered.js'
-import { label, text, esc, r } from './labels.js'
+import { layout, trace, basis, shorten, selfLoop } from './layered.js'
+import { label, text, esc, r, styles } from './labels.js'
 
 const PX = 14, PY = 8 // px of room around a node's label
 const ARROW = 9 // px from an arrowhead's base to its tip
@@ -21,26 +21,6 @@ const NAMED = {
   hexagon: 'hex', prepare: 'hex', 'lean-r': 'lean-r', 'in-out': 'lean-r', 'lean-l': 'lean-l', 'out-in': 'lean-l',
   'trap-b': 'trap', trapezoid: 'trap', priority: 'trap', 'trap-t': 'trap-t', manual: 'trap-t', 'inv-trapezoid': 'trap-t',
   flag: 'flag', odd: 'flag', ellipse: 'ellipse', 'sm-circ': 'circle', 'f-circ': 'circle', start: 'circle', stop: 'dbl',
-}
-const STYLES = new Set(['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'color', 'opacity', 'fill-opacity', 'stroke-opacity', 'font-weight', 'font-style'])
-const VALUE = /^(?:#[\da-f]{3,8}|[a-z]+|(?:rgb|hsl)a?\([\d\s.,%deg/]+\)|[\d.]+(?:px|em|%)?(?:[\s,]+[\d.]+(?:px|em|%)?)*)$/i
-
-/** A `prop:value,prop:value` list as safe CSS: only drawing properties, only colors, lengths and dashes. */
-function styles(list) {
-  const out = []
-  for (const part of list.replace(/;\s*$/, '').split(/,(?![^(]*\))/)) {
-    const i = part.indexOf(':')
-    if (i < 0) continue
-    const k = part.slice(0, i).trim().toLowerCase(), v = part.slice(i + 1).trim().replace(/\s*!important$/, '')
-    if (STYLES.has(k) && VALUE.test(v)) out.push(`${k}:${v}`)
-  }
-  return out
-}
-
-/** The flowchart in `src` (its first line the header) as { w, h, svg }. */
-export function flowchart(src) {
-  const g = parse(src)
-  return draw(g)
 }
 
 function parse(src) {
@@ -390,53 +370,9 @@ function poly(w, h, pts, dx = 0) {
   return { w, h, pts, dx, draw: (x, y) => `<polygon points="${pts.map(([px, py]) => `${r(x + px)},${r(y + py)}`).join(' ')}"/>` }
 }
 
-/** Where the segment from (sx, sy), inside a shape centered at (cx, cy), toward (px, py) leaves it. */
-function clip(o, cx, cy, sx, sy, px, py) {
-  const ox = sx - cx, oy = sy - cy, dx = px - sx, dy = py - sy
-  let t = Infinity
-  if (o.round || o.ellipse) {
-    // A circle, or an ellipse scaled to one: the larger root of |o + t·d| = 1.
-    const rx = o.round || o.w / 2, ry = o.round || o.h / 2
-    const ux = ox / rx, uy = oy / ry, vx = dx / rx, vy = dy / ry
-    const A = vx * vx + vy * vy, B = ux * vx + uy * vy, C = ux * ux + uy * uy - 1
-    if (A) t = (-B + Math.sqrt(Math.max(0, B * B - A * C))) / A
-  } else {
-    const p = o.pts
-    for (let k = 0; k < p.length; k++) {
-      const ax = p[k][0] - ox, ay = p[k][1] - oy, ex = p[(k + 1) % p.length][0] - p[k][0], ey = p[(k + 1) % p.length][1] - p[k][1]
-      const den = dx * ey - dy * ex
-      if (!den) continue
-      const u = (ax * ey - ay * ex) / den, v = (ax * dy - ay * dx) / den
-      if (u > 0 && u < t && v >= 0 && v <= 1) t = u
-    }
-  }
-  return t <= 1 ? [sx + dx * t, sy + dy * t] : [px, py]
-}
-
-/** d3's curveBasis through the points: a B-spline that starts and ends on the polyline's ends. */
-function basis(pts) {
-  if (pts.length < 3) return `M${pts.map(([x, y]) => `${r(x)},${r(y)}`).join('L')}`
-  let [x0, y0] = pts[0], [x1, y1] = pts[1]
-  let d = `M${r(x0)},${r(y0)}L${r((5 * x0 + x1) / 6)},${r((5 * y0 + y1) / 6)}`
-  const to = (x, y) => {
-    d += `C${r((2 * x0 + x1) / 3)},${r((2 * y0 + y1) / 3)} ${r((x0 + 2 * x1) / 3)},${r((y0 + 2 * y1) / 3)} ${r((x0 + 4 * x1 + x) / 6)},${r((y0 + 4 * y1 + y) / 6)}`
-    x0 = x1, y0 = y1, x1 = x, y1 = y
-  }
-  for (let k = 2; k < pts.length; k++) to(pts[k][0], pts[k][1])
-  to(x1, y1)
-  return d + `L${r(x1)},${r(y1)}`
-}
-
-/** Moves the polyline's end back by `by` px along its last segment, for an arrowhead to fill. */
-function shorten(pts, by) {
-  const [ax, ay] = pts[pts.length - 2], [bx, by2] = pts[pts.length - 1]
-  const d = Math.hypot(bx - ax, by2 - ay)
-  if (d < 1) return
-  const k = Math.min(by, d - 0.5) / d
-  pts[pts.length - 1] = [bx - (bx - ax) * k, by2 - (by2 - ay) * k]
-}
-
-function draw(g) {
+/** The flowchart in `src` (its first line the header) as { w, h, svg }. */
+export function draw(src) {
+  const g = parse(src)
   // An id naming a subgraph stands for the subgraph, unless a node by that name has its own label or shape.
   const cindex = new Map(g.clusters.map((c, k) => [c.id, k]))
   const nodes = g.nodes.filter(n => !cindex.has(n.id) || n.text !== n.id || n.shape !== 'rect')
@@ -495,8 +431,7 @@ function draw(g) {
     const st = style.length ? ` style="${esc(style.join(';'))}"` : ''
     if (e.u === e.v && keep.has(e.u)) {
       const v = keep.get(e.u), [x, y] = res.nodes[v], o = shapes[v]
-      const pts = lr ? [[x - o.h / 4, y + o.h / 2], [x - o.h / 4, y + o.h / 2 + 22], [x + o.h / 4, y + o.h / 2 + 22], [x + o.h / 4, y + o.h / 2]]
-        : [[x + o.w / 2, y - o.h / 4], [x + o.w / 2 + 22, y - o.h / 4], [x + o.w / 2 + 22, y + o.h / 4], [x + o.w / 2, y + o.h / 4]]
+      const pts = selfLoop(x, y, o.w, o.h, lr)
       if (e.head) shorten(pts, ARROW)
       out += `<path class="${cls}" d="${basis(pts)}"${st}${e.head ? ` marker-end="url(#${marker(e.head, color)})"` : ''}/>`
       if (elabs[k]) {
@@ -508,16 +443,8 @@ function draw(g) {
     }
     const got = res.edges[k]
     if (!got) return
-    const pts = got.points.map(p => p.slice())
     const ui = at(e.u), vi = at(e.v)
-    if (ui >= 0) pts[0] = clip(shapes[ui], ...res.nodes[ui], ...pts[0], ...pts[1])
-    const n = pts.length
-    if (vi >= 0) pts[n - 1] = clip(shapes[vi], ...res.nodes[vi], ...pts[n - 1], ...pts[n - 2])
-    // Points the clip left on top of each other would turn an arrowhead at random.
-    for (let k = pts.length - 2; k > 0; k--) if (Math.hypot(pts[k][0] - pts[k + 1][0], pts[k][1] - pts[k + 1][1]) < 1) pts.splice(k, 1)
-    if (pts.length > 2 && Math.hypot(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1]) < 1) pts.splice(1, 1)
-    if (e.head) shorten(pts, ARROW)
-    if (e.tail) pts.reverse(), shorten(pts, ARROW), pts.reverse()
+    const pts = trace(got.points, ui >= 0 && [shapes[ui], ...res.nodes[ui]], vi >= 0 && [shapes[vi], ...res.nodes[vi]], e.tail ? ARROW : 0, e.head ? ARROW : 0)
     out += `<path class="${cls}" d="${basis(pts)}"${st}${e.head ? ` marker-end="url(#${marker(e.head, color)})"` : ''}${e.tail ? ` marker-start="url(#${marker(e.tail === '<' ? '>' : e.tail, color)})"` : ''}/>`
     if (elabs[k] && got.label) {
       const l = elabs[k], [lx, ly] = got.label
