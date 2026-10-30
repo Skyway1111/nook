@@ -388,28 +388,27 @@ function poly(w, h, pts, dx = 0) {
   return { w, h, pts, dx, draw: (x, y) => `<polygon points="${pts.map(([px, py]) => `${r(x + px)},${r(y + py)}`).join(' ')}"/>` }
 }
 
-/** Where the segment from a shape's center (cx, cy) toward (px, py) leaves the shape. */
-function clip(o, cx, cy, px, py) {
-  const dx = px - cx, dy = py - cy
-  if (!dx && !dy) return [cx, cy]
-  if (o.round) {
-    const k = o.round / Math.hypot(dx, dy)
-    return k < 1 ? [cx + dx * k, cy + dy * k] : [px, py]
+/** Where the segment from (sx, sy), inside a shape centered at (cx, cy), toward (px, py) leaves it. */
+function clip(o, cx, cy, sx, sy, px, py) {
+  const ox = sx - cx, oy = sy - cy, dx = px - sx, dy = py - sy
+  let t = Infinity
+  if (o.round || o.ellipse) {
+    // A circle, or an ellipse scaled to one: the larger root of |o + t·d| = 1.
+    const rx = o.round || o.w / 2, ry = o.round || o.h / 2
+    const ux = ox / rx, uy = oy / ry, vx = dx / rx, vy = dy / ry
+    const A = vx * vx + vy * vy, B = ux * vx + uy * vy, C = ux * ux + uy * uy - 1
+    if (A) t = (-B + Math.sqrt(Math.max(0, B * B - A * C))) / A
+  } else {
+    const p = o.pts
+    for (let k = 0; k < p.length; k++) {
+      const ax = p[k][0] - ox, ay = p[k][1] - oy, ex = p[(k + 1) % p.length][0] - p[k][0], ey = p[(k + 1) % p.length][1] - p[k][1]
+      const den = dx * ey - dy * ex
+      if (!den) continue
+      const u = (ax * ey - ay * ex) / den, v = (ax * dy - ay * dx) / den
+      if (u > 0 && u < t && v >= 0 && v <= 1) t = u
+    }
   }
-  if (o.ellipse) {
-    const k = 1 / Math.sqrt((dx * dx) / ((o.w * o.w) / 4) + (dy * dy) / ((o.h * o.h) / 4))
-    return k < 1 ? [cx + dx * k, cy + dy * k] : [px, py]
-  }
-  let t = 1
-  const p = o.pts
-  for (let k = 0; k < p.length; k++) {
-    const [ax, ay] = p[k], [bx, by] = p[(k + 1) % p.length]
-    const ex = bx - ax, ey = by - ay, den = dx * ey - dy * ex
-    if (!den) continue
-    const u = (ax * ey - ay * ex) / den, v = (ax * dy - ay * dx) / den
-    if (u > 0 && u < t && v >= 0 && v <= 1) t = u
-  }
-  return [cx + dx * t, cy + dy * t]
+  return t <= 1 ? [sx + dx * t, sy + dy * t] : [px, py]
 }
 
 /** d3's curveBasis through the points: a B-spline that starts and ends on the polyline's ends. */
@@ -509,14 +508,12 @@ function draw(g) {
     if (!got) return
     const pts = got.points.map(p => p.slice())
     const ui = at(e.u), vi = at(e.v)
-    if (ui >= 0) {
-      const [x, y] = res.nodes[ui]
-      pts[0] = clip(shapes[ui], x, y, pts[1][0], pts[1][1])
-    }
-    if (vi >= 0) {
-      const [x, y] = res.nodes[vi], n = pts.length
-      pts[n - 1] = clip(shapes[vi], x, y, pts[n - 2][0], pts[n - 2][1])
-    }
+    if (ui >= 0) pts[0] = clip(shapes[ui], ...res.nodes[ui], ...pts[0], ...pts[1])
+    const n = pts.length
+    if (vi >= 0) pts[n - 1] = clip(shapes[vi], ...res.nodes[vi], ...pts[n - 1], ...pts[n - 2])
+    // Points the clip left on top of each other would turn an arrowhead at random.
+    for (let k = pts.length - 2; k > 0; k--) if (Math.hypot(pts[k][0] - pts[k + 1][0], pts[k][1] - pts[k + 1][1]) < 1) pts.splice(k, 1)
+    if (pts.length > 2 && Math.hypot(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1]) < 1) pts.splice(1, 1)
     if (e.head) shorten(pts, ARROW)
     if (e.tail) pts.reverse(), shorten(pts, ARROW), pts.reverse()
     out += `<path class="${cls}" d="${basis(pts)}"${st}${e.head ? ` marker-end="url(#${marker(e.head, color)})"` : ''}${e.tail ? ` marker-start="url(#${marker(e.tail === '<' ? '>' : e.tail, color)})"` : ''}/>`

@@ -575,9 +575,29 @@ function place(g) {
     const [p, q] = at(b.x0, b.y0), [r, s] = at(b.x1, b.y1)
     return { x: Math.min(p, r), y: Math.min(q, s), w: Math.abs(r - p), h: Math.abs(s - q) }
   })
+  // Ports: a vertex's edges leave its bottom and reach its top spread out, in the order of where they go.
+  const faces = new Map(), port = new Float64Array(2 * chains.length)
+  chains.forEach((chain, i) => {
+    if (!chain) return
+    const n = chain.length
+    for (const [v, toward, k] of [[chain[0], chain[1], 2 * i], [chain[n - 1], chain[n - 2], 2 * i + 1]]) {
+      const key = v * 2 + (k & 1)
+      if (!faces.has(key)) faces.set(key, [])
+      faces.get(key).push([x[toward], k])
+    }
+  })
+  for (const [key, list] of faces) {
+    if (list.length < 2) continue
+    list.sort((a, b) => a[0] - b[0])
+    const step = Math.min(18, (0.7 * W[key >> 1]) / (list.length - 1))
+    list.forEach(([, k], j) => (port[k] = (j - (list.length - 1) / 2) * step))
+  }
   const edges = chains.map((chain, i) => {
     if (!chain) return null
-    const pts = [at(x[chain[0]], y[rank[chain[0]]])]
+    // From inside the tail at its port, straight out of its rank, through each dummy's rank, and straight
+    // into the head at its port.
+    const a = chain[0], b = chain[chain.length - 1], xa = x[a] + port[2 * i], xb = x[b] + port[2 * i + 1]
+    const pts = [at(xa, y[rank[a]]), at(xa, y[rank[a]] + height[rank[a]] / 2)]
     let label = null
     for (let k = 1; k < chain.length - 1; k++) {
       const d = chain[k], r = rank[d], half = height[r] / 2
@@ -585,7 +605,7 @@ function place(g) {
       pts.push(at(x[d], y[r] - half))
       if (half) pts.push(at(x[d], y[r] + half))
     }
-    pts.push(at(x[chain[chain.length - 1]], y[rank[chain[chain.length - 1]]]))
+    pts.push(at(xb, y[rank[b]] - height[rank[b]] / 2), at(xb, y[rank[b]]))
     if (routes[i].flip) pts.reverse()
     // An end at a subgraph stops on its box.
     const e = g.edges[i]
