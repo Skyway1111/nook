@@ -10,12 +10,15 @@ use std::{
     },
     path::Path,
     process::{Child, Command},
+    ptr::null_mut,
 };
 
 extern "C" {
     fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
+    fn fcntl(fd: c_int, command: c_int, ...) -> c_int;
     fn setsid() -> c_int;
     fn signal(signal: c_int, handler: usize) -> usize;
+    fn sigprocmask(how: c_int, set: *const u64, old: *mut u64) -> c_int;
     fn kill(pid: c_int, signal: c_int) -> c_int;
     fn syscall(number: c_long, ...) -> c_long;
     fn getuid() -> u32;
@@ -52,8 +55,11 @@ const TIOCSPTLCK: c_ulong = 0x4004_5431;
 const TIOCGPTPEER: c_ulong = 0x5441;
 const SYS_CLOSE_RANGE: c_long = 436;
 const CLOSE_RANGE_CLOEXEC: c_ulong = 4;
+const F_SETFD: c_int = 2;
+const FD_CLOEXEC: c_int = 1;
 const SIGHUP: c_int = 1;
 const SIG_DFL: usize = 0;
+const SIG_SETMASK: c_int = 2;
 /// The signals a parent may have ignored, which a child would otherwise keep ignoring: hangup, interrupt,
 /// quit, alarm, terminate, child.
 const RESET: [c_int; 6] = [1, 2, 3, 14, 15, 17];
@@ -158,10 +164,15 @@ impl Console {
                 for s in RESET {
                     signal(s, SIG_DFL);
                 }
+                sigprocmask(SIG_SETMASK, [0u64; 16].as_ptr(), null_mut()); // none blocked: std keeps the spawning thread's mask
                 check(setsid())?;
                 check(ioctl(0, TIOCSCTTY, 0 as c_ulong))?;
-                // nook's descriptors close at exec; std's own error pipe already does.
-                syscall(SYS_CLOSE_RANGE, 3 as c_ulong, c_ulong::from(u32::MAX), CLOSE_RANGE_CLOEXEC);
+                // nook's descriptors close at exec; std's own error pipe already does. Before Linux 5.11, one by one.
+                if syscall(SYS_CLOSE_RANGE, 3 as c_ulong, c_ulong::from(u32::MAX), CLOSE_RANGE_CLOEXEC) < 0 {
+                    for fd in 3..1024 {
+                        fcntl(fd, F_SETFD, FD_CLOEXEC);
+                    }
+                }
                 Ok(())
             });
         }
