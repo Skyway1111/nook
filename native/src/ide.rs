@@ -55,27 +55,19 @@ fn lock_dir() -> PathBuf {
         .join("ide")
 }
 
-/// Deletes what nooks that no longer run left, as one ended by force does: their lockfiles here, known by
-/// their own fields, since other editors' share the folder, and their sessions' state files, named
-/// `<pid>-<id>` in the temp folder's `nook` (`state_file` in pty.rs).
+/// Deletes the sessions' state files (`state_file` in pty.rs, `<pid>-<id>`) of nooks that no longer run, as one
+/// ended by force leaves. Its lockfile here needs nothing: the next Claude that looks for its IDE deletes each
+/// one whose pid is gone, any editor's.
 pub fn sweep() {
-    let gone = |pid: Option<u32>| pid.is_some_and(|pid| !running(pid));
-    for e in std::fs::read_dir(lock_dir()).into_iter().flatten().flatten() {
-        let text = std::fs::read_to_string(e.path()).unwrap_or_default();
-        let Ok(lock) = json::parse(&text) else { continue };
-        let pid = if let J::Num(n) = lock["pid"] { n.parse().ok() } else { None };
-        if lock["ideName"] == "nook" && lock["transport"] == "ws" && lock["workspaceFolders"] == J::Arr(Vec::new()) && gone(pid) {
-            let _ = std::fs::remove_file(e.path());
-        }
-    }
     for e in std::fs::read_dir(std::env::temp_dir().join("nook")).into_iter().flatten().flatten() {
-        if gone(e.file_name().to_str().and_then(|n| n.split_once('-')?.0.parse().ok())) {
+        let pid = e.file_name().to_str().and_then(|n| n.split_once('-')?.0.parse().ok());
+        if pid.is_some_and(|pid| !running(pid)) {
             let _ = std::fs::remove_file(e.path());
         }
     }
 }
 
-/// Whether process `pid` runs. One this user may not open does.
+/// Whether process `pid` may still run: false only when it surely doesn't.
 #[cfg(windows)]
 fn running(pid: u32) -> bool {
     use crate::sys::*;
@@ -84,7 +76,7 @@ fn running(pid: u32) -> bool {
         if h.is_null() {
             return std::io::Error::last_os_error().raw_os_error() != Some(87); // ERROR_INVALID_PARAMETER: no such process
         }
-        let runs = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+        let runs = WaitForSingleObject(h, 0) != WAIT_OBJECT_0;
         CloseHandle(h);
         runs
     }
@@ -92,11 +84,7 @@ fn running(pid: u32) -> bool {
 
 #[cfg(not(windows))]
 fn running(pid: u32) -> bool {
-    extern "C" {
-        fn kill(pid: i32, signal: i32) -> i32;
-    }
-    let sent = unsafe { kill(pid as i32, 0) } == 0;
-    sent || std::io::Error::last_os_error().raw_os_error() != Some(3) // ESRCH: no such process
+    std::path::Path::new(&format!("/proc/{pid}")).exists()
 }
 
 /// 128 random bits as hex. Each `RandomState` is seeded from the system's randomness.
