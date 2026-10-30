@@ -75,7 +75,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   // size has reached the PTY: an earlier redraw is an older size's. One resize waits at a time, and the size
   // goes out again once its frame shows, so a dragged edge reflows Claude as fast as Claude redraws. A hidden
   // tab has no size, and fitting it would shrink Claude to a sliver.
-  let hold = null // the resize waiting for Claude's redraw: { sent, until, redrawn, timer }
+  let hold = null // the resize waiting for Claude's redraw, then for it to show: { sent, until, redrawn, timer, done }
   let again = false // whether the host resized while a frame was held
   const output = new Channel()
   // Sixel and iTerm2 pictures load their module the first time output holds one. Output that arrives meanwhile
@@ -115,7 +115,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   }
   function take(text) {
     term.write(text)
-    if (!hold?.sent || !(hold.redrawn ||= clears(text))) return
+    if (!hold?.sent || hold.done || !(hold.redrawn ||= clears(text))) return
     clearTimeout(hold.timer)
     if (ends(text)) release()
     else hold.timer = setTimeout(release, Math.min(QUIET_MS, hold.until - performance.now()))
@@ -148,12 +148,13 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     hold.timer = setTimeout(release, HOLD_MS)
   }
   function release() {
-    if (!hold) return
+    if (!hold || hold.done) return
     clearTimeout(hold.timer)
-    hold = null
+    hold.done = true
     term.write('\x1b[?2026l')
   }
   term.onRender(() => {
+    if (hold?.done) hold = null
     if (again && !hold) {
       again = false
       refit()
