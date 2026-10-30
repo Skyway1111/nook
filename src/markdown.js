@@ -92,9 +92,6 @@ function cleanUrl(href) {
 }
 
 let links, queue, top, inLink, inRawBlock, linkEmitted
-// Whether the document holds an `@`, a `mailto:`/`xmpp:`, or what can become two spaces before a line break: where it
-// doesn't, plain text never looks for them.
-let hasAt, hasMail, hasBr
 
 /** The HTML for Markdown `md`. */
 export function toHtml(md) {
@@ -103,9 +100,6 @@ export function toHtml(md) {
   top = true
   inLink = inRawBlock = linkEmitted = false
   if (md.includes('\r')) md = md.replace(/\r\n|\r/g, '\n')
-  hasAt = md.includes('@')
-  hasMail = md.includes('mailto:') || md.includes('xmpp:')
-  hasBr = md.includes('  \n') || md.includes('\t')
   const tokens = lex(md, [])
   for (let i = 0; i < queue.length; i++) queue[i].html = inline(queue[i].src, false)
   return render(tokens)
@@ -797,9 +791,14 @@ const cls = c => c < 128 ? CH[c] : 0
 const mailtoAt = (s, i) => s.startsWith('mailto:', i) || s.startsWith('xmpp:', i)
 const STOP = /[\\<![`*~_]|[hH][tT][tT][pP]|[fF][tT][pP]:\/\/|www\./g
 
+const find = (s, ch, from) => {
+  const i = s.indexOf(ch, from)
+  return i < 0 ? s.length : i
+}
+
 /**
- * Where the plain text at `p` ends: before anything that could start a link, emphasis, code, a tag, a break or a
- * bare URL or email. Each kind's next place is found once and kept in `k` until the text passes it.
+ * Where the plain text at `p` ends: before anything that could start a link, emphasis, code, a tag, a break, or a
+ * bare URL or email. Each kind's next place is found by a single-character search and kept in `k` until passed.
  */
 function textEnd(s, p, k) {
   const n = s.length
@@ -811,37 +810,15 @@ function textEnd(s, p, k) {
     STOP.lastIndex = q
     k.stop = STOP.exec(s)?.index ?? n
   }
-  if (k.br < q && k.br < n) {
-    let t = s.indexOf('  \n', q)
-    if (t < 0) t = n
-    else while (t > q && s.charCodeAt(t - 1) === 32) t--
-    k.br = t
-  }
-  if (k.mail <= q && k.mail < n) {
-    let t = q + 1
-    for (;;) {
-      const a = s.indexOf('mailto:', t), b = s.indexOf('xmpp:', t)
-      t = a < 0 ? b : b < 0 ? a : Math.min(a, b)
-      if (t < 0) t = n
-      else if (cls(s.charCodeAt(t - 1)) & 4) {
-        t++
-        continue
-      }
-      break
-    }
-    k.mail = t
-  }
-  if (k.at <= q && k.at < n) {
+  let end = k.stop
+  // An email's name, then its `@`.
+  if (k.at <= q) {
     let a = q
     for (;;) {
-      a = s.indexOf('@', a)
-      if (a < 0) {
-        k.at = k.name = n
-        break
-      }
+      a = find(s, '@', a)
       let u = a
       while (u > 0 && cls(s.charCodeAt(u - 1)) & 2) u--
-      if (u < a && a > q) {
+      if (a === n || (u < a && a > q)) {
         k.at = a
         k.name = u
         break
@@ -849,7 +826,31 @@ function textEnd(s, p, k) {
       a++
     }
   }
-  return Math.min(k.stop, k.br, k.mail, Math.max(k.name, q))
+  if (k.at < n) end = Math.min(end, Math.max(k.name, q))
+  // Two spaces before a line break. Spaces can't run past `end`, which isn't one.
+  if (k.nl < q) k.nl = find(s, '\n', q)
+  while (k.nl < end) {
+    const nl = k.nl
+    if (nl - 2 >= q && s.charCodeAt(nl - 1) === 32 && s.charCodeAt(nl - 2) === 32) {
+      let t = nl - 2
+      while (t > q && s.charCodeAt(t - 1) === 32) t--
+      end = t
+      break
+    }
+    k.nl = find(s, '\n', nl + 1)
+  }
+  // `mailto:` or `xmpp:` after a character that isn't a letter or digit.
+  if (k.colon < q + 5) k.colon = find(s, ':', q + 5)
+  while (k.colon < n && k.colon < end + 6) {
+    const cl = k.colon
+    const t = s.startsWith('mailto', cl - 6) ? cl - 6 : s.startsWith('xmpp', cl - 4) ? cl - 4 : -1
+    if (t > q && !(cls(s.charCodeAt(t - 1)) & 4)) {
+      if (t < end) end = t
+      break
+    }
+    k.colon = find(s, ':', cl + 1)
+  }
+  return end
 }
 
 /** The HTML for inline Markdown `src`, or its plain text for an image's alt when `alt`. */
@@ -857,7 +858,7 @@ function inline(src, alt) {
   const n = src.length
   let out = '', text = '', textRaw = false, inText = false
   let prev = '', keep = false
-  const k = { stop: -1, br: hasBr ? -1 : n, mail: hasMail ? -1 : n, at: hasAt ? -1 : n, name: n, refs: src.includes('&#'), masked: null }
+  const k = { stop: -1, at: -1, name: 0, nl: -1, colon: -1, refs: src.includes('&#'), masked: null }
   let p = 0, m, r
   while (p < n) {
     if (!keep) prev = ''
