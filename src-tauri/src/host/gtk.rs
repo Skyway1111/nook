@@ -843,10 +843,10 @@ unsafe extern "C" fn scheme_request(req: Ptr, _: Ptr) {
     }
 }
 
-/// Answers with what `f` returns on a thread of its own.
+/// Answers with what `f` returns on a worker.
 fn later(req: Ptr, f: impl FnOnce() -> Reply + Send + 'static) {
     let req = Request(unsafe { g_object_ref(req) });
-    std::thread::spawn(move || {
+    ipc::work(move || {
         let reply = f();
         post(move || unsafe {
             respond(req.ptr(), reply);

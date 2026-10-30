@@ -114,10 +114,53 @@ pub fn message(json: &str) {
         Some((Run::Inline, f)) => reply(id, f(&Args { json: args, body: &[] })),
         Some((Run::Thread, f)) => {
             let args = args.to_owned();
-            std::thread::spawn(move || {
+            work(move || {
                 let r = f(&Args { json: &args, body: &[] });
                 plat::post(move || reply(id, r));
             });
+        }
+    }
+}
+
+/// The threads that run commands and requests off the UI thread, and the jobs waiting for one.
+struct Workers {
+    jobs: std::collections::VecDeque<Box<dyn FnOnce() + Send>>,
+    /// How many wait for a job.
+    waiting: usize,
+}
+
+static WORKERS: Mutex<Workers> = Mutex::new(Workers { jobs: std::collections::VecDeque::new(), waiting: 0 });
+static WAKE: std::sync::Condvar = std::sync::Condvar::new();
+
+/// Runs `job` on a worker: one that waits, or else a new one, so a job never waits behind one that blocks. A
+/// thread is kept, since starting one costs more than most commands (every DLL in the process hears of it), and
+/// leaves after a minute without work.
+pub fn work(job: impl FnOnce() + Send + 'static) {
+    let mut w = WORKERS.lock().unwrap();
+    w.jobs.push_back(Box::new(job));
+    if w.jobs.len() > w.waiting {
+        drop(w);
+        std::thread::spawn(worker);
+    } else {
+        WAKE.notify_one();
+    }
+}
+
+fn worker() {
+    let mut w = WORKERS.lock().unwrap();
+    loop {
+        if let Some(job) = w.jobs.pop_front() {
+            drop(w);
+            job();
+            w = WORKERS.lock().unwrap();
+            continue;
+        }
+        w.waiting += 1;
+        let (next, wait) = WAKE.wait_timeout(w, std::time::Duration::from_secs(60)).unwrap();
+        w = next;
+        w.waiting -= 1;
+        if wait.timed_out() && w.jobs.is_empty() {
+            return;
         }
     }
 }

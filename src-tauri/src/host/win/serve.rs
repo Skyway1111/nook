@@ -1,6 +1,6 @@
 //! WebView2's requests for nook's own scheme and files, answered from assets.rs. Every request from every
 //! frame and worker comes here, on the UI thread. App files are answered inline from static memory; files on
-//! disk and command fetches are deferred to a thread. Bodies are streams over the bytes, with no copy.
+//! disk and command fetches are deferred to a worker. Bodies are streams over the bytes, with no copy.
 use super::webview;
 use crate::com::{
     add_ref, call, get, guid, take_string, Com, Guid, E_NOINTERFACE, E_NOTIMPL, IID_IAGILEOBJECT, IID_IUNKNOWN, S_FALSE, S_OK,
@@ -46,11 +46,11 @@ pub fn request(args: *mut c_void) {
     }
 }
 
-/// Answers with what `f` returns on a thread of its own.
+/// Answers with what `f` returns on a worker.
 fn later(args: *mut c_void, f: impl FnOnce() -> Reply + Send + 'static) {
     let Ok(deferral) = get(args, 6) else { return };
     let (args, deferral) = (Ui(add_ref(args)), Ui(deferral));
-    std::thread::spawn(move || {
+    ipc::work(move || {
         let reply = f();
         super::post(move || {
             send(args.ptr(), reply);
