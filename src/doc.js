@@ -4,29 +4,30 @@
 /** `text` as lines, split at \r\n, \r or \n. */
 export const split = text => (text.includes('\r') ? text.split(/\r\n?|\n/) : text.split('\n'))
 
-const S = 4 // offsets are kept for every 16th line, 1 << S, and summed from there
+const S = 4, M = (1 << S) - 1 // offsets are kept for every 16th line, 1 << S, and summed from there
 
 export class Doc {
   constructor(text) {
     this.lines = split(text)
     this.blocks = new Int32Array((this.lines.length >> S) + 2) // line (b << S)'s offset, right up to block `known`
     this.known = 0
-    this.at = this.atOffset = 0 // the last line start or lineOf found, and its offset, which a look just past it walks on from
+    this.at = this.atOffset = 0 // the last line start or lineOf found, and its offset, which a lookup near it walks from
     this.length = this.lines.reduce((n, l) => n + l.length + 1, -1)
   }
 
   get count() { return this.lines.length }
 
-  /** Line `i`'s offset. */
+  /** Line `i`'s offset: walked from the finger, or from its block's start, whichever is nearer. */
   start(i) {
-    const lines = this.lines
+    const lines = this.lines, d = i - this.at
     let k = this.at, o = this.atOffset
-    if (i < k || i > k + (1 << S)) {
-      const b = Math.min(i >> S, (lines.length - 1) >> S)
-      if (b > this.known) this.index(b)
-      k = b << S
-      o = this.blocks[b]
+    if ((d < 0 ? -d : d) > (i & M)) {
+      const b = i >> S
+      if (b > this.known) this.index(Math.min(b, (lines.length - 1) >> S))
+      k = Math.min(b, this.known) << S
+      o = this.blocks[k >> S]
     }
+    while (k > i) o -= lines[--k].length + 1
     for (; k < i; k++) o += lines[k].length + 1
     if (i < lines.length) { this.at = i; this.atOffset = o }
     return o
@@ -45,22 +46,25 @@ export class Doc {
 
   /** The line holding offset `pos`. */
   lineOf(pos) {
-    const bs = this.blocks, lines = this.lines, last = lines.length - 1
-    let i = this.at, o = this.atOffset, e = Math.min(last, i + (1 << S))
-    if (pos >= o) for (; i < e && o + lines[i].length + 1 <= pos; i++) o += lines[i].length + 1
-    if (pos < this.atOffset || (i === e && i < last && o + lines[i].length + 1 <= pos)) {
-      const lb = last >> S
-      while (this.known < lb && bs[this.known] <= pos) this.index(Math.min(lb, this.known + 16))
-      let lo = 0, hi = this.known
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1
-        if (bs[mid] <= pos) lo = mid
-        else hi = mid - 1
-      }
-      i = lo << S
-      o = bs[lo]
-      for (e = Math.min(last, i + (1 << S) - 1); i < e && o + lines[i].length + 1 <= pos; i++) o += lines[i].length + 1
+    const bs = this.blocks, lines = this.lines, last = lines.length - 1, lb = last >> S
+    while (this.known < lb && bs[this.known] <= pos) this.index(Math.min(lb, this.known + 16))
+    // the last block starting at or before pos: galloped to from the finger's when pos is past the finger
+    let lo = 0, hi = this.known
+    if (pos >= this.atOffset) {
+      lo = this.at >> S
+      let step = 1
+      for (; lo + step <= hi && bs[lo + step] <= pos; step <<= 1) lo += step
+      hi = Math.min(hi, lo + step - 1)
     }
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (bs[mid] <= pos) lo = mid
+      else hi = mid - 1
+    }
+    // the line in it, walked from the finger if it's there and before pos, else from the block's start
+    let i = lo << S, o = bs[lo]
+    if (this.at >> S === lo && this.atOffset <= pos) { i = this.at; o = this.atOffset }
+    for (const e = Math.min(last, ((lo + 1) << S) - 1); i < e && o + lines[i].length + 1 <= pos; i++) o += lines[i].length + 1
     this.at = i
     this.atOffset = o
     return i
@@ -68,8 +72,7 @@ export class Doc {
 
   /** The text between offsets `from` and `to`, lines joined by `sep`. */
   slice(from, to, sep = '\n') {
-    const a = this.lineOf(from), b = this.lineOf(to)
-    const fa = from - this.start(a), tb = to - this.start(b)
+    const a = this.lineOf(from), fa = from - this.start(a), b = this.lineOf(to), tb = to - this.start(b)
     if (a === b) return this.lines[a].slice(fa, tb)
     const out = [this.lines[a].slice(fa)]
     for (let i = a + 1; i < b; i++) out.push(this.lines[i])
@@ -106,21 +109,20 @@ export class Doc {
     let shift = 0
     for (let k = 0; k < changes.length; k++) {
       const { from, to, insert } = changes[k]
-      inverse[k] = { from: from + shift, to: from + shift + insert.length, insert: this.slice(from, to) }
+      inverse[k] = { from: from + shift, to: from + shift + insert.length, insert: from === to ? '' : this.slice(from, to) }
       shift += insert.length - (to - from)
     }
     if (!changes.length) return { inverse, edits }
-    for (let k = 0; k < changes.length;) {
-      const a = this.lineOf(changes[k].from)
-      let b = a, end = changes[k].from, s = lines[a].slice(0, end - this.start(a))
+    for (let k = 0, next = this.lineOf(changes[0].from); k < changes.length;) {
+      const a = next
+      let b = a, bo = this.start(a), end = changes[k].from, s = lines[a].slice(0, end - bo)
       do { // this change, and each after it that starts on the line the last one ended on
         const { from, to, insert } = changes[k++]
-        const bs = this.start(b)
-        s += lines[b].slice(end - bs, from - bs) + insert
-        b = this.lineOf(to)
+        s += lines[b].slice(end - bo, from - bo) + insert
+        if (to > from) bo = this.start(b = this.lineOf(to))
         end = to
-      } while (k < changes.length && this.lineOf(changes[k].from) === b)
-      const p = (s + lines[b].slice(end - this.start(b))).split('\n')
+      } while (k < changes.length && (next = this.lineOf(changes[k].from)) === b)
+      const p = (s + lines[b].slice(end - bo)).split('\n')
       edits.push({ at: a, del: b - a + 1, ins: p.length })
       parts.push(p)
     }
