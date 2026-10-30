@@ -11,7 +11,7 @@ const PREVIEW = new URL('./nook.jpg', import.meta.url).href
 const NOOK = 'custom:nook:nook'
 const label = name => name.replace(/[-_]+/g, ' ').replace(/(^|\s)\p{L}/gu, c => c.toUpperCase())
 /** A request body: `name`, a NUL, then `parts`, each text or bytes. */
-const named = async (name, ...parts) => new Uint8Array(await new Blob([`${name}\0`, ...parts]).arrayBuffer())
+const withName = async (name, ...parts) => new Uint8Array(await new Blob([`${name}\0`, ...parts]).arrayBuffer())
 
 /** `save` patches settings.json, and `reread` applies the theme it names. */
 export function startThemes({ configDir, home, settings, save, reread, showTheme }) {
@@ -132,7 +132,7 @@ export function startThemes({ configDir, home, settings, save, reread, showTheme
     const file = picker.files[0]
     picker.value = ''
     if (!file) return
-    const body = await named(file.name.replace(/\.zip$/i, ''), file)
+    const body = await withName(file.name.replace(/\.zip$/i, ''), file)
     await invoke('install_theme_zip', body).then(installed).catch(e => say(`nook can't install ${file.name}: ${e}.`))
   }
 
@@ -154,7 +154,7 @@ export function startThemes({ configDir, home, settings, save, reread, showTheme
       const { fromPicture } = await import('./themer.js')
       const { name, files } = await fromPicture(file)
       // Each file goes as its name, a NUL, its length, a NUL, and its bytes.
-      await installed(await invoke('install_theme_files', await named(name, ...files.flatMap(([n, blob]) => [`${n}\0${blob.size}\0`, blob]))))
+      await installed(await invoke('install_theme_files', await withName(name, ...files.flatMap(([n, blob]) => [`${n}\0${blob.size}\0`, blob]))))
       say(`Made the ${label(name)} theme from ${file.name}. Its theme.css is yours to edit, in the themes folder.`)
     } catch (e) {
       say(`nook can't make a theme from ${file.name}: ${e.message ?? e}.`)
