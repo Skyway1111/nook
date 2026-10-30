@@ -259,14 +259,16 @@ function index(items) {
   return [...u16(items.length), size, ...offsets.flatMap(o => u32(o).slice(4 - size)), ...items.flat()]
 }
 
-/** The CFF table: glyph names are strings 391 on, the first after CFF's standard strings, and the family's last. */
-function cff(names, charstrings, bbox) {
+/** The CFF table. Its glyphs take CFF's standard strings 229 to 390 as names, none of them in StandardEncoding, so
+ * the one string it stores is FullName (391). ICONS says what each glyph is. */
+function cff(charstrings, bbox) {
+  if (charstrings.length > 163) throw new Error('more icons than standard strings 229 to 390')
   const head = [1, 0, 4, 4, ...index([ascii('nookicons')])]
-  const tail = [...index([...names, 'nook icons'].map(ascii)), 0, 0] // the strings, and no global subroutines
-  const charset = [2, ...u16(391), ...u16(names.length - 1)]
+  const tail = [...index([ascii('nook icons')]), 0, 0] // the strings, and no global subroutines
+  const charset = [2, ...u16(229), ...u16(charstrings.length - 2)]
   const glyphs = index(charstrings)
   const priv = [...num(UPM), 20] // defaultWidthX
-  const dict = at => [...num(391 + names.length), 2, ...bbox.flatMap(num), 5, ...num(at), 15,
+  const dict = at => [...num(391), 2, ...bbox.flatMap(num), 5, ...num(at), 15,
     ...num(at + charset.length), 17, ...num(priv.length), ...num(at + charset.length + glyphs.length), 18]
   let top = [], size
   do { size = top.length; top = dict(head.length + 5 + size + tail.length) } while (top.length != size)
@@ -309,7 +311,7 @@ const codes = Object.entries(ICONS).map(([c, name]) => [+c, names.indexOf(name) 
 const utf16 = s => [...s].flatMap(c => u16(c.charCodeAt(0)))
 const family = utf16('nook icons'), style = utf16('Regular')
 const tables = {
-  'CFF ': cff(names, [[14], ...glyphs.map(charstring)], bbox),
+  'CFF ': cff([[14], ...glyphs.map(charstring)], bbox),
   'OS/2': [ // version 3; fsType 4, preview and print; Unicode range bit 60, the Private Use Area
     ...[3, UPM, 400, 5, 4, ...Array(11).fill(0)].flatMap(u16), ...Array(10).fill(0), ...[0, 1 << 28, 0, 0].flatMap(u32),
     ...ascii('????'), ...[0, codes[0][0], codes.at(-1)[0], ASCENT, -DESCENT, 0, ASCENT, DESCENT].flatMap(u16),
