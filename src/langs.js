@@ -170,7 +170,7 @@ const BRACE = /^\s*[}\])]$/
 const clike = { line: '//', block: '/* */', q: '"\'', prop: 1, fold: 'brace', indent: /[{([]\s*$/, dedent: BRACE }
 
 /** The table: the first language naming an extension or alias wins. */
-export const LANGS = [
+const LANGS = [
   { name: 'Plain text', lex: '', names: 'txt text plain plaintext', prose: 1 },
   { ...clike, name: 'JavaScript', names: 'js mjs cjs javascript node ecmascript', ml: '`', q: '"\'`', interp: '`j',
     re: 1, track: 1, kw: JS_KW, soft: 'async static get set of from as', bool: 'true false', defs: JS_DEFS, word: '$',

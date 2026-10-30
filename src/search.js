@@ -14,7 +14,7 @@ const TO_BOTTOM = '\x1b[1;5F' // Ctrl+End
 
 /** Every match of `query` among buffer `b`'s lines, as [line, x, cells] triples in reading order; a line that
  * wraps reads as one with the rows it wraps onto, and lines are counted for good (`b.trimmed + y`). */
-export function findAll(b, query, matchCase) {
+function findAll(b, query, matchCase) {
   const hits = []
   const q = matchCase ? query : query.toLowerCase()
   const cell = b.getNullCell()
