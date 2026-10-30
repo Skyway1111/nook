@@ -128,20 +128,16 @@ function outline(svg) {
   return contours
 }
 
-/** An SVG arc as cubics, a quarter turn at most each, by Blink's DecomposeArcToCubic as fontTools ports it. The
- * last ends where the trigonometry puts it, as in fontTools, so an end on a half unit rounds the way it did there. */
+/** An SVG arc as cubics, a quarter turn at most each, by Blink's DecomposeArcToCubic. The last ends where the
+ * trigonometry puts it. */
 function arc(x0, y0, rx, ry, deg, large, sweep, x1, y1, draw) {
+  if (deg) throw new Error('a rotated arc') // no Fluent icon has one
   if (x0 == x1 && y0 == y1) return
   if (!rx || !ry) return draw(x1, y1)
-  const cos = Math.cos(deg * (Math.PI / 180)), sin = Math.sin(deg * (Math.PI / 180))
-  const hx = (x0 - x1) * 0.5, hy = (y0 - y1) * 0.5
-  const tx = cos * hx + sin * hy, ty = cos * hy - sin * hx
-  const k = tx * tx / (rx * rx) + ty * ty / (ry * ry)
+  const hx = (x0 - x1) * 0.5, hy = (y0 - y1) * 0.5, k = hx * hx / (rx * rx) + hy * hy / (ry * ry)
   if (k > 1) { rx *= Math.sqrt(k); ry *= Math.sqrt(k) }
   // the ends on the unit circle
-  const ux = 1 / rx, uy = 1 / ry
-  const ax = cos * ux * x0 + sin * ux * y0, ay = cos * uy * y0 - sin * uy * x0
-  const bx = cos * ux * x1 + sin * ux * y1, by = cos * uy * y1 - sin * uy * x1
+  const ux = 1 / rx, uy = 1 / ry, ax = ux * x0, ay = uy * y0, bx = ux * x1, by = uy * y1
   const dx = bx - ax, dy = by - ay
   let f = Math.sqrt(Math.max(1 / (dx * dx + dy * dy) - 0.25, 0))
   if (sweep == large) f = -f
@@ -151,13 +147,12 @@ function arc(x0, y0, rx, ry, deg, large, sweep, x1, y1, draw) {
   if (span < 0 && sweep) span += 2 * Math.PI
   else if (span > 0 && !sweep) span -= 2 * Math.PI
   const n = Math.ceil(Math.abs(span / (Math.PI / 2 + 0.001)))
-  const ellipse = (u, v) => [rx * cos * u - ry * sin * v, rx * sin * u + ry * cos * v]
   for (let i = 0; i < n; i++) {
     const a = from + i * span / n, b = from + (i + 1) * span / n
     const t = 4 / 3 * Math.tan(0.25 * (b - a))
     const sa = Math.sin(a), ca = Math.cos(a), sb = Math.sin(b), cb = Math.cos(b)
-    draw(...ellipse(ca - t * sa + ox, sa + t * ca + oy), ...ellipse(cb + ox + t * sb, sb + oy - t * cb),
-      ...ellipse(cb + ox, sb + oy))
+    draw(rx * (ca - t * sa + ox), ry * (sa + t * ca + oy), rx * (cb + ox + t * sb), ry * (sb + oy - t * cb),
+      rx * (cb + ox), ry * (sb + oy))
   }
 }
 
