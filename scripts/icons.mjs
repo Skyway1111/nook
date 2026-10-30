@@ -128,8 +128,8 @@ function outline(svg) {
   return contours
 }
 
-/** An SVG arc as cubics, a quarter turn at most each, by Blink's DecomposeArcToCubic. The last ends where the
- * trigonometry puts it. */
+/** An SVG arc as cubics, a quarter turn at most each, by Blink's DecomposeArcToCubic. The last ends on the arc's
+ * own end point, so an end on a half unit rounds the same under every V8. */
 function arc(x0, y0, rx, ry, deg, large, sweep, x1, y1, draw) {
   if (deg) throw new Error('a rotated arc') // no Fluent icon has one
   if (x0 == x1 && y0 == y1) return
@@ -152,7 +152,7 @@ function arc(x0, y0, rx, ry, deg, large, sweep, x1, y1, draw) {
     const t = 4 / 3 * Math.tan(0.25 * (b - a))
     const sa = Math.sin(a), ca = Math.cos(a), sb = Math.sin(b), cb = Math.cos(b)
     draw(rx * (ca - t * sa + ox), ry * (sa + t * ca + oy), rx * (cb + ox + t * sb), ry * (sb + oy - t * cb),
-      rx * (cb + ox), ry * (sb + oy))
+      ...i < n - 1 ? [rx * (cb + ox), ry * (sb + oy)] : [x1, y1])
   }
 }
 
