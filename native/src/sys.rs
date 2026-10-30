@@ -24,14 +24,29 @@ pub const STARTF_USESTDHANDLES: u32 = 0x100;
 pub const CREATE_UNICODE_ENVIRONMENT: u32 = 0x400;
 pub const EXTENDED_STARTUPINFO_PRESENT: u32 = 0x8_0000;
 pub const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x2_0016;
-pub const PSEUDOCONSOLE_INHERIT_CURSOR: u32 = 0x1;
-pub const PSEUDOCONSOLE_RESIZE_QUIRK: u32 = 0x2;
-pub const PSEUDOCONSOLE_WIN32_INPUT_MODE: u32 = 0x4;
-pub const LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR: u32 = 0x100;
 pub const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x800;
 pub const FindExInfoBasic: i32 = 1;
 pub const FindExSearchNameMatch: i32 = 0;
 pub const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+
+// The console server
+pub const GENERIC_READ: u32 = 0x8000_0000;
+pub const GENERIC_WRITE: u32 = 0x4000_0000;
+pub const GENERIC_ALL: u32 = 0x1000_0000;
+pub const SYNCHRONIZE: u32 = 0x10_0000;
+pub const MAXIMUM_ALLOWED: u32 = 0x0200_0000;
+pub const FILE_SHARE_READ: u32 = 1;
+pub const FILE_SHARE_WRITE: u32 = 2;
+pub const FILE_SHARE_DELETE: u32 = 4;
+pub const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
+pub const OBJ_CASE_INSENSITIVE: u32 = 0x40;
+pub const DUPLICATE_SAME_ACCESS: u32 = 2;
+pub const WAIT_OBJECT_0: u32 = 0;
+pub const ERROR_PIPE_NOT_CONNECTED: u32 = 233;
+pub const WS_POPUP: u32 = 0x8000_0000;
+pub const WS_EX_TOOLWINDOW: u32 = 0x80;
+pub const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
+pub const WS_EX_NOREDIRECTIONBITMAP: u32 = 0x0020_0000;
 
 // The registry's environment
 pub const HKEY_CURRENT_USER: HKEY = 0x8000_0001u32 as i32 as isize as HKEY;
@@ -133,9 +148,27 @@ pub const MB_ICONERROR: u32 = 0x10;
 pub const RRF_RT_REG_SZ: u32 = 0x2;
 
 #[repr(C)]
-pub struct COORD {
-    pub X: i16,
-    pub Y: i16,
+pub struct UNICODE_STRING {
+    pub Length: u16,
+    pub MaximumLength: u16,
+    pub Buffer: *const u16,
+}
+
+#[repr(C)]
+pub struct OBJECT_ATTRIBUTES {
+    pub Length: u32,
+    pub RootDirectory: HANDLE,
+    pub ObjectName: *const UNICODE_STRING,
+    pub Attributes: u32,
+    pub SecurityDescriptor: *const c_void,
+    pub SecurityQualityOfService: *const c_void,
+}
+
+#[repr(C)]
+#[derive(Default)]
+pub struct IO_STATUS_BLOCK {
+    pub Status: isize,
+    pub Information: usize,
 }
 
 #[repr(C)]
@@ -402,10 +435,6 @@ extern "system" {
     pub fn GlobalLock(mem: HANDLE) -> *mut c_void;
     pub fn GlobalUnlock(mem: HANDLE) -> BOOL;
     pub fn GlobalFree(mem: HANDLE) -> HANDLE;
-    pub fn CreatePipe(read: *mut HANDLE, write: *mut HANDLE, attributes: *const c_void, size: u32) -> BOOL;
-    pub fn CreatePseudoConsole(size: COORD, input: HANDLE, output: HANDLE, flags: u32, console: *mut HANDLE) -> i32;
-    pub fn ResizePseudoConsole(console: HANDLE, size: COORD) -> i32;
-    pub fn ClosePseudoConsole(console: HANDLE);
     pub fn InitializeProcThreadAttributeList(list: *mut c_void, count: u32, flags: u32, size: *mut usize) -> BOOL;
     pub fn UpdateProcThreadAttribute(
         list: *mut c_void,
@@ -438,6 +467,22 @@ extern "system" {
     pub fn FindClose(find: HANDLE) -> BOOL;
     pub fn GetModuleHandleW(name: PCWSTR) -> HANDLE;
     pub fn GetUserDefaultUILanguage() -> u16;
+    pub fn DeviceIoControl(device: HANDLE, code: u32, input: *const c_void, input_len: u32, output: *mut c_void, output_len: u32, returned: *mut u32, overlapped: *mut c_void) -> BOOL;
+    pub fn CancelIoEx(handle: HANDLE, overlapped: *mut c_void) -> BOOL;
+    pub fn CreateEventW(attributes: *const c_void, manual: BOOL, initial: BOOL, name: PCWSTR) -> HANDLE;
+    pub fn SetEvent(event: HANDLE) -> BOOL;
+    pub fn ResetEvent(event: HANDLE) -> BOOL;
+    pub fn GetCurrentProcess() -> HANDLE;
+    pub fn DuplicateHandle(from: HANDLE, handle: HANDLE, to: HANDLE, out: *mut HANDLE, access: u32, inherit: BOOL, options: u32) -> BOOL;
+    pub fn GetProcessId(process: HANDLE) -> u32;
+    pub fn TerminateProcess(process: HANDLE, code: u32) -> BOOL;
+    pub fn IsWow64Process2(process: HANDLE, machine: *mut u16, native: *mut u16) -> BOOL;
+    pub fn CreateRemoteThread(process: HANDLE, attributes: *const c_void, stack: usize, start: *const c_void, param: *const c_void, flags: u32, id: *mut u32) -> HANDLE;
+    pub fn SetConsoleCtrlHandler(handler: *const c_void, add: BOOL) -> BOOL;
+    pub fn GetOEMCP() -> u32;
+    pub fn GetUserDefaultLangID() -> u16;
+    pub fn MultiByteToWideChar(cp: u32, flags: u32, s: *const u8, len: i32, w: PWSTR, wlen: i32) -> i32;
+    pub fn WideCharToMultiByte(cp: u32, flags: u32, w: PCWSTR, wlen: i32, s: *mut u8, len: i32, default: *const u8, used: *mut BOOL) -> i32;
     pub fn LCIDToLocaleName(lcid: u32, name: PWSTR, len: i32, flags: u32) -> i32;
 }
 
@@ -445,6 +490,7 @@ extern "system" {
 extern "system" {
     pub fn RtlUpcaseUnicodeChar(c: u16) -> u16;
     pub fn RtlGetVersion(v: *mut OSVERSIONINFOW) -> i32;
+    pub fn NtOpenFile(handle: *mut HANDLE, access: u32, attributes: *const OBJECT_ATTRIBUTES, status: *mut IO_STATUS_BLOCK, share: u32, options: u32) -> i32;
 }
 
 #[link(name = "advapi32.dll", kind = "raw-dylib", modifiers = "+verbatim")]
@@ -526,6 +572,9 @@ extern "system" {
     pub fn MessageBoxW(hwnd: HWND, text: PCWSTR, caption: PCWSTR, kind: u32) -> i32;
     pub fn GetWindowPlacement(hwnd: HWND, placement: *mut WINDOWPLACEMENT) -> BOOL;
     pub fn SetWindowPlacement(hwnd: HWND, placement: *const WINDOWPLACEMENT) -> BOOL;
+    pub fn ConsoleControl(command: u32, info: *mut c_void, len: u32) -> i32;
+    pub fn MapVirtualKeyW(code: u32, kind: u32) -> u32;
+    pub fn VkKeyScanW(c: u16) -> i16;
     pub fn EnumChildWindows(hwnd: HWND, f: unsafe extern "system" fn(HWND, isize) -> BOOL, lparam: isize) -> BOOL;
 }
 

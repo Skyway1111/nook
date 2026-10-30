@@ -3,6 +3,8 @@
 
 #[cfg(windows)]
 mod com;
+#[cfg(windows)]
+mod console;
 mod commands;
 mod defs;
 mod find;
@@ -159,16 +161,12 @@ pub fn downloads_dir() -> PathBuf {
     named.unwrap_or_else(|| home.join("Downloads"))
 }
 
-/// A file nook ships beside its program: `mod`, `themes`, `conpty.dll`, `OpenConsole.exe`. A debug build finds
-/// them where they live in the repository.
+/// A file nook ships beside its program: `mod`, `themes`. A debug build finds them where they live in the
+/// repository.
 pub fn resource(name: &str) -> PathBuf {
     #[cfg(debug_assertions)]
     {
-        let root = Path::new(host::ROOT);
-        match name {
-            "conpty.dll" | "OpenConsole.exe" => root.join("native").join("conpty").join(name),
-            _ => root.join(name),
-        }
+        Path::new(host::ROOT).join(name)
     }
     #[cfg(not(debug_assertions))]
     std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join(name))).unwrap_or_else(|| name.into())

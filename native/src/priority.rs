@@ -5,7 +5,7 @@
 use crate::sys::*;
 use std::{collections::HashSet, path::Path, thread, time::Duration};
 
-const TYPING_PATH: [&str; 4] = ["msedgewebview2.exe", "conhost.exe", "openconsole.exe", "claude.exe"];
+const TYPING_PATH: [&str; 3] = ["msedgewebview2.exe", "conhost.exe", "claude.exe"];
 
 struct Process {
     pid: u32,

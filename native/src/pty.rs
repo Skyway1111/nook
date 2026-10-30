@@ -1,17 +1,16 @@
-//! One pseudoconsole per Claude tab, and the files that carry nook's mod's reports and requests.
+//! One console (a pseudoterminal on Linux) per Claude tab, and the files that carry nook's mod's reports and requests.
 use std::{
     collections::BTreeMap,
     env::{self, JoinPathsError},
     ffi::{OsStr, OsString},
-    fs::File,
-    io::{Read, Write},
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc::{channel, Receiver, Sender},
+        mpsc::{channel, Receiver, RecvTimeoutError, Sender},
         Arc, Mutex,
     },
     thread,
+    time::Instant,
 };
 
 use crate::{err, host::Stream};
@@ -27,31 +26,38 @@ enum Input {
 }
 
 struct Session {
-    /// Taken out when the session ends, so a size queued behind it finds none.
-    pty: Arc<Mutex<Option<os::Pty>>>,
+    pty: Arc<os::Pty>,
     /// To the session's writer, which writes keys and applies sizes in the order they came.
     input: Sender<Input>,
 }
 
-/// Writes a session's keys and applies its sizes, in order, on a thread of its own: a console that stops reading
-/// holds up only this. It ends once the session has and its queue is empty, or a write fails.
-fn writer(mut to: File, pty: Arc<Mutex<Option<os::Pty>>>, queue: Receiver<Input>) {
-    for m in queue {
-        match m {
-            Input::Keys(keys) if to.write_all(keys.as_bytes()).is_err() => return,
-            Input::Keys(_) => {}
-            Input::Size(cols, rows) => {
-                if let Some(pty) = &*pty.lock().unwrap() {
-                    let _ = pty.resize(cols, rows);
+/// Writes a session's keys and applies its sizes, in order, on a thread of its own: a terminal that stops reading
+/// holds up only this. While the console waits on the terminal's answer to a resize, it ticks the console when
+/// the wait is up. It ends once the session has and its queue is empty, or a write fails.
+fn writer(pty: Arc<os::Pty>, queue: Receiver<Input>) {
+    loop {
+        let m = match pty.due() {
+            Some(due) => match queue.recv_timeout(due.saturating_duration_since(Instant::now())) {
+                Err(RecvTimeoutError::Timeout) => {
+                    pty.tick();
+                    continue;
                 }
-            }
+                m => m.ok(),
+            },
+            None => queue.recv().ok(),
+        };
+        match m {
+            None => return,
+            Some(Input::Keys(keys)) if pty.write(&keys).is_err() => return,
+            Some(Input::Keys(_)) => {}
+            Some(Input::Size(cols, rows)) => pty.resize(cols, rows),
         }
     }
 }
 
-/// Closing the pseudoconsole ends every process attached to it, and can block meanwhile.
+/// Closing the console ends every process attached to it, and can block meanwhile.
 fn end(session: Session) {
-    thread::spawn(move || drop(session.pty.lock().unwrap().take()));
+    thread::spawn(move || session.pty.close());
 }
 
 /// One pseudoconsole per Claude tab, keyed by the id `pty_spawn` returns.
@@ -123,7 +129,7 @@ fn plugin_dirs(inherited: &OsStr, nook_mod: PathBuf) -> Result<OsString, JoinPat
     env::join_paths(theirs.chain([nook_mod]))
 }
 
-/// Starts `command` in `cwd` in a pseudoconsole of `cols` by `rows`, whose output streams to the page's channel
+/// Starts `command` in `cwd` in a console of `cols` by `rows`, whose output streams to the page's channel
 /// `on_data` as text. The channel hears empty text when the shell exits.
 pub fn pty_spawn(command: Vec<String>, cwd: String, cols: u16, rows: u16, on_data: u64) -> Result<u64, String> {
     let Some((program, args)) = command.split_first().filter(|(p, _)| !p.trim().is_empty()) else {
@@ -145,24 +151,17 @@ pub fn pty_spawn(command: Vec<String>, cwd: String, cols: u16, rows: u16, on_dat
     if let Some(port) = crate::ide::open(id) {
         vars.push(("CLAUDE_CODE_SSE_PORT", port.to_string().into())); // Claude connects to nook as its editor
     }
-    let (pty, input, mut output, exit) = console.spawn(program, args, &cwd, &vars).map_err(|e| {
+    let (pty, exit) = console.spawn(program, args, &cwd, &vars).map_err(|e| {
         forget(id);
         e.to_string()
     })?;
-
     let out = Stream::new(on_data);
     let exited = out.clone();
-    thread::spawn(move || {
-        let mut buf = vec![0; 1 << 16];
-        // Keep draining after the page is gone: an undrained pipe can stall closing the console.
-        while let Ok(n @ 1..) = output.read(&mut buf) {
-            out.push(&buf[..n]);
-        }
-    });
-    let pty = Arc::new(Mutex::new(Some(pty)));
+    pty.output(Box::new(move |b: &[u8]| out.push(b)));
+    let pty = Arc::new(pty);
     let (queue, keys) = channel();
     let shared = pty.clone();
-    thread::spawn(move || writer(input, shared, keys));
+    thread::spawn(move || writer(shared, keys));
     SESSIONS.0.lock().unwrap().insert(id, Session { pty, input: queue });
     // The shell exited: the stream's end tells its tab to close.
     thread::spawn(move || {
