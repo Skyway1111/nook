@@ -20,7 +20,7 @@ const NAMED = {
   'double-circle': 'dbl', diam: 'diamond', diamond: 'diamond', decision: 'diamond', question: 'diamond', hex: 'hex',
   hexagon: 'hex', prepare: 'hex', 'lean-r': 'lean-r', 'in-out': 'lean-r', 'lean-l': 'lean-l', 'out-in': 'lean-l',
   'trap-b': 'trap', trapezoid: 'trap', priority: 'trap', 'trap-t': 'trap-t', manual: 'trap-t', 'inv-trapezoid': 'trap-t',
-  flag: 'flag', 'odd': 'flag', ellipse: 'ellipse', 'sm-circ': 'circle', 'f-circ': 'circle', start: 'circle', stop: 'dbl',
+  flag: 'flag', odd: 'flag', ellipse: 'ellipse', 'sm-circ': 'circle', 'f-circ': 'circle', start: 'circle', stop: 'dbl',
 }
 const STYLES = new Set(['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'color', 'opacity', 'fill-opacity', 'stroke-opacity', 'font-weight', 'font-style'])
 const VALUE = /^(?:#[\da-f]{3,8}|[a-z]+|(?:rgb|hsl)a?\([\d\s.,%deg/]+\)|[\d.]+(?:px|em|%)?(?:[\s,]+[\d.]+(?:px|em|%)?)*)$/i
@@ -101,7 +101,7 @@ function parse(src) {
         else if (s[k] === '\n') { end = -1; break }
       }
     }
-    if (end < 0) return null
+    if (end < 0 || s.slice(i, end).includes('\n')) return null
     const t = s.slice(i, end)
     i = end + close.length
     return { t, md: false }
@@ -267,7 +267,7 @@ function parse(src) {
     if (s.startsWith('%%', i)) { rest(); continue }
     const word = /^[a-zA-Z]+/.exec(s.slice(i, i + 16))?.[0] ?? ''
     const after = s[i + word.length]
-    const kw = word && (after === undefined || /[\s;]/.test(after))
+    const kw = word && (after === undefined || /[\s;]/.test(after) || (after === ':' && word.startsWith('acc')))
     if (kw && word === 'subgraph') {
       i += word.length
       const line = rest().replace(/;\s*$/, '').trim()
@@ -316,7 +316,8 @@ function parse(src) {
   return { dir, nodes: order, clusters, edges, classes, classOf, nodeStyle, linkStyle }
 }
 
-/** A node's shape for its label: its size, its outline as SVG, and how to clip an edge to it. */
+/** A node's shape for its label: its size, its outline as SVG, how to clip an edge to it (a polygon, or a
+ * circle or ellipse), and how far its label sits off its center (dx, dy). */
 function outline(n, lab) {
   const tw = lab.w, th = lab.h
   let w = tw + 2 * PX, h = th + 2 * PY
@@ -384,6 +385,7 @@ function rect(w, h, rx) {
   return box
 }
 
+/** A polygon's shape; its label sits `dx` right of its center. */
 function poly(w, h, pts, dx = 0) {
   return { w, h, pts, dx, draw: (x, y) => `<polygon points="${pts.map(([px, py]) => `${r(x + px)},${r(y + py)}`).join(' ')}"/>` }
 }
@@ -529,7 +531,7 @@ function draw(g) {
     const shape = list.filter(p => !p.startsWith('color:') && !p.startsWith('font-'))
     const font = list.filter(p => p.startsWith('font-'))
     out += `<g class="node"${shape.length ? ` style="${esc(shape.join(';'))}"` : ''}>${shapes[k].draw(x, y)}</g>`
-    out += text(labs[k], x + (shapes[k].dx ?? 0), y + (n.shape === 'cyl' ? shapes[k].dy : 0), '', [...color, ...font].join(';'))
+    out += text(labs[k], x + (shapes[k].dx || 0), y + (shapes[k].dy || 0), '', [...color, ...font].join(';'))
   })
   let defs = ''
   for (const [key, mid] of markers) {

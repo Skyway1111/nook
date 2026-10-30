@@ -92,6 +92,15 @@ function simplex(n, from, to, len, weight) {
     }
   }
   const inside = (x, root) => low[root] <= lim[x] && lim[x] <= lim[root]
+  // From v up to the subtree holding w, each tree edge's cut value moved by cv; the top of the climb.
+  const climb = (v, w, cv, dir) => {
+    while (!inside(w, v)) {
+      const e = up[v]
+      cut[e] += (v === from[e]) === dir ? cv : -cv
+      v = lim[from[e]] > lim[to[e]] ? from[e] : to[e]
+    }
+    return v
+  }
   range(0, -1, 1)
   // A tree edge's cut value: the weight of the edges crossing from its tail's side to its head's side, less
   // those crossing back. Children before parents, so each reuses the cut values below it.
@@ -158,16 +167,8 @@ function simplex(n, from, to, len, weight) {
       }
     }
     const cv = cut[leave]
-    const climb = (v, w, dir) => {
-      while (!inside(w, v)) {
-        const e = up[v]
-        cut[e] += (v === from[e]) === dir ? cv : -cv
-        v = lim[from[e]] > lim[to[e]] ? from[e] : to[e]
-      }
-      return v
-    }
-    const lca = climb(from[enter], to[enter], true)
-    climb(to[enter], from[enter], false)
+    const lca = climb(from[enter], to[enter], cv, true)
+    climb(to[enter], from[enter], cv, false)
     cut[enter] = -cv
     cut[leave] = 0
     tree[leave] = 0
@@ -186,12 +187,14 @@ const Ω = [1, 2, 8] // how hard an edge pulls straight: between nodes, a node a
  * Lays out a flowchart. `g`:
  * - nodes: [{ w, h, cluster, loop }]: size, the subgraph it's in (-1 for none), and room its self-loops take
  *   on its right (below, left to right);
- * - clusters: [{ parent, w, h }]: the subgraph's parent (-1 for none) and its title's size;
+ * - clusters: [{ parent, dir, w, h }]: the subgraph's parent (-1 for none), the direction it sets (or none),
+ *   and its title's size;
  * - edges: [{ v, w, minlen, label }]: a node's index, or ~index for a subgraph; label is { w, h } or null;
  * - dir: TB, BT, LR or RL; nodeSep, rankSep, edgeSep, pad: spacing in px.
- * Returns node centers, subgraph boxes with where their titles start (tx, ty), and each edge's polyline (null for an edge it can't draw) with its
- * label's center, all in px from the top left of the drawing, which is width × height. An edge's ends at
- * nodes are their centers, for the caller to clip to its shapes; its ends at subgraphs are on their boxes.
+ * Returns node centers, subgraph boxes with where their titles start (tx, ty), and each edge's polyline (null
+ * for an edge it can't draw) with its label's center, all in px from the top left of the drawing, which is
+ * width × height. An edge's end at a node is inside it, at its port, for the caller to clip to its shape; an
+ * end at a subgraph is on its box.
  */
 export function layout(g) {
   // A subgraph that sets its own direction and keeps its edges inside lays out on its own, then stands in
