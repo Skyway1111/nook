@@ -280,6 +280,8 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 .pictures > div { position: absolute; background: center / contain no-repeat; }
 .pictures > .page { overflow: hidden; border-radius: 4px; outline: 1px solid var(--line); }
 .pictures > .page > iframe { width: 1280px; border: 0; transform-origin: 0 0; background: #fff; pointer-events: none; }
+.pictures > .math { display: flex; align-items: center; contain: strict; }
+.pictures math { flex: none; font-size: calc(1.15 * var(--term-font-size)); transform-origin: 0 50%; }
 
 /* Composer: the card over Claude's prompt. It sits under the terminal's helpers, so IME text shows above it at its caret. */
 /* Anchored to the terminal, as tall as the screen and never shifted, so no script sizes the card. */

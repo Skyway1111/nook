@@ -448,7 +448,7 @@ test('a reply\'s display formulas split out, on lines of their own and outside c
   expect(mathBox('\\frac{a}{b}', 120)).toEqual([100, 3])
   expect(mathBox('\\sum_{i=1}^n i^2', 77)).toEqual([77, 4])
   expect(mathBox('\\int_0^1 x\\,dx', 77)).toEqual([77, 3])
-  expect(mathBox('\\begin{aligned} a &= b \\\\ c &= d \\\\ e &= f \\end{aligned}', 77)).toEqual([77, 4])
+  expect(mathBox('\\begin{aligned} a &= b \\\\ c &= d \\\\ e &= f \\end{aligned}', 77)).toEqual([77, 5])
 })
 
 test('a reply with a display formula draws it in its place, in a tab nook started only', async ($, on) => {
