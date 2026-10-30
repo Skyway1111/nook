@@ -10,7 +10,7 @@ import { WINDOWS } from '../paths.js'
 
 const SCROLLBAR = 14 // px the scrollbar takes beside the screen
 const SLICE_MS = 12 // the longest one parse runs before the page gets a turn
-const HOLD_MS = 1000 // the longest a synchronized update (DEC 2026) holds the frame
+const SYNC_MAX_MS = 1000 // the longest a synchronized update (DEC 2026) holds the frame
 const BURST_MS = 8 // the longest a frame waits for the cursor a program hid mid-frame to show again
 const SEPARATORS = ' ()[]{}\',"`' // what ends a double-clicked word
 const CURSORS = { block: 'xterm-cursor xterm-cursor-block', bar: 'xterm-cursor xterm-cursor-bar', underline: 'xterm-cursor xterm-cursor-underline' }
@@ -404,14 +404,14 @@ export class Term {
 
   // ---- frames
 
-  /** Asks for a frame. A synchronized update holds it, up to HOLD_MS; a terminal off screen draws once it shows. */
+  /** Asks for a frame. A synchronized update holds it, up to SYNC_MAX_MS; a terminal off screen draws once it shows. */
   refresh() {
     if (this.vt.sync) {
       this.holdTimer ||= setTimeout(() => {
         this.holdTimer = 0
         this.vt.sync = false
         this.refresh()
-      }, HOLD_MS)
+      }, SYNC_MAX_MS)
       return
     }
     if (this.holdTimer) {
