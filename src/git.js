@@ -218,7 +218,8 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
    * `onProgress`, git reports how far along it is, and each line it writes goes there as it comes.
    */
   function act(args, input, dir = s.root, onProgress) {
-    const progress = onProgress && Object.assign(new Channel(), { onmessage: onProgress })
+    // Lines that come together arrive as one text, each ending in a newline.
+    const progress = onProgress && Object.assign(new Channel(), { onmessage: text => text.split('\n').forEach(line => line && onProgress(line)) })
     const done = queue
       .then(() => (progress ? invoke('git_progress', { dir, args, progress }) : invoke('git', { dir, args, input })))
       .then(() => (say(''), true), e => (say((said = String(e))), false))
