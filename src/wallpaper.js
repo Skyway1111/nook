@@ -381,6 +381,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   }
 
   button.onclick = () => (picker ? picker.close() : load().then(open))
+  button.onpointerenter = load // the picker's scenes load as the pointer reaches its button
 
   return {
     restyle,

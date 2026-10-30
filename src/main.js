@@ -270,9 +270,10 @@ addEventListener('nook-review', ({ detail: { root, files: edited } }) => {
   const tab = tabs.active()
   git.review(root || tab?.path || cwd, edited, `${tab?.name ?? 'Claude'} · last turn`)
 })
-// The sessions dashboard loads on its first open, from its button or Ctrl+Shift+S.
+// The sessions dashboard loads on its first open, from its button or Ctrl+Shift+S, or as the pointer reaches the button.
 let board
-const toggleDashboard = () => (board ??= import('./dashboard.js').then(startBoard)).then(d => d.toggle()).catch(banner)
+const loadDashboard = () => (board ??= import('./dashboard.js').then(startBoard))
+const toggleDashboard = () => loadDashboard().then(d => d.toggle()).catch(banner)
 const startBoard = ({ startDashboard }) => (dashboard = startDashboard($('pane'), {
   button: $('toggle-sessions'),
   list: () => tabs.sessions(),
@@ -317,6 +318,7 @@ const startBoard = ({ startDashboard }) => (dashboard = startDashboard($('pane')
   onClose: () => tabs.focus(),
 }))
 $('toggle-sessions').onclick = toggleDashboard
+$('toggle-sessions').onpointerenter = loadDashboard
 $('new-tab').onclick = newSession
 $('new-tab').onmouseenter = () => { $('new-tab').title = `New Claude session in ${here()}` }
 // The chevron by + starts Claude other ways: continuing or resuming a session saved for this folder, or in a
