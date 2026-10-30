@@ -27,7 +27,7 @@ button {
 }
 button:disabled { opacity: .3; }
 
-/* Windows draws icons with Segoe; elsewhere nook-icons.woff2 has the same characters (scripts/icons.py). */
+/* Windows draws icons with Segoe; elsewhere nook-icons.woff2 has the same characters (scripts/icons.mjs). */
 @font-face { font-family: "nook icons"; src: url(./fonts/nook-icons.woff2); }
 .icon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "nook icons"; font-size: 12px; font-style: normal; }
 

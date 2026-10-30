@@ -1,5 +1,5 @@
 nook-icons.woff2 is built from Fluent UI System Icons (https://github.com/microsoft/fluentui-system-icons)
-by scripts/icons.py.
+by scripts/icons.mjs.
 
 MIT License
 
