@@ -7,8 +7,8 @@ export const LINE = 22 // px between a label's lines
 export const FAMILY = '"Segoe UI", system-ui, sans-serif'
 const WRAP = 200 // px, the widest a label's line grows before it wraps
 
-/** `text` escaped for SVG text and attribute values. */
-export const esc = text => text.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)
+/** `text` escaped for SVG text and attribute values, without the control characters XML can't hold. */
+export const esc = text => text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]/g, '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)
 
 let ctx
 const widths = new Map()

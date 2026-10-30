@@ -264,14 +264,18 @@ export async function picturesMade($, command, stdout, start, root, pdf = false)
  * line. nook fits the drawing inside the box. */
 export function diagramBox(source, room) {
   const columns = Math.max(20, Math.min(room, 100))
-  let lines = source.split('\n').filter(l => l.trim() && !/^\s*%%/.test(l))
-  if (lines[0]?.trim() === '---') lines = lines.slice(lines.findIndex((l, i) => i && l.trim() === '---') + 1)
+  let lines = source.split('\n').filter(l => l.trim() && !/^\s*%%/.test(l)), titled = false
+  if (lines[0]?.trim() === '---') {
+    const end = lines.findIndex((l, i) => i && l.trim() === '---')
+    titled = lines.slice(1, end).some(l => /^\s*title\s*:/.test(l))
+    lines = lines.slice(end + 1)
+  }
   const size = /^\s*(?:graph|flowchart)\b/.test(lines[0] ?? '') ? flowSize(lines) : /^\s*sequenceDiagram\b/.test(lines[0] ?? '') ? sequenceSize(lines) : null
   let rows
   if (size) {
     // An 18 px label at 1.15 em of the terminal's font, in cells about 0.6 em wide and 1.2 em tall.
     const k = 1.15 / FONT_PX, wide = (size[0] * k) / 0.6
-    rows = Math.ceil(((size[1] * k) / 1.2) * Math.min(1, columns / wide)) + 1
+    rows = Math.ceil(((size[1] + (titled ? 30 : 0)) * k / 1.2) * Math.min(1, columns / wide)) + 1
   } else {
     const wide = /^\s*(?:gantt|timeline|gitGraph|journey)/.test(lines[0] ?? '')
     rows = Math.round(wide ? lines.length * 1.5 : lines.length * 3)

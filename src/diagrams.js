@@ -5,7 +5,7 @@
 import { invoke } from './host.js'
 import { flowchart, css as flowCss } from './flowchart.js'
 import { sequence, css as sequenceCss } from './sequence.js'
-import { FONT, FAMILY, esc, measure, r } from './labels.js'
+import { FONT, FAMILY, esc, measure, label, text as labelText, r } from './labels.js'
 
 const MARGIN = 4 // px around the drawing
 const MONO = '13px "Cascadia Mono", Consolas, monospace'
@@ -35,22 +35,28 @@ export async function diagramUrl(path, box) {
 /** `text`, a mermaid diagram, as an SVG document. */
 async function diagram(text, c, box) {
   const lines = text.replace(/\r/g, '').split('\n')
-  // Front matter (---) and %% lines are settings and comments; the first other line names the kind.
-  let k = 0
-  if (lines[0]?.trim() === '---') for (k = 1; k < lines.length && lines[k].trim() !== '---'; k++);
-  if (lines[0]?.trim() === '---') k++
+  // Front matter (---) holds settings and maybe a title; %% lines are comments; the next line names the kind.
+  let k = 0, title = ''
+  if (lines[0]?.trim() === '---') {
+    for (k = 1; k < lines.length && lines[k].trim() !== '---'; k++) title = /^title\s*:\s*(.*)$/.exec(lines[k].trim())?.[1].replace(/^(["'])(.*)\1$/, '$2') ?? title
+    k++
+  }
   while (k < lines.length && (!lines[k].trim() || /^\s*%%/.test(lines[k]))) k++
   const src = lines.slice(k).join('\n')
   const kind = /^\s*([\w-]+)/.exec(src)?.[1] ?? ''
   let d = null
   try {
-    if (kind === 'flowchart' || kind === 'graph' || kind === 'flowchart-v2') d = { ...flowchart(src), css: flowCss(c) }
+    if (/^(?:flowchart(?:-v2|-elk)?|graph)$/.test(kind)) d = { ...flowchart(src), css: flowCss(c) }
     else if (kind === 'sequenceDiagram') d = { ...sequence(src), css: sequenceCss(c) }
-    else if (LEGACY.test(kind)) d = await legacy(text, c)
+    else if (LEGACY.test(kind)) return await legacy(text, c)
   } catch (e) {
     console.warn('diagram', e)
   }
-  if (typeof d === 'string') return d
+  if (d && title) {
+    // The front matter's title, over the drawing.
+    const t = label(title)
+    d = { ...d, w: Math.max(d.w, t.w), h: d.h + t.h + 8, svg: `${labelText(t, 0, t.h / 2, 'heading', '', true)}<g transform="translate(0,${r(t.h + 8)})">${d.svg}</g>`, css: d.css + `.heading{font-weight:600;fill:${c.ink2}}` }
+  }
   return frame(d ?? listing(text, c), c, box)
 }
 
