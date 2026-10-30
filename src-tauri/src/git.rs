@@ -1,6 +1,6 @@
 //! The git panel's commands. They run the git CLI, so hooks, signing, and credential helpers
-//! behave as in a terminal. Each runs on a thread of its own: on the UI thread, a status call
-//! would hold up the keystrokes queued behind it.
+//! behave as in a terminal. Each runs on a worker: on the UI thread, a status call would hold up
+//! the keystrokes queued behind it.
 use std::{
     collections::{BTreeMap, HashMap},
     ffi::OsStr,

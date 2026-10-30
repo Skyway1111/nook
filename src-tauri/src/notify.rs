@@ -66,7 +66,7 @@ fn show(title: &str, body: &str) -> Result<(), String> {
         quiet(call)
     });
     let mut child = sent.map_err(|_| "No notification service: install notify-send (libnotify)".to_string())?;
-    child.wait().map_err(|e| e.to_string())?; // reaped here, on the command's own thread
+    child.wait().map_err(|e| e.to_string())?; // reaped here, on the command's worker
     Ok(())
 }
 

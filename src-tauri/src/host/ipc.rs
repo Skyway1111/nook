@@ -8,8 +8,8 @@ use crate::json::{self, W};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// Where a command runs: inline on the UI thread, in order with the page's other calls, or on its own
-/// thread, for anything that touches the disk or waits on a process.
+/// Where a command runs: inline on the UI thread, in order with the page's other calls, or on a worker, for
+/// anything that touches the disk or waits on a process.
 pub enum Run {
     Inline,
     Thread,
@@ -165,7 +165,7 @@ fn worker() {
     }
 }
 
-/// Runs `cmd` for a command fetch, on the fetch's own thread.
+/// Runs `cmd` for a command fetch, on the fetch's worker.
 pub fn fetch(cmd: &str, json: &str, body: &[u8]) -> Result<Out, String> {
     let (_, f) = lookup(cmd).ok_or_else(|| format!("no command {cmd}"))?;
     f(&Args { json, body })

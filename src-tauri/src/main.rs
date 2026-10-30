@@ -458,9 +458,9 @@ fn main() {
 }
 
 /// Every command the page calls, and where it runs. A command that reads or writes a file or waits on a process
-/// runs on a thread of its own: on the UI thread it would hold up the keystrokes behind it. Only the PTY's writes,
-/// resizes, and closes and the shell's quick calls run there, in the order the page sent them. `pdf_page` and
-/// the theme and backdrop commands carry bytes, and come by fetch (host.js).
+/// runs on a worker: on the UI thread it would hold up the keystrokes behind it. Only the PTY's writes, resizes,
+/// and closes and the shell's quick calls run there, in the order the page sent them. `pdf_page` and the theme
+/// and backdrop commands carry bytes, and come by fetch (host.js).
 fn commands(name: &str) -> Option<(Run, host::Command)> {
     use Run::{Inline, Thread};
     Some(match name {
