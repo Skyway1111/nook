@@ -92,7 +92,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   ta.setAttribute('autocorrect', 'off')
   ta.setAttribute('autocapitalize', 'off')
   ta.setAttribute('aria-label', name)
-  const panels = el('div', { className: 'cm-panels cm-panels-bottom' })
+  const panels = el('div', { className: 'cm-panels' })
   content.append(selLayer, rowsBox, curLayer, probe)
   scroller.append(content)
   dom.append(scroller, panels, ta)

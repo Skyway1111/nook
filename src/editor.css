@@ -41,7 +41,7 @@
 .cm-editor .cm-searchMatch-selected { background: color-mix(in oklch, var(--accent) 45%, transparent); }
 /* A file tab's status line, and the find panel above it. */
 .cm-editor .cm-panels { flex: none; background: var(--raised); color: var(--ink-1); }
-.cm-editor .cm-panels-bottom:not(:empty) { border-top: 1px solid var(--line); }
+.cm-editor .cm-panels:not(:empty) { border-top: 1px solid var(--line); }
 .cm-editor .cm-status { display: flex; align-items: center; gap: 18px; height: 24px; padding: 0 14px; font-size: .8rem; color: var(--ink-3); white-space: nowrap; }
 .cm-editor .cm-status .fill { flex: 1; }
 .cm-editor .cm-status button { padding: 0; color: inherit; background: none; }
