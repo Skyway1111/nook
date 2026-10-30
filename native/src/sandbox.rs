@@ -211,24 +211,20 @@ mod os {
     use std::{
         ffi::c_void,
         fs::File,
+        hash::{BuildHasher, RandomState},
         io,
         mem::size_of,
         os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
         ptr::{null, null_mut},
     };
 
-    /// S-1-15-2-…, what DeriveAppContainerSidFromAppContainerName gives for `nook.pdf`.
-    #[rustfmt::skip]
-    static CONTAINER: [u8; 40] = sid([2, 1960141305, 3500055989, 3476970580, 3134125239, 3008388048, 686267592, 1260196293]);
-
-    const fn sid(subs: [u32; 8]) -> [u8; 40] {
+    /// A new AppContainer SID, S-1-15-2 and 7 random parts, for each worker: workers in one AppContainer can open
+    /// each other's process.
+    fn container() -> [u8; 40] {
         let mut s = [0; 40];
-        (s[0], s[1], s[7]) = (1, 8, 15); // revision, count, SECURITY_APP_PACKAGE_AUTHORITY
-        let mut i = 0;
-        while i < 8 {
-            let b = subs[i].to_le_bytes();
-            (s[8 + 4 * i], s[9 + 4 * i], s[10 + 4 * i], s[11 + 4 * i]) = (b[0], b[1], b[2], b[3]);
-            i += 1;
+        (s[0], s[1], s[7], s[8]) = (1, 8, 15, 2); // revision, count, SECURITY_APP_PACKAGE_AUTHORITY, _BASE_RID
+        for part in s[12..].chunks_mut(8) {
+            part.copy_from_slice(&RandomState::new().hash_one(0u8).to_le_bytes()[..part.len()]);
         }
         s
     }
@@ -257,7 +253,7 @@ mod os {
         if h.is_null() || h == INVALID_HANDLE_VALUE { Err(io::Error::last_os_error()) } else { Ok(unsafe { OwnedHandle::from_raw_handle(h) }) }
     }
 
-    /// nook's own token, less every privilege but traverse checking, which nothing starts without, as an
+    /// nook's own token, less every privilege but traverse checking, which nothing starts without, as a new
     /// AppContainer's.
     fn token() -> io::Result<OwnedHandle> {
         unsafe {
@@ -266,7 +262,7 @@ mod os {
             let own = owned(own)?;
             check(CreateRestrictedToken(own.as_raw_handle(), DISABLE_MAX_PRIVILEGE, 0, null(), 0, null(), 0, null(), &mut restricted))?;
             let restricted = owned(restricted)?;
-            let status = NtCreateLowBoxToken(&mut boxed, restricted.as_raw_handle(), TOKEN_ALL_ACCESS, null(), CONTAINER.as_ptr(), 0, null(), 0, null());
+            let status = NtCreateLowBoxToken(&mut boxed, restricted.as_raw_handle(), TOKEN_ALL_ACCESS, null(), container().as_ptr(), 0, null(), 0, null());
             if status < 0 {
                 return Err(io::Error::other(format!("NtCreateLowBoxToken: {status:#010x}")));
             }
