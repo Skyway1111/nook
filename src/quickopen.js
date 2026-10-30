@@ -163,8 +163,9 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openPath, ope
     const li = el('li', { className: 'row symbol' })
     const badge = el('i', { className: `kind ${symbol.kind}`, textContent: letter, title: word })
     if (indent) badge.style.marginLeft = `${Math.min(symbol.depth, 8) * 14}px`
-    li.append(badge, marked(symbol.name, positions),
-      el('small', { textContent: `${symbol.container && !indent ? `${symbol.container} · ` : ''}line ${symbol.line}` }))
+    // A rendered page's heading has no line.
+    const where = [symbol.container && !indent ? symbol.container : '', symbol.line ? `line ${symbol.line}` : ''].filter(Boolean).join(' · ')
+    li.append(badge, marked(symbol.name, positions), el('small', { textContent: where }))
     return li
   }
 
@@ -235,7 +236,7 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openPath, ope
       const all = items ?? []
       // In the file's order, nested under what holds them, until a letter is typed; then best first.
       const found = text.trim()
-        ? rank(text, all, { text: s => s.name, limit: 100, boost: s => -s.line / 1e7 })
+        ? rank(text, all, { text: s => s.name, limit: 100, boost: s => -(s.line ?? 0) / 1e7 })
         : all.slice(0, 2000).map(item => ({ item, positions: [] }))
       const n = all.length
       return {

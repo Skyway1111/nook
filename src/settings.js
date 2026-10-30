@@ -171,8 +171,8 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
   $('settings-defaults').ontoggle = async () => {
     const pre = $('settings-defaults').querySelector('pre')
     if (pre.firstChild) return
-    const { highlight } = await import('./editor.js')
-    pre.replaceChildren((await highlight(defaults, 'css')) ?? defaults)
+    const { highlight } = await import('./highlight.js')
+    pre.replaceChildren(highlight(defaults, 'css') ?? defaults)
   }
 
   const command = $('settings-command')

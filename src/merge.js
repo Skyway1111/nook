@@ -187,9 +187,9 @@ export function startMerge(view, { root, path, rel, name, run, openFile }) {
   }
 
   async function highlight(lines, cells, n) {
-    const { tokenize } = await import('./editor.js')
-    const [old, now] = await Promise.all([lines.old, lines.new].map(ls => tokenize(ls.join('\n'), name).catch(() => null)))
+    const { tokenize } = await import('./highlight.js')
     if (n !== paint) return
+    const [old, now] = [lines.old, lines.new].map(ls => tokenize(ls.join('\n'), name))
     for (const c of cells) {
       const tokens = (c.side === 'old' ? old : now)?.[c.n]
       if (tokens?.length) colorize(c.code, c.text, tokens)
