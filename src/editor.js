@@ -349,12 +349,16 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   /** Applies change list `changes` to the text, and moves what follows its lines along; returns their inverse. */
   function apply(changes) {
     if (!changes.length) return []
-    // the lines they touch that are as saved join `saved`; a window that grows at least doubles, so a run of edits
-    // each a line further copies each line about twice
+    // the lines they touch that are as saved join `saved`: pushed on below, and above, a window that grows at least
+    // doubles, so a run of edits each a line further copies each line about twice
     const a = doc.lineOf(changes[0].from), b = doc.lineOf(changes.at(-1).to), n = saved.length
     if (cleanHi < 0) { saved = doc.lines.slice(a, b + 1); cleanLo = a; cleanHi = b }
     if (a < cleanLo) { const lo = Math.max(0, Math.min(a, cleanLo - n)); saved = doc.lines.slice(lo, cleanLo).concat(saved); cleanLo = lo }
-    if (b > cleanHi) { const hi = Math.min(doc.count - 1, Math.max(b, cleanHi + n)); saved = saved.concat(doc.lines.slice(cleanHi + 1, hi + 1)); cleanHi = hi }
+    if (b > cleanHi) {
+      if (b - cleanHi < n) for (let j = cleanHi + 1; j <= b; j++) saved.push(doc.lines[j])
+      else saved = saved.concat(doc.lines.slice(cleanHi + 1, b + 1))
+      cleanHi = b
+    }
     const { inverse, edits } = doc.apply(changes)
     if (edits.length) follow(edits)
     return inverse
