@@ -682,8 +682,8 @@ export class Term {
         const box = (row, from, to, n = 1) => {
           const left = from * cellW
           const width = Math.min(cellW * (to - from), this.canvasW - left)
-          for (const end = row + n; row < end;) { // cut where raised rows start and end
-            const stop = !r ? end : Math.min(end, row < r.from ? r.from : row < r.to ? r.to : end)
+          for (const below = row + n; row < below;) { // cut where raised rows start and end
+            const stop = !r ? below : Math.min(below, row < r.from ? r.from : row < r.to ? r.to : below)
             html += `<div style="top:${row * cellH - this.lift(row)}px;left:${left}px;width:${width}px;height:${(stop - row) * cellH}px"></div>`
             row = stop
           }
@@ -706,6 +706,8 @@ export class Term {
   layer(className) {
     const el = this.screen.appendChild(document.createElement('div'))
     el.className = className
+    el.style.transform = this.layers[0].style.transform
+    el.style.clipPath = this.layers[0].style.clipPath
     this.layers.push(el)
     return el
   }
