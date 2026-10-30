@@ -32,12 +32,12 @@ const line = (v, pos) => {
   return { i, start, text: v.doc.lines[i], k: pos - start }
 }
 
-/** Moves every range's head by `f(range)` (an offset or { head, goal }); with `extend`, anchors stay. */
+/** Moves every range's head by `f(range)` (an offset or { head, goal, assoc }); with `extend`, anchors stay. */
 function move(v, f, extend) {
   const ranges = v.ranges.map(r => {
     const m = f(r)
-    const head = typeof m === 'number' ? m : m.head
-    return sel1(extend ? r.anchor : head, head, typeof m === 'number' ? undefined : m.goal)
+    if (typeof m === 'number') return sel1(extend ? r.anchor : m, m)
+    return sel1(extend ? r.anchor : m.head, m.head, m.goal, m.assoc)
   })
   v.dispatch({ sel: { ranges, main: v.main }, kind: 'select' })
   return true
@@ -86,9 +86,9 @@ function syntaxStep(v, pos, forward) {
 }
 
 function smartHome(v, r) {
-  const edge = v.rowEdge(r.head, false)
+  const edge = v.rowEdge(r, false)
   const { start, text } = line(v, r.head)
-  if (edge !== start) return edge
+  if (edge.head !== start) return edge
   const space = lead(text).length
   return space && r.head !== start + space ? start + space : start
 }
@@ -129,6 +129,8 @@ function backspace(v) {
       for (let n = 0; n < drop && text[p - start - 1] === ' '; n++) p--
       return p
     }
+    // a combining mark goes alone, so an accent can be typed again
+    if (k > 0 && /[\p{Mn}\p{Me}]/u.test(text[k - 1]) && !/[\ufe00-\ufe0f]/.test(text[k - 1])) return r.head - 1
     return charStep(v, r.head, false)
   })
 }
@@ -172,9 +174,22 @@ function deleteMarkup(v) {
   const r = v.ranges[0], { start, text, k } = line(v, r.head)
   const m = /^(\s*)(?:([-+*]|\d{1,9}[.)])|>)( ?\[[ xX]\])? ?$/.exec(text.slice(0, k))
   if (!m || !markup(v, start, m[1].length)) return false
-  // a list item's marker turns to the indent that continues the item; a quote's goes
-  const ins = m[2] ? ' '.repeat(k - m[1].length) : ''
+  // a list item's marker turns to the indent that continues the item, but its list's first item's goes, as a quote's
+  const ins = m[2] && !firstItem(v, line(v, start).i, m[1].length, m[2]) ? ' '.repeat(k - m[1].length) : ''
   v.dispatch({ changes: [{ from: start + m[1].length, to: r.head, insert: ins }], kind: 'delete' })
+  return true
+}
+/** Whether the item with marker `mark` on line i, indented `indent` characters, starts its list: no item of the
+ * same kind and indent comes before it but blank, nested or continuing lines. */
+function firstItem(v, i, indent, mark) {
+  const kind = s => (/\d/.test(s) ? s.at(-1) : s)
+  for (let j = i - 1; j >= Math.max(0, i - 500); j--) {
+    const t = v.doc.lines[j]
+    if (!t.trim()) continue
+    const m = /^(\s*)([-+*]|\d{1,9}[.)])(\s|$)/.exec(t)
+    if (m && m[1].length === indent) return kind(m[2]) !== kind(mark)
+    if (lead(t).length <= indent) return true
+  }
   return true
 }
 /** Whether the Markdown at `pos` is a list marker or quote, not code. */
@@ -274,8 +289,9 @@ function deleteLines(v) {
   return true
 }
 
-/** Enter: a new line indented as this one, one level more after an opener, and `{|}` split around an indented line.
- * In Markdown a list or quote goes on. With `below`, the new line goes under the line, wherever the caret is. */
+/** Enter: a new line indented as this one, one level more after an opener, and `{|}` (spaces between or not) split
+ * around an indented line. In Markdown a list or quote goes on. With `below`, the new line goes under the line,
+ * wherever the caret is. */
 function newline(v, below = false) {
   if (!below && v.md && continueMarkup(v)) return true
   const changes = [], ranges = []
@@ -285,10 +301,12 @@ function newline(v, below = false) {
     const { start, text } = line(v, a)
     if (below) a = b = start + text.length
     const k = a - start
-    const explode = !below && a === b && /^(\(\)|\[\]|\{\})$/.test(text.slice(k - 1, k + 1))
+    const o = /[([{][ \t]*$/.exec(text.slice(0, k)), c = /^[ \t]*[)\]}]/.exec(text.slice(k))
+    const explode = !below && a === b && o && c && '([{'.indexOf(o[0][0]) === ')]}'.indexOf(c[0].at(-1))
+    if (explode) { a = start + o.index + 1; b = start + k + c[0].length - 1 }
     const base = lead(text)
     const opens = !below ? v.L.indent?.test(text.slice(0, k)) : v.L.indent?.test(text)
-    const indent = opens || explode ? base + v.unit : base.slice(0, Math.min(base.length, below ? base.length : k))
+    const indent = opens || explode ? base + v.unit : base
     const end = line(v, b)
     while (b < end.start + end.text.length && /\s/.test(end.text[b - end.start])) b++
     if (!below && a > start && k < 100 && !/\S/.test(text.slice(0, k))) a = start
@@ -347,8 +365,6 @@ const AFTER = /[\s)\]}:;>]/
 /** Types `s` at every range: closing brackets and quotes as it goes, and reindenting a line that should dedent. */
 export function type(v, s) {
   const pairs = closers(v)
-  const main = v.ranges[v.main]
-  v.closed = v.closed.filter(p => v.doc.lineOf(p) === v.doc.lineOf(main.head))
   if (s.length === 1 && pairs && closeBrackets(v, s, pairs)) return dedent(v)
   const changes = [], ranges = []
   let shift = 0
@@ -386,8 +402,9 @@ function closeBrackets(v, ch, pairs) {
       ranges.push(sel1(b + shift + 1))
       continue
     }
+    // a bracket closes before a space or a closer, a quote before anything but a word, and not after one
     const quote = pairs[ch] === ch
-    if ((after !== undefined && !AFTER.test(after)) ||
+    if ((after !== undefined && (quote ? category(v, after) === WORDS : !AFTER.test(after))) ||
         (quote && before !== undefined && (WORD.test(before) || before === ch))) return false
     changes.push({ from: a, to: a, insert: ch + pairs[ch] })
     ranges.push(sel1(a + shift + 1))
@@ -516,24 +533,36 @@ function textClass(tokens, k) {
   return 0
 }
 const OPEN = '([{', CLOSE = ')]}'
+const BRACKET = c => c === 40 || c === 41 || c === 91 || c === 93 || c === 123 || c === 125, BRACKETS = /[()[\]{}]/
 /** The offset of the bracket that pairs with the one at `at`, scanning at most `limit` characters; null when none
- * does, undefined when `at` holds no bracket. */
-export function match(v, at, limit = 10_000) {
+ * does, undefined when `at` holds no bracket. With `sure`, lines past the lexer are lexed first, so their strings
+ * and comments are known. */
+export function match(v, at, limit = 10_000, sure = false) {
   const i0 = v.doc.lineOf(at), k0 = at - v.doc.start(i0)
   const ch = v.doc.lines[i0][k0]
   const o = OPEN.indexOf(ch), c = CLOSE.indexOf(ch)
   if (o < 0 && c < 0) return undefined
-  const kind = textClass(v.tokensOf(i0), k0)
+  const kind = textClass(v.tokensOf(i0, sure), k0)
   const dir = o >= 0 ? 1 : -1
   let depth = 0, seen = 0
   for (let i = i0; i >= 0 && i < v.doc.count; i += dir) {
-    const text = v.doc.lines[i], toks = v.tokensOf(i)
+    const text = v.doc.lines[i]
+    let toks = null, t = 0 // the line's tokens, read once it has a bracket, and the one at or past k
     for (let k = i === i0 ? k0 + dir : dir > 0 ? 0 : text.length - 1; k >= 0 && k < text.length; k += dir) {
       if (++seen > limit) return null
+      if (!BRACKET(text.charCodeAt(k))) continue
+      if (!toks) { toks = !kind && v.allCode(i) ? [] : v.tokensOf(i, sure); t = dir > 0 ? 0 : toks.length - 3 }
+      let cls = 0
+      if (dir > 0) {
+        while (t < toks.length && toks[t + 1] <= k) t += 3
+        if (t < toks.length && toks[t] <= k) cls = toks[t + 2]
+      } else {
+        while (t >= 0 && toks[t] > k) t -= 3
+        if (t >= 0 && k < toks[t + 1]) cls = toks[t + 2]
+      }
+      if ((inText(cls) ? cls & 31 : 0) !== kind) continue
       const x = text[k]
       const same = dir > 0 ? OPEN.indexOf(x) : CLOSE.indexOf(x), other = dir > 0 ? CLOSE.indexOf(x) : OPEN.indexOf(x)
-      if (same < 0 && other < 0) continue
-      if (textClass(toks, k) !== kind) continue
       if (same >= 0) depth++
       else if (depth) depth--
       else return other === (o >= 0 ? o : c) ? v.doc.start(i) + k : null
@@ -567,10 +596,10 @@ function around(v, a, b) {
     if (k === text.length) continue
     const x = text[k]
     if (!OPEN.includes(x) && !CLOSE.includes(x)) continue
-    if (textClass(v.tokensOf(i), k)) continue
+    if (textClass(v.tokensOf(i, true), k)) continue
     if (CLOSE.includes(x)) { depth++; continue }
     if (depth) { depth--; continue }
-    const m = match(v, p, 1e6)
+    const m = match(v, p, 1e6, true)
     if (m != null && m >= b) return [p, m]
   }
   return null
@@ -626,15 +655,20 @@ function selectNext(v) {
   if (rs.some(r => v.doc.slice(from(r), to(r)) !== q)) return false
   const m = rs[v.main], w = wordAt(v, m.head)
   const whole = w && w.from === from(m) && w.to === to(m)
-  const text = v.doc.text()
-  const ok = p => !rs.some(r => from(r) === p) && (!whole || ((p === 0 || category(v, text[p - 1]) !== WORDS) &&
-    category(v, text[p + q.length] ?? ' ') !== WORDS))
-  let p = text.indexOf(q, to(rs.at(-1)))
-  while (p >= 0 && !ok(p)) p = text.indexOf(q, p + 1)
+  const taken = new Set(rs.map(from)), last = rs.at(-1), size = q.includes('\n') ? Infinity : 65536
+  // the first occurrence in piece s (at offset base) from `at` that isn't selected and, for a word, stands alone
+  const first = (base, s, at) => {
+    for (let k = s.indexOf(q, at); k >= 0; k = s.indexOf(q, k + 1)) {
+      if (!taken.has(base + k) && (!whole || ((!k || category(v, s[k - 1]) !== WORDS) &&
+        category(v, s[k + q.length] ?? ' ') !== WORDS))) return base + k
+    }
+    return -1
+  }
+  let p = -1
+  for (const [base, s] of v.doc.pieces(v.doc.lineOf(to(last)), false, size)) if ((p = first(base, s, Math.max(0, to(last) - base))) >= 0) break
   if (p < 0) {
-    p = text.indexOf(q)
-    while (p >= 0 && p < from(rs.at(-1)) && !ok(p)) p = text.indexOf(q, p + 1)
-    if (p < 0 || p >= from(rs.at(-1))) return false
+    for (const [base, s] of v.doc.pieces(0, false, size)) if ((p = first(base, s, 0)) >= 0 || base + s.length >= from(last)) break
+    if (p < 0 || p >= from(last)) return false
   }
   v.dispatch({ sel: { ranges: [...rs, sel1(p, p + q.length)], main: v.main }, kind: 'select' })
   v.reveal(p + q.length)
@@ -643,13 +677,14 @@ function selectNext(v) {
 function selectMatches(v) {
   if (v.ranges.length > 1 || v.ranges[0].anchor === v.ranges[0].head) return false
   const r = v.ranges[0], q = v.doc.slice(from(r), to(r))
-  const text = v.doc.text()
   const ranges = []
   let main = 0
-  for (let p = text.indexOf(q); p >= 0; p = text.indexOf(q, p + q.length)) {
-    if (ranges.length > 1000) return false
-    if (p === from(r)) main = ranges.length
-    ranges.push(sel1(p, p + q.length))
+  for (const [base, s] of v.doc.pieces(0, false, q.includes('\n') ? Infinity : 65536)) {
+    for (let k = s.indexOf(q); k >= 0; k = s.indexOf(q, k + q.length)) {
+      if (ranges.length > 1000) return false
+      if (base + k === from(r)) main = ranges.length
+      ranges.push(sel1(base + k, base + k + q.length))
+    }
   }
   v.dispatch({ sel: { ranges, main }, kind: 'select' })
   return true
@@ -679,9 +714,13 @@ function selectLine(v) {
   v.dispatch({ sel: { ranges, main: 0 }, kind: 'select' })
   return true
 }
+/** PageUp or PageDown: each caret a page on, and the view with them; a selection, without `extend`, collapses to its
+ * start or end. */
 function page(v, down, extend) {
   const by = v.scroller.clientHeight
-  move(v, r => v.vertical(r, down ? 1 : -1, by), extend)
+  const end = r => (down ? to(r) : from(r))
+  if (!extend && v.ranges.every(r => r.anchor !== r.head)) return move(v, end)
+  move(v, r => (!extend && r.anchor !== r.head ? end(r) : v.vertical(r, down ? 1 : -1, by)), extend)
   v.scroller.scrollTop += down ? by : -by
   return true
 }
@@ -726,9 +765,9 @@ export function foldRange(v, i) {
   let end = null
   switch (v.L.fold) {
     case 'brace': {
-      const k = unclosed(lines[i], v.tokensOf(i))
+      const k = unclosed(lines[i], v.tokensOf(i, true))
       if (k < 0) return null
-      const m = match(v, v.doc.start(i) + k, Infinity)
+      const m = match(v, v.doc.start(i) + k, Infinity, true)
       if (m == null) return null
       const j = v.doc.lineOf(m)
       end = lines[j].slice(0, m - v.doc.start(j)).trim() ? j : j - 1
@@ -750,7 +789,7 @@ export function foldRange(v, i) {
       for (; j < lines.length; j++) {
         const h = /^#{1,6}(?=\s|$)/.exec(lines[j])
         if (h && h[0].length <= level) {
-          const t = v.tokensOf(j)
+          const t = v.tokensOf(j, true)
           if (t.length > 2 && t[0] === 0 && inHeading(t[2])) break
         }
       }
@@ -780,16 +819,42 @@ function unfoldHere(v) {
 }
 function foldAll(v) {
   v.lexTo(v.doc.count)
-  const out = []
-  for (let i = 0; i < v.doc.count; i++) {
-    if (!foldable(v, i, v.tokensOf(i))) continue
-    const end = foldRange(v, i)
+  const out = [], n = v.doc.count, ends = v.L.fold === 'brace' ? braceEnds(v) : null
+  for (let i = 0; i < n; i++) {
+    const end = ends ? (ends[i] < 0 ? null : ends[i]) : foldable(v, i, v.tokensOf(i)) ? foldRange(v, i) : null
     if (end == null) continue
     out.push([i, end])
     i = end
   }
   v.folds.set(out)
   return true
+}
+/** foldRange of every line in one walk over the brackets outside strings and comments: per line, the last line its
+ * fold hides, or -1. */
+function braceEnds(v) {
+  const lines = v.doc.lines, ends = new Int32Array(lines.length).fill(-1)
+  const sl = [], sk = [], sc = [] // the open brackets: line, kind, and whether it's the one its line folds at
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i]
+    let toks = null
+    for (let k = text.search(BRACKETS), t = 0; k >= 0 && k < text.length; k++) {
+      const c = text.charCodeAt(k)
+      if (!BRACKET(c)) continue
+      toks ??= v.allCode(i) ? [] : v.tokensOf(i)
+      while (t < toks.length && toks[t + 1] <= k) t += 3
+      if (t < toks.length && toks[t] <= k && inText(toks[t + 2])) continue
+      const kind = c === 40 || c === 41 ? 0 : c === 91 || c === 93 ? 1 : 2
+      if (c === 40 || c === 91 || c === 123) { sl.push(i); sk.push(kind); sc.push(false); continue }
+      if (!sl.length) continue
+      const line = sl.pop(), same = sk.pop() === kind
+      if (sc.pop() && same) {
+        const end = /\S/.test(text.slice(0, k)) ? i : i - 1
+        if (end > line) ends[line] = end
+      }
+    }
+    if (sl.at(-1) === i) sc[sc.length - 1] = true
+  }
+  return ends
 }
 
 const sides = (base, f) => ({ [base]: v => f(v, false), [base.replace(/^(Ctrl-)?(Alt-)?/, '$1$2Shift-')]: v => f(v, true) })
@@ -802,10 +867,10 @@ export const KEYS = {
   ...sides('Ctrl-ArrowRight', (v, x) => move(v, r => groupStep(v, r.head, true), x)),
   ...sides('Alt-ArrowLeft', (v, x) => move(v, r => syntaxStep(v, r.head, false), x)),
   ...sides('Alt-ArrowRight', (v, x) => move(v, r => syntaxStep(v, r.head, true), x)),
-  ...sides('ArrowUp', (v, x) => move(v, r => v.vertical(r, -1), x)),
-  ...sides('ArrowDown', (v, x) => move(v, r => v.vertical(r, 1), x)),
+  ...sides('ArrowUp', (v, x) => move(v, r => (!x && r.anchor !== r.head ? from(r) : v.vertical(r, -1)), x)),
+  ...sides('ArrowDown', (v, x) => move(v, r => (!x && r.anchor !== r.head ? to(r) : v.vertical(r, 1)), x)),
   ...sides('Home', (v, x) => move(v, r => smartHome(v, r), x)),
-  ...sides('End', (v, x) => move(v, r => v.rowEdge(r.head, true), x)),
+  ...sides('End', (v, x) => move(v, r => v.rowEdge(r, true), x)),
   ...sides('Ctrl-Home', (v, x) => move(v, () => 0, x)),
   ...sides('Ctrl-End', (v, x) => move(v, () => v.doc.length, x)),
   ...sides('PageUp', (v, x) => page(v, false, x)),
@@ -836,7 +901,7 @@ export const KEYS = {
   'Alt-l': selectLine,
   'Ctrl-i': selectParent,
   'Ctrl-Shift-\\': v => matchingBracket(v, false),
-  'Ctrl-d': selectNext,
+  'Ctrl-d': v => (selectNext(v), true),
   'Ctrl-Shift-l': selectMatches,
   'Ctrl-f': v => v.find.open(false),
   'Ctrl-h': v => v.find.open(true),
@@ -844,9 +909,9 @@ export const KEYS = {
   'Shift-F3': v => v.find.step(-1),
   'Ctrl-g': v => v.find.step(1),
   'Ctrl-Shift-g': v => v.find.step(-1),
-  'Ctrl-z': v => v.undo(false),
-  'Ctrl-y': v => v.undo(true),
-  'Ctrl-Shift-z': v => v.undo(true),
+  'Ctrl-z': v => (v.undo(false), true),
+  'Ctrl-y': v => (v.undo(true), true),
+  'Ctrl-Shift-z': v => (v.undo(true), true),
   'Ctrl-u': v => v.undo(false, true),
   'Alt-u': v => v.undo(true, true),
   'Ctrl-Shift-[': foldHere,
@@ -857,17 +922,22 @@ export const KEYS = {
   'Ctrl-Space': v => v.complete.open(true),
 }
 
-const CODES = { BracketLeft: '[', BracketRight: ']', Backslash: '\\', Slash: '/', Period: '.', Comma: ',', Semicolon: ';',
-  Quote: '\'', Minus: '-', Equal: '=', Backquote: '`', Space: 'Space' }
-/** A key event as a name like 'Ctrl-Shift-k' or 'Alt-ArrowUp'. Shortcuts name the key by its place on the keyboard,
- * so they hold on any layout; a key AltGr types with is no shortcut. */
-export function keyName(e) {
-  let k = e.key
+// A key code's character on a US keyboard: Windows gives a Cyrillic or Greek layout's keys the codes of the Latin ones.
+const BASE = { 186: ';', 187: '=', 188: ',', 189: '-', 190: '.', 191: '/', 192: '`', 219: '[', 220: '\\', 221: ']', 222: '\'' }
+for (let c = 48; c <= 90; c++) if (c <= 57 || c >= 65) BASE[c] = String.fromCharCode(c).toLowerCase()
+/** A key event as a name like 'Ctrl-Shift-k' or 'Alt-ArrowUp'. A shortcut is named by the character the layout types,
+ * a letter lowercased with its Shift, other characters without it, as Ctrl+Shift+7 is Ctrl-/ on a German keyboard.
+ * With `base`, by the key code's US character and Shift: the name to try when the first has no command, which
+ * is Ctrl-z for a Russian Ctrl+я and Ctrl-Shift-[ for Ctrl+{. A key AltGr types with is no shortcut. */
+export function keyName(e, base = false) {
+  let k = e.key, shift = e.shiftKey
   if (k === ' ') k = 'Space'
-  else if (k.length === 1 || k === 'Dead' || k === 'Unidentified') {
-    if (e.getModifierState?.('AltGraph')) return null
-    if (!e.ctrlKey && !e.altKey) return null
-    k = e.code.startsWith('Key') ? e.code.slice(3).toLowerCase() : e.code.startsWith('Digit') ? e.code.slice(5) : CODES[e.code] ?? k.toLowerCase()
-  }
-  return (e.ctrlKey ? 'Ctrl-' : '') + (e.altKey ? 'Alt-' : '') + (e.shiftKey ? 'Shift-' : '') + k
+  else if (/^.$/u.test(k) || k === 'Dead' || k === 'Unidentified') {
+    if (e.getModifierState?.('AltGraph') || (!e.ctrlKey && !e.altKey)) return null
+    if (base) k = BASE[e.keyCode]
+    else if (/^[a-z]$/i.test(k)) k = k.toLowerCase()
+    else shift = false
+    if (!k) return null
+  } else if (base) return null
+  return (e.ctrlKey ? 'Ctrl-' : '') + (e.altKey ? 'Alt-' : '') + (shift ? 'Shift-' : '') + k
 }

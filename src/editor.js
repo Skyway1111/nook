@@ -3,7 +3,7 @@
 // caret takes the keyboard, IME and the clipboard. Commands are edits.js's, find and replace find.js's, and
 // completion complete.js's. style.css styles the .cm-* classes.
 import { Doc, split, mapPos, column, offsetAt, normal, sel1, from, to } from './doc.js'
-import { lexLine, className } from './highlight.js'
+import { lexLine, className, plain, textBracket } from './highlight.js'
 import { lang } from './langs.js'
 import { el } from './ui.js'
 import { UNCOMMITTED, runs, ages, since } from './blame.js'
@@ -26,13 +26,37 @@ const BARS = [null, ['add', 'Added since git\'s copy'], ['change', 'Changed sinc
 const JOINS = new Set(['type', 'delete', 'compose']) // what an undo step joins while typing goes on
 const idle = globalThis.requestIdleCallback ?? (f => setTimeout(f, 30))
 
-/** `arr` with `del` entries at `at` replaced by `ins` zeros. */
-function spliced(arr, at, del, ins) {
-  if (del === ins) return arr
-  const out = new arr.constructor(arr.length - del + ins)
-  out.set(arr.subarray(0, at))
-  out.set(arr.subarray(at + del), at + ins)
+/** Per-line array `arr` after line edits `edits` (see Doc.apply): of an edit's lines the first keeps its entry, and the
+ * lines it put after that one get 0. */
+function spliced(arr, edits) {
+  let n = arr.length, same = true
+  for (const e of edits) { n += e.ins - e.del; same &&= e.ins === e.del }
+  if (same) return arr
+  const room = arr.buffer.byteLength / arr.BYTES_PER_ELEMENT // the arrays keep spare room, so one edit moves in place
+  if (edits.length === 1 && n <= room) {
+    const { at, del, ins } = edits[0], all = new arr.constructor(arr.buffer)
+    all.copyWithin(at + ins, at + del, arr.length)
+    all.fill(0, at + 1, at + ins)
+    return all.subarray(0, n)
+  }
+  const out = new arr.constructor(n + (n >> 3) + 64).subarray(0, n)
+  let src = 0, dst = 0
+  for (const { at, del, ins } of edits) {
+    out.set(arr.subarray(src, at + 1), dst)
+    dst += at + 1 - src + ins - 1
+    src = at + del
+  }
+  out.set(arr.subarray(src), dst)
   return out
+}
+/** Line j after line edits `edits`: a line an edit took out goes to its first line, or with `end`, past its last. */
+function lineAfter(edits, j, end = false) {
+  let d = 0
+  for (const e of edits) {
+    if (j < e.at + e.del) return j <= e.at ? j + d : e.at + d + (end ? e.ins : 0)
+    d += e.ins - e.del
+  }
+  return j + d
 }
 
 /**
@@ -49,8 +73,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   for (let i = 0; i < doc.count && !found; i++) found = INDENT.exec(doc.lines[i])
   const unit = found?.[1] ?? found?.[2] ?? '    '
   let wrap = !!L.prose
-  let version = 0
-  let clean = doc.lines.slice(), cleanLength = doc.length
+  // The text as saved, and the lines changed since, cleanLo to cleanHi, which are all that can differ from it.
+  let clean = doc.lines.slice(), cleanLength = doc.length, cleanLo = Infinity, cleanHi = -1
 
   // ---- DOM
   const dom = el('div', { className: 'cm-editor' })
@@ -79,6 +103,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   // `x0` and line 0's top at `y0`.
   let scaleX = 1, shiftX = 0, x0 = 0, scaleY = 1, shiftY = 0, y0 = 0
   let metrics = true // measure again before the next draw
+  let hsFor = [] // the line height and character width the heights were estimated for
   let leftDirty = true // the gutters changed width
   function measure() {
     const r = probe.getBoundingClientRect(), t = probeText.getBoundingClientRect()
@@ -95,10 +120,12 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     return true
   }
 
-  // ---- Lexing: each line's start state, valid up to `valid`; past it, up to `stale`, states from before an edit
-  // that hold again once a relex comes out the same at a line at or past `editEnd`.
-  let states = new Int32Array(doc.count + 1)
-  let valid = 0, stale = 0, editEnd = 0
+  // ---- Lexing: each line's start state, right up to line `valid`. Past it, up to `stale`, the states from before the
+  // edits in `pend` ([from, to) line spans, sorted, the first live at `pi`): from a line outside them whose relexed
+  // state comes out as before, the old states hold up to the next span.
+  let states = new Int32Array(lexes ? doc.count + 1 : 0)
+  let tb = new Uint8Array(lexes ? doc.count + 1 : 0) // per lexed line: 1 when a bracket sits in its strings or comments
+  let valid = 0, stale = 0, pend = [], pi = 0
   const out = []
   /** Lexes ahead until line `target`'s start state is known, or the clock passes `until`. */
   function lexTo(target, until = Infinity) {
@@ -109,14 +136,15 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       const i = valid
       if (!(i & 63) && performance.now() > until) break
       out.length = 0
-      const end = lexLine(L, lines[i], states[i], out, lines[i + 1])
-      if (i + 1 >= editEnd && i + 1 <= stale && states[i + 1] === end) {
-        valid = stale
-        editEnd = 0
+      const end = lexLine(L, lines[i], states[i], out, lines[i + 1]), j = i + 1
+      tb[i] = textBracket(lines[i], out)
+      while (pi < pend.length && pend[pi][1] <= j) pi++
+      if (j <= stale && (pi === pend.length || pend[pi][0] >= j) && states[j] === end) {
+        valid = pi < pend.length ? Math.max(j, Math.min(stale, pend[pi][0])) : stale
         continue
       }
-      states[i + 1] = end
-      valid = i + 1
+      states[j] = end
+      valid = j
     }
     if (stale < valid) stale = valid
   }
@@ -143,18 +171,17 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     }
     return st
   }
-  /** Line i's start state, known or guessed. */
-  function stateOf(i) {
-    if (!lexes) return 0
-    if (i > valid) lexTo(i, performance.now() + 4)
-    return i <= valid ? states[i] : guess.get(i) ?? guessFrom(i)
-  }
-  function tokensOf(i) {
-    const st = stateOf(i)
+  /** Line i's tokens: a drawn row's, or lexed from its known or guessed start state. A line past the lexer that isn't
+   * drawn has none, so brackets on it count as code, unless `sure` has the lexer catch up first. */
+  function tokensOf(i, sure) {
+    if (!lexes) return []
+    if (sure && i > valid) lexTo(i)
+    const st = i <= valid ? states[i] : guess.get(i)
+    if (st === undefined) return []
     const row = rows.get(i)
     if (row && row.text === doc.lines[i] && row.state === st) return row.tokens
     out.length = 0
-    if (lexes) lexLine(L, doc.lines[i], st, out, doc.lines[i + 1])
+    lexLine(L, doc.lines[i], st, out, doc.lines[i + 1])
     return out.slice()
   }
 
@@ -171,50 +198,99 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     return null
   }
   const foldAt = i => folds.find(f => f[0] === i)
+  /** Folds `next` in place of the folds there are. Only the lines whose folding changed change height. */
   function setFolds(next) {
+    const old = folds
     folds = next.sort((a, b) => a[0] - b[0])
-    heights()
+    if (!hs || (!wrap && !folds.length)) heights()
+    else {
+      for (const [s, e] of old) for (let i = s + 1; i <= e; i++) setH(i, wrap ? estimate(i) : lh)
+      for (const [s, e] of folds) for (let i = s + 1; i <= e; i++) setH(i, 0)
+    }
     dirty()
   }
 
-  // ---- Heights: none while every line is one row tall; else each line's, and their running sums up to `ysKnown`.
-  let hs = null, ys = null, ysKnown = 0
+  // ---- Heights: none while every line is one row tall; else each line's in `hs`, and `total`. `bp[b]` sums the
+  // lines before block b (of 1 << B lines), right up to block `bpKnown`; `cp` holds the running sums inside block `cb`.
+  const B = 10, BM = (1 << B) - 1
+  let hs = null, bp = null, bpKnown = 0, total = 0, cb = -1
+  const cp = new Float64Array(BM + 2)
   const estimate = i => {
     const n = doc.lines[i].length
     return n * cw <= textWidth ? lh : lh * Math.ceil((n * cw) / textWidth)
   }
+  /** Every line's height from scratch: estimated, or 0 in a fold. */
   function heights() {
-    if (!wrap && !folds.length) { hs = ys = null; return }
+    if (!wrap && !folds.length) { hs = null; return }
     const n = doc.count
     hs = new Float32Array(n)
-    for (let i = 0; i < n; i++) hs[i] = wrap ? estimate(i) : lh
+    if (wrap) for (let i = 0; i < n; i++) hs[i] = estimate(i)
+    else hs.fill(lh)
     for (const [s, e] of folds) hs.fill(0, s + 1, e + 1)
-    ys = new Float64Array(n + 1)
-    ysKnown = 0
+    sums()
   }
-  function sumTo(i) {
-    let k = ysKnown
-    for (; k < i; k++) ys[k + 1] = ys[k] + hs[k]
-    ysKnown = k
+  function sums() {
+    total = 0
+    for (let i = 0; i < hs.length; i++) total += hs[i]
+    bp = new Float64Array((hs.length >> B) + 2)
+    bpKnown = 0
+    cb = -1
+  }
+  function setH(i, h) {
+    const old = hs[i]
+    hs[i] = h
+    if (hs[i] === old) return
+    total += hs[i] - old
+    if (bpKnown > i >> B) bpKnown = i >> B
+    if (cb === i >> B) cb = -1
+  }
+  /** Sums the blocks before block b. */
+  function extend(b) {
+    for (let k = bpKnown; k < b; k++) {
+      let s = 0
+      for (let j = k << B, e = Math.min(hs.length, j + BM + 1); j < e; j++) s += hs[j]
+      bp[k + 1] = bp[k] + s
+    }
+    bpKnown = b
+  }
+  function block(b) {
+    cb = b
+    for (let j = b << B, k = 0, e = Math.min(hs.length, j + BM + 1); j < e; j++, k++) cp[k + 1] = cp[k] + hs[j]
   }
   const top = i => {
     if (!hs) return i * lh
-    if (i > ysKnown) sumTo(i)
-    return ys[i]
+    if (i >= hs.length) return total
+    const b = i >> B
+    if (b > bpKnown) extend(b)
+    if (cb !== b) block(b)
+    return bp[b] + cp[i & BM]
   }
   /** The showing line at `y`, counted from the first line's top. */
   function lineAtY(y) {
     const n = doc.count
     if (!hs) return Math.max(0, Math.min(n - 1, Math.floor(y / lh)))
-    sumTo(n)
-    let lo = 0, hi = n - 1
-    while (lo < hi) {
-      const m = (lo + hi + 1) >> 1
-      if (ys[m] <= y) lo = m
-      else hi = m - 1
+    let i = n - 1
+    if (y < total) {
+      const last = (n - 1) >> B
+      while (bpKnown < last && bp[bpKnown] <= y) extend(bpKnown + 1)
+      let lo = 0, hi = bpKnown
+      while (lo < hi) {
+        const m = (lo + hi + 1) >> 1
+        if (bp[m] <= y) lo = m
+        else hi = m - 1
+      }
+      if (cb !== lo) block(lo)
+      const r = y - bp[lo]
+      let a = 0, z = Math.min(BM, n - 1 - (lo << B))
+      while (a < z) {
+        const m = (a + z + 1) >> 1
+        if (cp[m] <= r) a = m
+        else z = m - 1
+      }
+      i = (lo << B) + a
     }
-    while (lo > 0 && !hs[lo]) lo--
-    return lo
+    while (i > 0 && !hs[i]) i--
+    return i
   }
 
   // ---- Marks beside the lines: change bars and blame, which follow edits until set again.
@@ -236,8 +312,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     let docChanged = done
     if (changes?.length) {
       const { inverse, edits } = doc.apply(changes)
-      for (const e of edits) follow(e)
-      version++
+      if (edits.length) follow(edits)
       docChanged = true
       closed = closed.map(p => mapPos(p, changes, 1))
       if (history) record(inverse, changes, kind, before)
@@ -248,6 +323,10 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       const n = normal(sel.ranges.map(r => clamp(r)), sel.main)
       ranges = n.ranges
       main = n.main
+      if (closed.length) { // closers typed over are those on the main caret's line
+        const i = doc.lineOf(ranges[main].head)
+        closed = closed.filter(p => doc.lineOf(p) === i)
+      }
       for (const r of ranges) {
         const f = foldIn(doc.lineOf(r.head))
         if (f) setFolds(folds.filter(g => g !== f))
@@ -264,56 +343,101 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       picked?.()
     }
   }
-  const clamp = r => sel1(Math.max(0, Math.min(r.anchor, doc.length)), Math.max(0, Math.min(r.head, doc.length)), r.goal)
+  const clamp = r => sel1(Math.max(0, Math.min(r.anchor, doc.length)), Math.max(0, Math.min(r.head, doc.length)), r.goal, r.assoc)
   const same = (a, b) => a.length === b.length && a.every((r, i) => r.anchor === b[i].anchor && r.head === b[i].head)
 
-  /** Moves every per-line cache along with a line edit. */
-  function follow({ at, del, ins }) {
-    states = spliced(states, at + 1, del - 1, ins - 1)
-    const oldStale = Math.max(valid, stale)
-    stale = oldStale >= at + del ? oldStale + ins - del : Math.min(oldStale, at)
-    editEnd = Math.max(editEnd >= at + del ? editEnd + ins - del : 0, at + ins)
-    valid = Math.min(valid, md ? Math.max(0, at - 1) : at)
-    if (bars) bars = spliced(bars, at + 1, del - 1, ins - 1)
-    if (blame) blame = spliced(blame, at + 1, del - 1, ins - 1)
-    if (hs) {
-      hs = spliced(hs, at, del, ins)
-      ys = spliced(ys, at + 1, del, ins)
-      for (let i = at; i < at + ins; i++) hs[i] = wrap ? estimate(i) : lh
-      ysKnown = Math.min(ysKnown, at)
+  /** Moves every per-line cache along with line edits `edits` (see Doc.apply). */
+  function follow(edits) {
+    const at2 = [] // each edit's first line after the edits
+    let d = 0
+    for (const e of edits) { at2.push(e.at + d); d += e.ins - e.del }
+    const lastLine = at2.at(-1) + edits.at(-1).ins - 1
+    if (lexes) {
+      states = spliced(states, edits)
+      tb = spliced(tb, edits)
+      // the spans still to relex, moved along (one walk: they and the edits are sorted), and these edits', merged
+      let k = 0, dd = 0
+      const map = (j, end) => {
+        while (k < edits.length && edits[k].at + edits[k].del <= j) dd += edits[k].ins - edits[k++].del
+        const e = edits[k]
+        return !e || j <= e.at ? j + dd : e.at + dd + (end ? e.ins : 0)
+      }
+      const moved = [], spans = []
+      for (let n = pi; n < pend.length; n++) moved.push([map(pend[n][0]), map(pend[n][1], true)])
+      const adds = edits.map((e, m) => [md ? Math.max(0, at2[m] - 1) : at2[m], at2[m] + e.ins])
+      for (let a = 0, b = 0; a < moved.length || b < adds.length;) {
+        const sp = b === adds.length || (a < moved.length && moved[a][0] <= adds[b][0]) ? moved[a++] : adds[b++]
+        const p = spans.at(-1)
+        if (p && sp[0] <= p[1]) p[1] = Math.max(p[1], sp[1])
+        else spans.push(sp)
+      }
+      stale = lineAfter(edits, Math.max(valid, stale))
+      pend = spans.filter(sp => sp[0] < stale)
+      pi = 0
+      valid = Math.min(valid, md ? Math.max(0, at2[0] - 1) : at2[0])
     }
+    if (bars) bars = spliced(bars, edits)
+    if (blame) blame = spliced(blame, edits)
+    let dropped = null // folds the edits went into, as line spans after them
     if (folds.length) {
       const kept = []
+      let k = 0, dd = 0
       for (const f of folds) {
-        if (at + del - 1 < f[0] || (at === f[0] && del === 1 && ins === 1)) kept.push(at + del - 1 < f[0] ? [f[0] + ins - del, f[1] + ins - del] : f)
-        else if (at > f[1]) kept.push(f)
+        while (k < edits.length && edits[k].at + edits[k].del - 1 < f[0]) dd += edits[k].ins - edits[k++].del
+        let ok = true
+        for (let m = k; ok && m < edits.length && edits[m].at <= f[1]; m++) ok = edits[m].at === f[0] && edits[m].del === 1 && edits[m].ins === 1
+        if (ok) kept.push([f[0] + dd, f[1] + dd])
+        else (dropped ??= []).push([lineAfter(edits, f[0]), lineAfter(edits, f[1] + 1, true)])
       }
-      if (kept.length !== folds.length) { folds = kept; heights() } else folds = kept
+      folds = kept
     }
-    if (del !== ins || ins > 1) {
+    if (hs) {
+      for (const e of edits) for (let j = e.at; j < e.at + e.del; j++) total -= hs[j]
+      hs = spliced(hs, edits)
+      edits.forEach((e, n) => {
+        for (let j = at2[n]; j < at2[n] + e.ins; j++) { hs[j] = foldIn(j) ? 0 : wrap ? estimate(j) : lh; total += hs[j] }
+      })
+      if (bp.length < (hs.length >> B) + 2) { const more = new Float64Array((hs.length >> B) * 2 + 2); more.set(bp); bp = more }
+      bpKnown = Math.min(bpKnown, at2[0] >> B)
+      bmKnown = Math.min(bmKnown, at2[0] >> B)
+      cb = -1
+      for (const [s, t] of dropped ?? []) for (let j = s; j < t; j++) if (!hs[j] && !foldIn(j)) setH(j, wrap ? estimate(j) : lh)
+    }
+    if (d || edits.some(e => e.ins > 1)) {
       const moved = new Map()
-      for (const [i, r] of rows) {
-        if (i < at) moved.set(i, r)
-        else if (i >= at + del) moved.set(i + ins - del, r)
-        else if (i === at) moved.set(i, r)
-        else drop(r)
+      let k = 0, dd = 0
+      for (const [i, r] of [...rows].sort((x, y) => x[0] - y[0])) {
+        while (k < edits.length && edits[k].at + edits[k].del <= i) dd += edits[k].ins - edits[k++].del
+        if (k < edits.length && i > edits[k].at) drop(r)
+        else moved.set(i + dd, r)
       }
       rows = moved
     }
-    for (let i = at; i < at + ins; i++) if (doc.lines[i].length > longest) longest = doc.lines[i].length
+    edits.forEach((e, n) => { for (let j = at2[n]; j < at2[n] + e.ins; j++) if (doc.lines[j].length > longest) longest = doc.lines[j].length })
+    if (cleanHi >= 0) { cleanLo = lineAfter(edits, cleanLo); cleanHi = lineAfter(edits, cleanHi + 1, true) - 1 }
+    cleanLo = Math.min(cleanLo, at2[0])
+    cleanHi = Math.max(cleanHi, lastLine)
   }
 
+  /** Records a change for undo. Typing joins the step before when it touches what that step's last change put in
+   * (`touched`, its inverse: sorted, as `changes` are, so one walk compares them). */
   function record(inverse, changes, kind, before) {
     const now = Date.now()
     const last = hist.done.at(-1)
-    const touches = () => changes.some(c => last.touched.some(([f, t]) => c.to >= f && c.from <= t))
+    const touches = () => {
+      const t = last.touched
+      for (let j = 0, k = 0; j < changes.length; j++) {
+        while (k < t.length && t[k].to < changes[j].from) k++
+        if (k < t.length && t[k].from <= changes[j].to) return true
+      }
+      return false
+    }
     if (last?.inv && !last.sels.length && !hist.sealed && JOINS.has(kind) &&
         ((kind === 'compose' && hist.kind === 'compose') || (now - hist.time < 500 && touches()))) {
       last.inv.push(inverse)
-      last.touched = [...last.touched.map(([f, t]) => [mapPos(f, changes, -1), mapPos(t, changes, 1)]),
-        ...inverse.map(c => [c.from, c.to])]
+      last.touched = inverse
     } else {
-      hist.done.push({ inv: [inverse], sel: before, sels: [], touched: inverse.map(c => [c.from, c.to]) })
+      hist.done.push({ inv: [inverse], sel: before, sels: [], touched: inverse })
       if (hist.done.length > 200) hist.done.shift()
     }
     hist.undone = []
@@ -350,12 +474,11 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     const back = []
     for (let k = ev.inv.length - 1; k >= 0; k--) {
       const { inverse, edits } = doc.apply(ev.inv[k])
-      for (const e of edits) follow(e)
+      if (edits.length) follow(edits)
       closed = []
       back.push(inverse)
       complete.close()
     }
-    version++
     onto.push({ inv: back, sel: now, sels: [], touched: [] })
     hist.sealed = true
     dispatch({ sel: ev.sel ?? mapped(now, ev.inv), kind: 'undo', history: false, done: true })
@@ -429,6 +552,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     Object.assign(r, { text, state: st, next, shut, tokens, offset: s, end: e, per, below: null })
     const line = r.line
     line.classList.toggle('cm-huge', !!per)
+    r.nodes = []
+    r.at = []
     if (!text && !shut) return line.replaceChildren(el('br'))
     const frag = document.createDocumentFragment()
     if (per && s) {
@@ -447,6 +572,14 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     if (per && e < text.length) {
       r.below = frag.appendChild(el('div', { className: 'cm-gap' }))
       r.below.style.height = `${Math.ceil((text.length - e) / per) * lh}px`
+    }
+    // the text nodes and where each starts, for domAt
+    for (let n = frag.firstChild, at = 0; n; n = n.nextSibling) {
+      const t = n.nodeType === 3 ? n : n.firstChild
+      if (t?.nodeType !== 3 || n.className === 'cm-gap') continue
+      r.nodes.push(t)
+      r.at.push(at)
+      at += t.data.length
     }
     if (shut) frag.append(el('span', { className: 'cm-foldPlaceholder', textContent: '\u{2026}', title: 'Unfold' }))
     line.replaceChildren(frag)
@@ -518,7 +651,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     if (hidden || metrics) {
       hidden = false
       if (!measure()) return
-      heights()
+      if (lh !== hsFor[0] || cw !== hsFor[1]) { hsFor = [lh, cw]; heights() }
     }
     const digits = String(doc.count).length
     if (digits !== shownDigits) {
@@ -582,8 +715,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
         const w = content.clientWidth - lineLeft - padRight
         if (wrap && Math.abs(w - textWidth) > 1 && !rewrapped) {
           rewrapped = true
-          textWidth = w
-          heights()
+          rewrap(w)
           pass--
           continue
         }
@@ -604,9 +736,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
         if (!wrap && r.simple) continue
         const ht = r.el.getBoundingClientRect().height
         if (Math.abs(ht - (hs ? hs[i] : lh)) > 0.5) {
-          if (!hs) hsAll()
-          hs[i] = ht
-          ysKnown = Math.min(ysKnown, i)
+          if (!hs) { hs = new Float32Array(doc.count).fill(lh); sums() }
+          setH(i, ht)
           moved++
         }
       }
@@ -628,12 +759,25 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     const k = full > most ? (full - vh) / (most - vh) : 1
     if (k !== scaleY) { scaleY = k; dirty() }
   }
-  function hsAll() {
-    hs = new Float32Array(doc.count).fill(lh)
-    for (const [s, e] of folds) hs.fill(0, s + 1, e + 1)
-    ys = new Float64Array(doc.count + 1)
-    ysKnown = 0
+  /** Wraps at width `w`: a line too short to wrap at either width keeps its height, the rest are estimated again.
+   * A block whose longest line (`bm`, right before block `bmKnown`) is that short is passed over whole. */
+  function rewrap(w) {
+    const one = Math.min(w, textWidth) / cw, lines = doc.lines, nb = ((lines.length - 1) >> B) + 1
+    textWidth = w
+    if (!hs) return
+    if (!(bm?.length >= nb)) { bm = new Uint32Array(nb + (nb >> 3) + 8); bmKnown = 0 }
+    for (let b = 0; b < nb; b++) {
+      const e = Math.min(lines.length, (b + 1) << B)
+      if (b >= bmKnown) {
+        let m = 0
+        for (let i = b << B; i < e; i++) if (lines[i].length > m) m = lines[i].length
+        bm[b] = m
+      }
+      if (bm[b] > one) for (let i = b << B; i < e; i++) if (lines[i].length > one && hs[i]) setH(i, estimate(i))
+    }
+    bmKnown = nb
   }
+  let bm = null, bmKnown = 0
   // The longest line's length, for the width long lines scroll to. It only grows while editing.
   let longest = doc.lines.reduce((n, l) => Math.max(n, l.length), 0)
   let minWidth = '', shownDigits = 0
@@ -663,16 +807,16 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   /** Line i's text node and offset holding character ch, in row r. */
   function domAt(r, ch) {
     ch -= r.offset
-    if (ch < 0 || ch > r.end - r.offset) return null
-    let k = 0
-    for (let n = r.line.firstChild; n; n = n.nextSibling) {
-      const t = n.nodeType === 3 ? n : n.firstChild
-      if (!t || t.nodeType !== 3 || n.className === 'cm-foldPlaceholder' || n.className === 'cm-gap') continue
-      const len = t.data.length
-      if (ch <= k + len) return [t, ch - k]
-      k += len
+    const at = r.at
+    if (ch < 0 || ch > r.end - r.offset || !at.length) return null
+    let lo = 0, hi = at.length - 1 // the last node starting before ch, or the first
+    while (lo < hi) {
+      const m = (lo + hi + 1) >> 1
+      if (at[m] < ch) lo = m
+      else hi = m - 1
     }
-    return null
+    const t = r.nodes[lo]
+    return ch - at[lo] <= t.data.length ? [t, ch - at[lo]] : null
   }
   function charOf(r, node, offset) {
     let k = r.offset
@@ -693,8 +837,9 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     range.setEnd(e[0], e[1])
     return range.getClientRects()
   }
-  /** Where offset pos is: { x, y, h }, its row's left, top and height. */
-  function coords(pos) {
+  /** Where offset pos is: { x, y, h }, its row's left, top and height. Where a wrapped line breaks, `side` < 0 puts
+   * it at the end of the row above, else at the start of the row below. */
+  function coords(pos, side = 0) {
     const i = doc.lineOf(pos), ch = pos - doc.start(i), text = doc.lines[i]
     const y = y0 + top(i)
     const r = rows.get(i)
@@ -702,7 +847,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     if (wrap && text.length > HUGE && (!r || ch < r.offset || ch > r.end || (r.below && ch === r.end))) {
       const per = perRow(), below = r?.below && ch >= r.end, k = below ? ch - r.end : ch
       const y0 = below ? r.below.getBoundingClientRect().top - contentBox().top : y
-      return { x: lineLeft + (k % per) * cw, y: y0 + Math.floor(k / per) * lh, h: lh, i }
+      const back = side < 0 && k > 0 && k % per === 0 ? 1 : 0
+      return { x: lineLeft + (k % per + back * per) * cw, y: y0 + (Math.floor(k / per) - back) * lh, h: lh, i }
     }
     if (!r || (!wrap && r.simple)) return { x: x0 + column(text, ch) * cw, y, h: lh, i }
     const c = contentBox()
@@ -710,7 +856,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       const lr = r.line.getBoundingClientRect()
       return { x: lr.left - c.left + padLeft, y: lr.top - c.top, h: lh, i }
     }
-    const end = ch >= text.length
+    const end = ch >= text.length || (wrap && side < 0 && ch > 0)
     const a = end ? ch - 1 - (ch > 1 && isLow(text, ch - 1) ? 1 : 0) : ch
     const b = end ? ch : ch + (isHigh(text, ch) ? 2 : 1)
     const rs = domRects(r, a, b)
@@ -762,10 +908,10 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   const isHigh = (s, k) => (s.charCodeAt(k) & 0xfc00) === 0xd800
   const isLow = (s, k) => (s.charCodeAt(k) & 0xfc00) === 0xdc00
 
-  /** Offset `pos` moved a row up (dir -1) or down, or by `by` pixels, toward the x `goal`. */
+  /** Range r's head moved a row up (dir -1) or down, or by `by` pixels, toward the x `goal`: { head, goal, assoc }. */
   function vertical(r, dir, by = 0) {
     flush()
-    const c = coords(r.head)
+    const c = coords(r.head, r.assoc)
     const goal = r.goal ?? c.x
     if (!by && !wrap && !folds.length) {
       const i = c.i + dir
@@ -776,15 +922,24 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     const y = c.y + dir * (by || lh) + lh / 2
     if (y < y0) return { head: 0, goal }
     if (y >= y0 + top(doc.count)) return { head: doc.length, goal }
-    return { head: posAt(goal, y), goal }
+    const head = posAt(goal, y)
+    return { head, goal, assoc: sideAt(head, y) }
   }
-  /** The start (or with `forward`, the end) of the row that offset pos shows on. */
-  function rowEdge(pos, forward) {
-    const i = doc.lineOf(pos), start = doc.start(i), end = start + doc.lines[i].length
-    if (!wrap || !rows.get(i)) return forward ? end : start
-    flush()
-    const c = coords(pos)
-    return forward ? posAt(1e7, c.y + lh / 2) : posAt(0, c.y + lh / 2)
+  /** Where a caret at `pos`, put there by a point at content y, draws: -1 when that is a row above the one `pos`
+   * starts, as at a wrapped row's end. */
+  const sideAt = (pos, y) => (wrap && coords(pos).y > y ? -1 : 0)
+  /** The start (or with `forward`, the end) of the row range r's head shows on: { head, assoc }. A head already
+   * there goes to its line's start or end. */
+  function rowEdge(r, forward) {
+    const i = doc.lineOf(r.head), start = doc.start(i), end = start + doc.lines[i].length
+    let head = forward ? end : start
+    if (wrap && rows.get(i)) {
+      flush()
+      const y = coords(r.head, r.assoc).y + lh / 2
+      const p = posAt(forward ? 1e7 : 0, y)
+      if (p !== r.head) head = p
+    }
+    return { head, assoc: forward ? -1 : 0 }
   }
   function flush() {
     box = null
@@ -797,15 +952,24 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     box = null
     const sels = []
     const cur = []
-    const lo = doc.start(first), hi = doc.start(Math.min(last, doc.count - 1)) + doc.lines[Math.min(last, doc.count - 1)].length
-    find.matches(lo, hi, (a, b, selected) => rects(a, b, selected ? 'cm-searchMatch cm-searchMatch-selected' : 'cm-searchMatch', sels, true))
-    selectionMatches(lo, hi, sels)
+    // the drawn text, in stretches: whole lines run on, a line drawn in part is its own
+    let lo = -1, hi = -1, prev = -2
+    const stretch = () => lo >= 0 && find.matches(lo, hi, (a, b, selected) =>
+      rects(a, b, selected ? 'cm-searchMatch cm-searchMatch-selected' : 'cm-searchMatch', sels, true))
+    for (const [i, r] of rows) {
+      const s = doc.start(i), whole = !r.offset && r.end === doc.lines[i].length
+      if (!whole || i !== prev + 1) { stretch(); lo = s + r.offset }
+      hi = s + r.end
+      prev = whole ? i : -2
+    }
+    stretch()
+    selectionMatches(sels)
     brackets(sels)
     for (const r of ranges) if (r.anchor !== r.head) rects(from(r), to(r), 'cm-selectionBackground', sels)
     for (const [k, r] of ranges.entries()) {
       const i = doc.lineOf(r.head)
       if (!rows.has(i)) continue
-      const c = coords(r.head)
+      const c = coords(r.head, r.assoc)
       cur.push([c.x, c.y + (lh - th) / 2, 0, th, k === main ? 'cm-cursor cm-cursor-primary' : 'cm-cursor'])
     }
     if (drop_ != null && rows.has(doc.lineOf(drop_))) {
@@ -874,7 +1038,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     })
     return k
   }
-  function selectionMatches(lo, hi, list) {
+  function selectionMatches(list) {
     if (ranges.length !== 1) return
     const r = ranges[0], f = from(r), t = to(r)
     if (t - f < 1 || t - f > 200) return
@@ -893,7 +1057,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   }
   function brackets(list) {
     for (const r of ranges) {
-      if (r.anchor !== r.head) continue
+      if (r.anchor !== r.head || !rows.has(doc.lineOf(r.head))) continue
       const m = bracketAt(view, r.head)
       if (!m) continue
       rects(m.at, m.at + 1, m.to == null ? 'cm-nonmatchingBracket' : 'cm-matchingBracket', list, true)
@@ -904,7 +1068,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     if (composing) return
     const r = ranges[main]
     if (!rows.has(doc.lineOf(r.head))) return
-    const c = coords(r.head)
+    const c = coords(r.head, r.assoc)
     const x = Math.max(0, Math.min(c.x - scroller.scrollLeft, scroller.clientWidth - 2))
     const y = Math.max(0, Math.min(c.y - scroller.scrollTop, scroller.clientHeight - lh))
     ta.style.transform = `translate(${x}px, ${y}px)`
@@ -949,8 +1113,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   let composing = false, comp = 0 // the composition's length at each cursor
   ta.addEventListener('keydown', e => {
     if (e.isComposing || e.keyCode === 229) return
-    const k = keyName(e)
-    if (k && run(k)) e.preventDefault()
+    const k = keyName(e), b = keyName(e, true)
+    if ((k && run(k)) || (b && b !== k && run(b))) e.preventDefault()
   })
   /** Runs the command bound to key name `k`; false when none ran. */
   function run(k) {
@@ -1003,33 +1167,23 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     dispatch({ changes, sel: { ranges: next, main }, kind: 'compose' })
   }
 
-  // The clipboard: an empty selection copies its whole line, which pastes back as a line above the cursor.
+  // The clipboard: with nothing selected, a copy takes each caret's line, which pastes back as a line above a caret.
   let linewise = null
   function copied(cut) {
-    const any = ranges.some(r => r.anchor !== r.head)
-    let s
+    const parts = [], dels = []
+    for (const r of ranges) if (r.anchor !== r.head) { parts.push(doc.slice(from(r), to(r))); dels.push({ from: from(r), to: to(r), insert: '' }) }
     linewise = null
-    if (any) s = ranges.filter(r => r.anchor !== r.head).map(r => doc.slice(from(r), to(r))).join('\n')
-    else {
-      const lines = [...new Set(ranges.map(r => doc.lineOf(r.head)))]
-      s = lines.map(i => doc.lines[i] + '\n').join('')
-      linewise = s
-    }
-    if (cut) {
-      if (any) KEYS.Backspace(view)
-      else {
-        const lines = [...new Set(ranges.map(r => doc.lineOf(r.head)))].sort((a, b) => a - b)
-        const changes = []
-        for (const i of lines) {
-          const a = doc.start(i), b = a + doc.lines[i].length
-          const c = b < doc.length ? { from: a, to: b + 1, insert: '' } : { from: Math.max(0, a - 1), to: b, insert: '' }
-          if (changes.length && c.from <= changes.at(-1).to) changes.at(-1).to = c.to
-          else changes.push(c)
-        }
-        dispatch({ changes, kind: 'delete.cut' })
+    if (!parts.length) {
+      for (const r of ranges) {
+        const i = doc.lineOf(r.head), a = doc.start(i)
+        if (dels.length && doc.lineOf(dels.at(-1).from) === i) continue
+        parts.push(doc.lines[i])
+        dels.push({ from: a, to: Math.min(doc.length, a + doc.lines[i].length + 1), insert: '' })
       }
+      linewise = parts.join('\n')
     }
-    return s
+    if (cut) dispatch({ changes: dels, kind: 'delete.cut' })
+    return parts.join('\n')
   }
   ta.addEventListener('copy', e => { e.preventDefault(); e.clipboardData.setData('text/plain', copied(false)) })
   ta.addEventListener('cut', e => { e.preventDefault(); e.clipboardData.setData('text/plain', copied(true)) })
@@ -1040,16 +1194,27 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   function paste(s) {
     s = split(s).join('\n')
     const r = ranges[main]
-    if (md && ranges.length === 1 && r.anchor !== r.head && /^(https?:\/\/|mailto:)\S+$/.test(s.trim())) {
-      s = `[${doc.slice(from(r), to(r))}](${s.trim()})`
+    if (md && ranges.length === 1 && r.anchor !== r.head && /^(https?:\/\/|mailto:|xmpp:|www\.)/.test(s) && plainAt(from(r), to(r))) {
+      // a URL pasted over plain Markdown text links it
+      const url = s.startsWith('www.') ? 'https://' + s : s
+      return dispatch({ changes: [{ from: from(r), to: from(r), insert: '[' }, { from: to(r), to: to(r), insert: `](${url})` }],
+        sel: { ranges: [sel1(r.anchor + 1, r.head + 1)], main: 0 }, kind: 'paste' })
     }
     const parts = s.split('\n')
-    const empty = ranges.every(r => r.anchor === r.head)
-    if (s === linewise && empty) {
-      const lines = s.slice(0, -1).split('\n')
-      const per = lines.length === ranges.length
-      const changes = ranges.map((r, n) => ({ from: doc.start(doc.lineOf(r.head)), to: doc.start(doc.lineOf(r.head)), insert: per ? lines[n] + '\n' : s }))
-      return dispatch({ changes: dedupe(changes), kind: 'paste' })
+    if (s === linewise && ranges.every(r => r.anchor === r.head)) {
+      const per = parts.length === ranges.length, changes = [], next = []
+      let shift = 0, n = 0, at = -1
+      for (const r of ranges) {
+        const a = doc.start(doc.lineOf(r.head))
+        if (a !== at) {
+          at = a
+          const ins = (per ? parts[n++] : s) + '\n'
+          changes.push({ from: a, to: a, insert: ins })
+          shift += ins.length
+        }
+        next.push(sel1(r.head + shift))
+      }
+      return dispatch({ changes, sel: { ranges: next, main }, kind: 'paste' })
     }
     const per = ranges.length > 1 && parts.length === ranges.length
     const changes = [], next = []
@@ -1062,7 +1227,17 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     })
     dispatch({ changes, sel: { ranges: next, main }, kind: 'paste' })
   }
-  const dedupe = changes => changes.filter((c, n) => !n || c.from !== changes[n - 1].from)
+  /** Whether offsets a to b are Markdown's plain text, inside one line and one token that is no link, URL or code. */
+  function plainAt(a, b) {
+    const i = doc.lineOf(a), s = doc.start(i)
+    if (doc.lineOf(b) !== i) return false
+    const t = tokensOf(i)
+    for (let n = 0; n < t.length; n += 3) {
+      if (t[n + 1] <= a - s || t[n] >= b - s) continue
+      return t[n] <= a - s && t[n + 1] >= b - s && plain(t[n + 2])
+    }
+    return true
+  }
 
   ta.addEventListener('focus', () => { dom.classList.add('cm-focused'); dirty() })
   ta.addEventListener('blur', () => { dom.classList.remove('cm-focused'); complete.close(); dirty() })
@@ -1093,7 +1268,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     } else {
       const unit_ = n === 2 ? groupAt(view, pos) : n === 3 ? lineRange(pos) : { from: pos, to: pos }
       const base = e.ctrlKey ? ranges : []
-      const r = e.shiftKey ? sel1(ranges[main].anchor, pos) : sel1(unit_.from, unit_.to)
+      const side = sideAt(pos, e.clientY - c.top)
+      const r = e.shiftKey ? sel1(ranges[main].anchor, pos, undefined, side) : sel1(unit_.from, unit_.to, undefined, n === 1 ? side : 0)
       if (e.ctrlKey && n === 1 && ranges.length > 1 && ranges.some(q => q.anchor === pos && q.head === pos)) {
         dispatch({ sel: { ranges: ranges.filter(q => q.head !== pos), main: 0 }, kind: 'select.pointer' })
         return
@@ -1137,7 +1313,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     const u = drag.mode === 'word' ? groupAt(view, pos) : drag.mode === 'line' ? lineRange(pos) : { from: pos, to: pos }
     const a = drag.anchor ?? (u.from < drag.unit.from ? drag.unit.to : drag.unit.from)
     const head = drag.anchor != null ? pos : u.from < drag.unit.from ? u.from : Math.max(u.to, drag.unit.to)
-    dispatch({ sel: { ranges: [...drag.base, sel1(drag.anchor ?? a, head)], main: drag.base.length }, kind: 'select.pointer', scroll: false })
+    const r = sel1(drag.anchor ?? a, head, undefined, head === pos ? sideAt(pos, y) : 0)
+    dispatch({ sel: { ranges: [...drag.base, r], main: drag.base.length }, kind: 'select.pointer', scroll: false })
   }
   function rectangle(e) {
     const c = contentBox()
@@ -1214,10 +1391,10 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     get wrap() { return wrap },
     get closed() { return closed },
     set closed(c) { closed = c },
-    get version() { return version },
-    get lineHeight() { return lh },
-    dom, scroller, panels, ta, focus,
-    dispatch, vertical, rowEdge, coords, posAt, flush, contentBox: () => contentBox(), tokensOf, lexTo,
+    dom, scroller, panels, focus,
+    dispatch, vertical, rowEdge, coords, flush, contentBox: () => contentBox(), tokensOf, lexTo,
+    /** Whether line i is known to have every bracket in code, so its tokens needn't be read to pair them. */
+    allCode: i => i < valid && !tb[i],
     redraw: () => dirty(),
     reveal: pos => { want = { pos }; dirty() },
     toggleWrap, undo,
@@ -1270,7 +1447,11 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     /** Takes the text as it is now for the text as saved. */
     markClean,
     /** Whether the text is as saved, whatever undo or redo took it there. */
-    isClean: () => doc.length === cleanLength && doc.count === clean.length && doc.lines.every((l, i) => l === clean[i]),
+    isClean() {
+      if (doc.length !== cleanLength || doc.count !== clean.length) return false
+      for (let i = cleanLo; i <= cleanHi; i++) if (doc.lines[i] !== clean[i]) return false
+      return true
+    },
     /** The selection: `main` ({ from, to, head, anchor, empty }) and every range, to give back to `select`. */
     get sel() {
       const all = ranges.map(r => ({ anchor: r.anchor, head: r.head, from: from(r), to: to(r), empty: r.anchor === r.head }))
@@ -1332,13 +1513,13 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     },
     /** Shows offset `pos` in the middle, with the caret there, without focusing. */
     show: pos => setSel(Math.max(0, Math.min(pos, doc.length)), { center: true }),
-    run, // for checks: runs the command a key name is bound to
-    view,
   }
 
   function markClean() {
     clean = doc.lines.slice()
     cleanLength = doc.length
+    cleanLo = Infinity
+    cleanHi = -1
     hist.sealed = true
   }
 }

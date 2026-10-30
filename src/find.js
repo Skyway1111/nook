@@ -10,14 +10,14 @@ const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 export function startFind(v) {
   let panel = null, fields = null
   let re = null // the query compiled, or null when it's empty or not a valid regexp
+  let size = 65536 // the pieces of text searched at once: all of it when a match can span lines
   const q = { search: '', replace: '', cased: false, regexp: false, word: false }
-  let cache = { version: -1, text: '' }
-  const text = () => (cache.version === v.version ? cache.text : (cache = { version: v.version, text: v.doc.text() }).text)
 
   function compile() {
     re = null
     if (!q.search) return
     let src = q.regexp ? q.search : escape(unquote(q.search))
+    size = (q.regexp ? /\\[sWDnr]|\n|\r|\[\^/ : /\n/).test(q.regexp ? src : unquote(q.search)) ? Infinity : 65536
     if (q.word) {
       const w = `[\\p{L}\\p{N}_${escape(v.L.word ?? '')}]`
       src = `(?<!${w})(?:${src})(?!${w})`
@@ -34,27 +34,39 @@ export function startFind(v) {
       if (f(base + m.index, base + m.index + m[0].length, m) !== undefined) return
     }
   }
+  /** Calls f(from, to, groups) for each match from offset `pos` on, while it returns nothing. */
+  function scan(pos, f) {
+    for (const [base, s] of v.doc.pieces(v.doc.lineOf(pos), false, size)) {
+      let stop = false
+      each(s, Math.max(0, pos - base), base, (a, b, m) => (stop = f(a, b, m) !== undefined) || undefined)
+      if (stop) return
+    }
+  }
+  /** The last match ending at or before `pos`. */
+  function lastBefore(pos) {
+    for (const [base, s] of v.doc.pieces(v.doc.lineOf(pos), true, size)) {
+      let hit = null
+      each(s, 0, base, (a, b, m) => (b > pos ? true : void (hit = [a, b, m])))
+      if (hit) return hit
+    }
+    return null
+  }
   /** The first match at or after `pos`, wrapping round; or with `back`, the last one ending at or before it. */
   function find(pos, back) {
-    let hit = null, firstHit = null, lastHit = null
-    each(text(), 0, 0, (a, b, m) => {
-      firstHit ??= [a, b, m]
-      if (back) {
-        if (b <= pos) lastHit = [a, b, m]
-        else return true
-      } else if (a >= pos) return ((hit = [a, b, m]), true)
-    })
-    if (back) {
-      if (lastHit) return lastHit
-      let tail = null
-      each(text(), 0, 0, (a, b, m) => { tail = [a, b, m] })
-      return tail
-    }
-    return hit ?? firstHit
+    if (back) return lastBefore(pos) ?? lastBefore(v.doc.length)
+    let hit = null
+    scan(pos, (a, b, m) => (hit = [a, b, m]))
+    if (!hit) scan(0, (a, b, m) => (a < pos ? (hit = [a, b, m]) : true))
+    return hit
   }
+  /** What a match `m` is replaced with: in regexp mode $& is the match and $1 to $99 its groups. */
   const replacement = m => (q.regexp
-    ? unquote(q.replace).replace(/\$([$&]|\d+)/g, (s, k) => (k === '$' ? '$' : k === '&' ? m[0] : m[+k] ?? s))
-    : unquote(q.replace))
+    ? unquote(q.replace).replace(/\$([$&]|\d+)/g, (s, k) => {
+      if (k === '$' || k === '&') return k === '$' ? '$' : m[0]
+      for (let n = k.length; n > 0; n--) if (+k.slice(0, n) > 0 && +k.slice(0, n) < m.length) return (m[+k.slice(0, n)] ?? '') + k.slice(n)
+      return s
+    })
+    : unquote(q.replace)).replace(/\r\n?/g, '\n')
 
   function select(hit) {
     if (!hit) return false
@@ -70,7 +82,7 @@ export function startFind(v) {
   }
   function selectAll() {
     const ranges = []
-    each(text(), 0, 0, (a, b) => (ranges.push(sel1(a, b)), ranges.length >= 1000 ? true : undefined))
+    scan(0, (a, b) => (ranges.push(sel1(a, b)), ranges.length >= 1000 ? true : undefined))
     if (!ranges.length) return
     v.dispatch({ sel: { ranges, main: 0 }, kind: 'select.search' })
     v.focus()
@@ -89,7 +101,7 @@ export function startFind(v) {
   function replaceAll() {
     if (!re) return
     const changes = []
-    each(text(), 0, 0, (a, b, m) => { changes.push({ from: a, to: b, insert: replacement(m) }) })
+    scan(0, (a, b, m) => { changes.push({ from: a, to: b, insert: replacement(m) }) })
     if (changes.length) v.dispatch({ changes, kind: 'replace.all' })
   }
 
@@ -121,14 +133,14 @@ export function startFind(v) {
     for (const f of [search, replace]) f.addEventListener('input', read)
     for (const f of [cased, regexp, word]) f.addEventListener('change', read)
     panel.addEventListener('keydown', e => {
-      const k = keyName(e)
-      if (k === 'Escape') { e.preventDefault(); close() }
-      else if (k === 'Enter' && e.target === search) { e.preventDefault(); step(1) }
-      else if (k === 'Shift-Enter' && e.target === search) { e.preventDefault(); step(-1) }
-      else if (k === 'Enter' && e.target === replace) { e.preventDefault(); replaceNext() }
-      else if (k === 'F3' || k === 'Ctrl-g') { e.preventDefault(); step(1) }
-      else if (k === 'Shift-F3' || k === 'Ctrl-Shift-g') { e.preventDefault(); step(-1) }
-      else if (k === 'Ctrl-f') { e.preventDefault(); search.select() }
+      const a = keyName(e), b = keyName(e, true), is = (...names) => names.includes(a) || names.includes(b)
+      if (is('Escape')) { e.preventDefault(); close() }
+      else if (is('Enter') && e.target === search) { e.preventDefault(); step(1) }
+      else if (is('Shift-Enter') && e.target === search) { e.preventDefault(); step(-1) }
+      else if (is('Enter') && e.target === replace) { e.preventDefault(); replaceNext() }
+      else if (is('F3', 'Ctrl-g')) { e.preventDefault(); step(1) }
+      else if (is('Shift-F3', 'Ctrl-Shift-g')) { e.preventDefault(); step(-1) }
+      else if (is('Ctrl-f')) { e.preventDefault(); search.select() }
     })
   }
 

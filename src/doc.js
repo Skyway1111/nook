@@ -57,45 +57,70 @@ export class Doc {
 
   text(sep = '\n') { return this.lines.join(sep) }
 
+  /** The text in pieces of whole lines, `size` characters or a little more each, from line i down, or with `back`
+   * from line i up: [offset, text] pairs. A search for what can't span lines needs no more of the text joined. */
+  *pieces(i, back = false, size = 65536) {
+    const lines = this.lines
+    while (back ? i >= 0 : i < lines.length) {
+      let j = i, n = 0
+      if (back) {
+        while (j >= 0 && n < size) n += lines[j--].length + 1
+        yield [this.start(j + 1), i === j + 1 ? lines[i] : lines.slice(j + 1, i + 1).join('\n')]
+      } else {
+        while (j < lines.length && n < size) n += lines[j++].length + 1
+        yield [this.start(i), j === i + 1 ? lines[i] : lines.slice(i, j).join('\n')]
+      }
+      i = j
+    }
+  }
+
   /**
    * Applies `changes`. Returns their inverse, a change list for the text after them, and the line edits they made,
-   * `{ at, del, ins }`: lines `at` to `at + del - 1` became `ins` lines. The edits come last change first, each in
-   * line numbers as they stand when it applies, so caches kept per line follow by replaying them in order.
+   * `{ at, del, ins }`: lines `at` to `at + del - 1` became `ins` lines. The edits are ascending and apart, in line
+   * numbers from before the changes; changes that share a line make one edit.
    */
   apply(changes) {
-    const inverse = new Array(changes.length)
-    const edits = []
+    const inverse = new Array(changes.length), edits = [], parts = [], lines = this.lines
     let shift = 0
     for (let k = 0; k < changes.length; k++) {
       const { from, to, insert } = changes[k]
       inverse[k] = { from: from + shift, to: from + shift + insert.length, insert: this.slice(from, to) }
       shift += insert.length - (to - from)
     }
-    for (let k = changes.length - 1; k >= 0; k--) {
-      const { from, to, insert } = changes[k]
-      const a = this.lineOf(from), b = this.lineOf(to)
-      const head = this.lines[a].slice(0, from - this.start(a)), tail = this.lines[b].slice(to - this.start(b))
-      const parts = insert.split('\n')
-      parts[0] = head + parts[0]
-      parts[parts.length - 1] += tail
-      this.splice(a, b - a + 1, parts)
-      edits.push({ at: a, del: b - a + 1, ins: parts.length })
-      this.length += insert.length - (to - from)
+    if (!changes.length) return { inverse, edits }
+    for (let k = 0; k < changes.length;) {
+      const a = this.lineOf(changes[k].from)
+      let b = a, end = changes[k].from, s = lines[a].slice(0, end - this.start(a))
+      do { // this change, and each after it that starts on the line the last one ended on
+        const { from, to, insert } = changes[k++]
+        const bs = this.start(b)
+        s += lines[b].slice(end - bs, from - bs) + insert
+        b = this.lineOf(to)
+        end = to
+      } while (k < changes.length && this.lineOf(changes[k].from) === b)
+      const p = (s + lines[b].slice(end - this.start(b))).split('\n')
+      edits.push({ at: a, del: b - a + 1, ins: p.length })
+      parts.push(p)
     }
-    return { inverse, edits }
-  }
-
-  splice(at, del, parts) {
-    const n = this.lines.length - del + parts.length
-    if (parts.length === 1 && del === 1) this.lines[at] = parts[0]
-    else if (parts.length < 5000) this.lines.splice(at, del, ...parts)
-    else this.lines = this.lines.slice(0, at).concat(parts, this.lines.slice(at + del))
-    if (n + 1 !== this.starts.length) {
-      const s = new Int32Array(n + 1)
-      s.set(this.starts.subarray(0, at + 1))
+    this.length += shift
+    const first = edits[0].at
+    if (edits.length === 1 && edits[0].del === 1 && parts[0].length === 1) lines[first] = parts[0][0]
+    else if (edits.length === 1 && parts[0].length < 5000) lines.splice(first, edits[0].del, ...parts[0])
+    else {
+      const pieces = []
+      let line = 0
+      edits.forEach((e, n) => { pieces.push(lines.slice(line, e.at), parts[n]); line = e.at + e.del })
+      pieces.push(lines.slice(line))
+      this.lines = [].concat(...pieces)
+    }
+    const n = this.lines.length
+    if (n + 1 > this.starts.length) {
+      const s = new Int32Array(n + 1 + (n >> 3) + 64)
+      s.set(this.starts.subarray(0, first + 1))
       this.starts = s
     }
-    this.known = Math.min(this.known, at)
+    this.known = Math.min(this.known, first)
+    return { inverse, edits }
   }
 }
 
@@ -141,8 +166,9 @@ export function offsetAt(text, col) {
   return text.length
 }
 
-/** A selection range: `anchor` stays put while `head` moves; `goal` is the x a vertical move aims for. */
-export const sel1 = (anchor, head = anchor, goal) => ({ anchor, head, goal })
+/** A selection range: `anchor` stays put while `head` moves; `goal` is the x a vertical move aims for; `assoc` < 0
+ * draws a head where a wrapped line breaks at the end of the row above. */
+export const sel1 = (anchor, head = anchor, goal, assoc = 0) => ({ anchor, head, goal, assoc })
 export const from = r => Math.min(r.anchor, r.head)
 export const to = r => Math.max(r.anchor, r.head)
 
