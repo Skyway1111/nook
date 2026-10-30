@@ -20,9 +20,9 @@ function cssProperties() {
   return (properties = [...all])
 }
 
-/** How well `label` matches typed `q`, scored as CodeMirror does: a score, higher better, and the matched spans as
- * [from, to] pairs; or null. A prefix beats word starts (fooBar for fb), which beat a case-folded prefix, then a
- * substring, then any characters in order. */
+/** How well `label` matches typed `q`: a score, higher better, and the matched spans as [from, to] pairs; or null.
+ * A prefix beats word starts (fooBar for fb), which beat a case-folded prefix, then a substring, then any characters
+ * in order. */
 function rank(label, q) {
   if (!q) return [-100, []]
   if (label.length < q.length) return null

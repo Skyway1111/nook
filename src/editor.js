@@ -13,7 +13,7 @@ import { startFind } from './find.js'
 import { startComplete } from './complete.js'
 
 const PLAIN = { name: 'Plain text', lex: '' }
-// Characters drawn as a placeholder dot, as CodeMirror's highlightSpecialChars does by default.
+// Characters drawn as a placeholder: control characters, invisible spaces and marks, and bidi controls.
 const SPECIAL = /[\u{0}-\u{8}\u{b}-\u{1f}\u{7f}-\u{9f}\u{ad}\u{61c}\u{200b}\u{200e}\u{200f}\u{2028}\u{2029}\u{202d}\u{202e}\u{2066}\u{2067}\u{2069}\u{feff}\u{fff9}-\u{fffc}]/gu
 const SIMPLE = /^[\t\x20-\x7e]*$/ // a line whose caret positions are columns times the character width
 const LONG = 1024 // past this many characters an unwrapped line draws only around the viewport
@@ -74,8 +74,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
 
   // ---- Metrics, measured while the editor shows; a hidden one is never measured
   let lh = 21, cw = 8, th = 16, padTop = 16, padBottom = 24, padLeft = 6, padRight = 2, lineLeft = 0, textWidth = 600
-  // Unwrapped text wider than MAX_W device pixels scrolls `scale` times faster than its scrollbar: every row draws `shift` pixels
-  // left of its place, and column 0 sits at `origin`.
+  // Unwrapped text wider than MAX_W device pixels scrolls `scale` times faster than its scrollbar: every row draws
+  // `shift` pixels left of its place, and column 0 sits at `origin`.
   let scale = 1, shift = 0, origin = 0
   let metrics = true // measure again before the next draw
   let leftDirty = true // the gutters changed width
@@ -415,7 +415,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     }
     const indent = wrap ? 0 : column(text, s) * cw - shift
     if (r.indent !== indent) r.line.style.textIndent = (r.indent = indent) ? `${indent}px` : ''
-    if (r.text === text && r.state === st && r.next === next && r.shut === shut && r.offset === s && r.end === e && r.per === per) return
+    if (r.text === text && r.state === st && r.next === next && r.shut === shut && r.offset === s && r.end === e &&
+      r.per === per) return
     let tokens = r.tokens
     if (!(r.text === text && r.state === st && r.next === next)) {
       out.length = 0
@@ -586,7 +587,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
         textWidth = w
       }
       if (!wrap) {
-        const full = Math.ceil(lineLeft + longest * cw + padRight + 1), vw = scroller.clientWidth, most = Math.floor(MAX_W / devicePixelRatio)
+        const full = Math.ceil(lineLeft + longest * cw + padRight + 1), vw = scroller.clientWidth
+        const most = Math.floor(MAX_W / devicePixelRatio)
         const w = `max(100%, ${Math.min(full, most)}px)`
         if (w !== minWidth) content.style.minWidth = minWidth = w
         const k = full > most ? (full - vw) / (most - vw) : 1
@@ -720,7 +722,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     if (r.per) {
       const cy = c.top + y, col = Math.max(0, Math.min(r.per, Math.round((x - lineLeft) / cw)))
       const below = r.below?.getBoundingClientRect().top ?? Infinity
-      if (cy < lr.top + (r.offset / r.per) * lh) return start + Math.min(text.length, Math.max(0, Math.floor((cy - lr.top) / lh)) * r.per + col)
+      const row = Math.floor((cy - lr.top) / lh)
+      if (cy < lr.top + (r.offset / r.per) * lh) return start + Math.min(text.length, Math.max(0, row) * r.per + col)
       if (cy >= below) return start + Math.min(text.length, r.end + Math.floor((cy - below) / lh) * r.per + col)
     }
     const cx = Math.max(lr.left + padLeft, Math.min(c.left + x, lr.right - padRight - 1))

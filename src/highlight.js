@@ -925,7 +925,7 @@ function sigil(L, P, word, prev) {
   return prev === 2 ? PROP : 0
 }
 
-/** A C preprocessor line from its `#`: the directive and its argument, as CodeMirror's C++ colors them. */
+/** A C preprocessor line from its `#`: the directive and its argument. */
 function preprocessor(s, i, end, out) {
   const m = at(/#\s*(\w*)(\s*(?:<[^>]*>|"[^"]*"))?/y, s, i)
   const e = i + m[0].length - (m[2]?.length ?? 0)
