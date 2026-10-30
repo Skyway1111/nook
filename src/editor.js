@@ -1444,6 +1444,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
 
   function setSel(s, { center, scroll = true } = {}) {
     const sel = typeof s === 'number' ? { ranges: [sel1(s)], main: 0 } : s
+    // NaN would pass every bounds check and hang the next draw
+    if (!sel.ranges.every(r => Number.isInteger(r.anchor) && Number.isInteger(r.head))) throw new RangeError('select: offsets must be integers')
     dispatch({ sel, kind: 'select', scroll: false })
     if (center || scroll) { want = { pos: ranges[main].head, center }; dirty() }
   }
