@@ -7,9 +7,9 @@ export const el = (tag, props) => Object.assign(document.createElement(tag), pro
 /** Adds the stylesheet at `url` to the page's head, after the others; resolves once it applies. */
 export const sheet = url => new Promise(done => document.head.append(el('link', { rel: 'stylesheet', href: url, onload: done, onerror: done })))
 /** The letter a key names as a shortcut, lowercased: the a-z the layout types, or where it types another script's
- * letter (Cyrillic, Greek), the key code's, which is the US key's. '' for any other key, such as AltGr's ć. */
+ * letter (Cyrillic, Greek), the US key's in that place. '' for any other key, such as AltGr's ć. */
 export const letter = e => (/^[a-z]$/i.test(e.key) ? e.key.toLowerCase()
-  : /^\p{L}$/u.test(e.key) && !/\p{sc=Latin}/u.test(e.key) && e.keyCode >= 65 && e.keyCode <= 90 ? String.fromCharCode(e.keyCode + 32) : '')
+  : /^\p{L}$/u.test(e.key) && !/\p{sc=Latin}/u.test(e.key) && /^Key[A-Z]$/.test(e.code) ? e.code[3].toLowerCase() : '')
 
 const menu = $('menu')
 const preview = $('preview')
