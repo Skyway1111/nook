@@ -580,7 +580,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .tok-number, .tok-literal, .tok-meta { color: var(--ansi-yellow); }
 .tok-definition, .tok-heading, .tok-url { color: var(--ansi-blue); }
 .tok-typeName, .tok-className, .tok-namespace, .tok-variableName2 { color: var(--ansi-cyan); }
-.tok-propertyName, .tok-deleted, .tok-invalid { color: var(--ansi-red); }
+.tok-propertyName, .tok-deleted { color: var(--ansi-red); }
 .tok-heading, .tok-strong { font-weight: 600; }
 .tok-emphasis { font-style: italic; }
 .tok-link { color: var(--accent); }
