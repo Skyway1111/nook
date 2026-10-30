@@ -4,9 +4,9 @@
 
 /// Groups nested deeper than this are refused.
 const NEST: u32 = 50;
-/// A pattern whose compiled form passes this many bytes, as regex-lite counts them, is refused.
+/// A pattern whose compiled form costs more than this, as `Compiler::check` counts it, is refused.
 const SIZE: usize = 1 << 23;
-/// What regex-lite counts per state toward SIZE: the size of its `State`.
+/// What each state costs toward SIZE.
 const STATE_COST: usize = 32;
 /// A slot no group has set.
 const NONE: usize = usize::MAX;
@@ -30,7 +30,7 @@ enum How {
 
 impl Finder {
     /// `text` as a regular expression or as literal text, matching ASCII letters in either case unless `case`,
-    /// and only as a whole word when `word`. The error is regex-lite's, which the search tab shows.
+    /// and only as a whole word when `word`. The error, which the search tab shows, says what's wrong with it.
     pub fn new(text: &str, case: bool, word: bool, regex: bool) -> Result<Finder, String> {
         if !regex {
             if text.is_empty() {
@@ -44,10 +44,13 @@ impl Finder {
         Ok(Finder(Regex::compile(&text, flags).map_err(str::to_string)?))
     }
 
-    /// The non-empty matches in `text`, as regex-lite's `captures_iter` finds them.
-    pub fn matches<'a>(&'a self, text: &'a str) -> Matches<'a> {
-        let c = Cache { must: None, ..SPARE.take() };
-        Matches { how: &self.0, h: text.as_bytes(), text, at: 0, last: None, c }
+    /// The non-empty matches in `text`, in order, each with its groups' spans for `expand` when `groups`.
+    pub fn matches<'a>(&'a self, text: &'a str, groups: bool) -> Matches<'a> {
+        let n = match &self.0 {
+            How::Re(re) if groups => 2 * re.groups,
+            _ => 1,
+        };
+        Matches { how: &self.0, h: text.as_bytes(), text, at: 0, last: None, n, c: Cache::default() }
     }
 }
 
@@ -59,6 +62,8 @@ pub struct Matches<'a> {
     at: usize,
     /// Where the last match, empty ones included, ended.
     last: Option<usize>,
+    /// Slots the search fills: every group's start and end, or just the match's start.
+    n: usize,
     c: Cache,
 }
 
@@ -96,33 +101,24 @@ impl Iterator for Matches<'_> {
     }
 }
 
-impl Drop for Matches<'_> {
-    fn drop(&mut self) {
-        SPARE.set(std::mem::take(&mut self.c));
-    }
-}
-
 impl Matches<'_> {
     fn search(&mut self, re: &Regex, at: usize) -> Option<(usize, usize)> {
-        let end = re.run(&mut self.c, self.h, at, self.h.len(), false, 1)?;
+        let end = re.run(&mut self.c, self.h, at, self.n)?;
         Some((self.c.found[0], end))
     }
 
-    /// `with` for the match at `start..end`, with `$1`, `${name}` and the like filled in from its groups.
-    pub fn expand(&mut self, start: usize, end: usize, with: &str) -> String {
+    /// `with` for `start..end`, the match `next` just gave, with `$0`, `$1`, `${name}` and the like filled in.
+    pub fn expand(&self, start: usize, end: usize, with: &str) -> String {
         match self.how {
-            How::Re(re) if with.contains('$') => {
-                re.run(&mut self.c, self.h, start, end, true, 2 * re.groups);
-                interpolate(with, self.text, &self.c.found, &re.names)
-            }
+            How::Re(re) if self.n > 1 => interpolate(with, self.text, &self.c.found, &re.names),
             _ => interpolate(with, self.text, &[start, end], &[]),
         }
     }
 }
 
-/// `with` with each `$ref` replaced by the group it names, as regex-lite's `Captures::expand`: `$$` is `$`,
-/// `$name` takes the longest run of `[0-9A-Za-z_]`, `${name}` anything up to `}`, all digits name a group by
-/// number, and a group that didn't match, or doesn't exist, is empty.
+/// `with` with each `$ref` replaced by the group it names: `$$` is `$`, `$name` takes the longest run of
+/// `[0-9A-Za-z_]`, `${name}` anything up to `}`, all digits name a group by number, and a group that didn't
+/// match, or doesn't exist, is empty.
 fn interpolate(with: &str, text: &str, slots: &[usize], names: &[(String, usize)]) -> String {
     let mut out = String::new();
     let mut rep = with;
@@ -184,14 +180,21 @@ struct Needle {
 
 impl Needle {
     fn new(lit: &[(u8, u8)]) -> Needle {
-        let mut order: Vec<usize> = (0..lit.len()).collect();
-        order.sort_by_key(|&i| COMMON[lit[i].0 as usize]);
-        let (a, b) = (order[0], *order.get(1).unwrap_or(&order[0]));
+        let rank = |&i: &usize| COMMON[lit[i].0 as usize];
+        let a = (0..lit.len()).min_by_key(rank).unwrap();
+        let b = (0..lit.len()).filter(|&i| i != a).min_by_key(rank).unwrap_or(a);
         Needle { bytes: lit.iter().map(|l| l.0).collect(), masks: lit.iter().map(|l| l.1).collect(), rare: (a.min(b), a.max(b)) }
     }
 
+    /// Whether the needle is at `p`, given its rare bytes are there, which is all of a needle of one or two
+    /// bytes. Compares eight bytes at a time.
     fn is_at(&self, h: &[u8], p: usize) -> bool {
-        h[p..p + self.bytes.len()].iter().zip(&self.bytes).zip(&self.masks).all(|((&c, &v), &m)| c | m == v)
+        if self.bytes.len() <= 2 {
+            return true;
+        }
+        let ((h, ht), (v, vt), (m, mt)) = (h[p..p + self.bytes.len()].as_chunks::<8>(), self.bytes.as_chunks::<8>(), self.masks.as_chunks::<8>());
+        let w = |b: &[u8; 8]| u64::from_ne_bytes(*b);
+        h.iter().zip(v).zip(m).all(|((h, v), m)| w(h) | w(m) == w(v)) && ht.iter().zip(vt).zip(mt).all(|((&c, &v), &m)| c | m == v)
     }
 
     /// Where the needle first occurs in `h` at or after `from`.
@@ -283,7 +286,7 @@ impl Look {
     }
 }
 
-// The pattern's tree, as regex-lite's parser builds it.
+// The pattern's tree.
 
 /// Sorted, merged ranges of codepoints.
 type Ranges = Vec<(u32, u32)>;
@@ -291,7 +294,9 @@ type Ranges = Vec<(u32, u32)>;
 enum Node {
     Empty,
     Char(char),
-    Class(Ranges),
+    /// Its ranges, and its index among the compiled pattern's classes once compiled: a repeat compiles the
+    /// same node again.
+    Class(Ranges, std::cell::Cell<u32>),
     Look(Look),
     /// min, max, greedy.
     Rep(u32, Option<u32>, bool, Box<Hir>),
@@ -333,7 +338,7 @@ impl Hir {
 
     fn class(mut r: Ranges) -> Hir {
         canon(&mut r);
-        Hir::leaf(Node::Class(r), false)
+        Hir::leaf(Node::Class(r, u32::MAX.into()), false)
     }
 
     fn look(l: Look) -> Hir {
@@ -380,14 +385,17 @@ impl Hir {
 
 fn canon(r: &mut Ranges) {
     r.sort_unstable();
-    let mut out: Ranges = Vec::with_capacity(r.len());
-    for &(s, e) in r.iter() {
-        match out.last_mut() {
-            Some(last) if s.max(last.0) <= e.min(last.1).saturating_add(1) => *last = (s.min(last.0), e.max(last.1)),
-            _ => out.push((s, e)),
+    let mut n = 0;
+    for i in 0..r.len() {
+        let (s, e) = r[i];
+        if n > 0 && s <= r[n - 1].1.saturating_add(1) {
+            r[n - 1].1 = r[n - 1].1.max(e);
+        } else {
+            r[n] = (s, e);
+            n += 1;
         }
     }
-    *r = out;
+    r.truncate(n);
 }
 
 /// The other case of the ASCII letters in `(s, e)`: of the lowercase ones if it has any, else the uppercase.
@@ -409,7 +417,7 @@ fn fold(r: &mut Ranges) {
     canon(r);
 }
 
-/// Every codepoint `r` leaves out, stepping over the surrogates as regex-lite does.
+/// Every codepoint `r` leaves out, stepping over the surrogates.
 fn negate(r: &mut Ranges) {
     let next = |c: u32| if c == 0xD7FF { 0xE000 } else { c + 1 };
     let prev = |c: u32| if c == 0xE000 { 0xD7FF } else { c - 1 };
@@ -464,7 +472,7 @@ struct Flags {
     x: bool,
 }
 
-/// A port of regex-lite's parser, check for check, so a pattern fails with the same error.
+/// Reads a pattern into its tree, or fails at its first error, with that error's text.
 struct Parser<'a> {
     pat: &'a str,
     pos: usize,
@@ -964,7 +972,7 @@ impl Parser<'_> {
         if self.ch() != '-' || matches!(self.peek_space(), Some(']' | '-')) {
             match first.node {
                 Node::Char(c) => union.push((c as u32, c as u32)),
-                Node::Class(r) => union.extend(r),
+                Node::Class(r, _) => union.extend(r),
                 _ => return Err("invalid escape sequence in character class"),
             }
             return Ok(());
@@ -1024,8 +1032,8 @@ impl Parser<'_> {
     }
 }
 
-// The pattern compiled to a Thompson NFA, state for state as regex-lite compiles it, so threads keep its
-// priorities and a pattern too big for it is too big here.
+// The pattern compiled to a Thompson NFA. A split's targets are in priority order, which makes a match
+// leftmost-first, and every state counts toward SIZE.
 
 enum Inst {
     /// The character, and where a thread goes on it.
@@ -1045,7 +1053,7 @@ struct Compiler {
     insts: Vec<Inst>,
     classes: Vec<Class>,
     groups: usize,
-    /// regex-lite's count of bytes beyond the states themselves.
+    /// What counts toward SIZE beyond the states themselves.
     extra: usize,
 }
 
@@ -1096,10 +1104,13 @@ impl Compiler {
         match &h.node {
             Node::Empty => self.one(Inst::Goto(0)),
             Node::Char(c) => self.one(Inst::Char(*c as u32, 0)),
-            Node::Class(r) if r.is_empty() => self.one(Inst::Fail),
-            Node::Class(r) => {
-                self.classes.push(Class::new(r.clone()));
-                self.one(Inst::Class(self.classes.len() as u32 - 1, 0))
+            Node::Class(r, _) if r.is_empty() => self.one(Inst::Fail),
+            Node::Class(r, k) => {
+                if k.get() == u32::MAX {
+                    self.classes.push(Class::new(r.clone()));
+                    k.set(self.classes.len() as u32 - 1);
+                }
+                self.one(Inst::Class(k.get(), 0))
             }
             Node::Look(l) => self.one(Inst::Look(*l, 0)),
             Node::Rep(0, Some(1), greedy, sub) => {
@@ -1216,7 +1227,7 @@ struct Class {
 impl Class {
     fn new(ranges: Ranges) -> Class {
         let ranges = ranges.into_boxed_slice();
-        let ascii = (0..128).filter(|&c| in_ranges(&ranges, c)).fold(0, |m, c| m | 1u128 << c);
+        let ascii = ranges.iter().filter(|r| r.0 < 128).fold(0, |m, &(s, e)| m | ((u128::MAX >> (127 - e.min(127))) & (u128::MAX << s)));
         Class { ascii, ranges }
     }
 
@@ -1239,11 +1250,11 @@ type Lit = Vec<(u8, u8)>;
 /// What every match of `h` starts with, whether that is all a match can be, and the longest literal every
 /// match holds.
 fn lits(h: &Hir) -> (Lit, bool, Lit) {
-    let char = |c: char| c.to_string().bytes().map(|b| (b, 0)).collect::<Lit>();
+    let char = |c: char| c.encode_utf8(&mut [0; 4]).bytes().map(|b| (b, 0)).collect::<Lit>();
     match &h.node {
         Node::Empty | Node::Look(_) => (Vec::new(), true, Vec::new()),
         Node::Char(c) => (char(*c), true, char(*c)),
-        Node::Class(r) => match r[..] {
+        Node::Class(r, _) => match r[..] {
             [(s, e)] if s == e => {
                 let c = char::from_u32(s).map_or_else(Vec::new, char);
                 (c.clone(), !c.is_empty(), c)
@@ -1297,7 +1308,7 @@ fn lits(h: &Hir) -> (Lit, bool, Lit) {
 fn pure(h: &Hir) -> bool {
     match &h.node {
         Node::Char(_) => true,
-        Node::Class(_) => lits(h).1,
+        Node::Class(..) => lits(h).1,
         Node::Concat(subs) => subs.iter().all(pure),
         _ => false,
     }
@@ -1347,8 +1358,7 @@ impl Regex {
         Ok(How::Re(Box::new(re)))
     }
 
-    /// The first bytes of the characters a match can start with, or None when that's every byte or a match
-    /// can be empty.
+    /// The first bytes of the characters a match can start with, or None when a match can be empty.
     fn first_bytes(&self) -> Option<Box<[bool; 256]>> {
         let lead = |c: u32| match c {
             0..=0x7F => c,
@@ -1381,16 +1391,16 @@ impl Regex {
                 Inst::Match => return None,
             }
         }
-        (!set.iter().all(|&b| b)).then_some(set)
+        Some(set)
     }
 
-    /// The leftmost-first match in `h` that starts at or after `start` and ends by `end`, as regex-lite's PikeVM
-    /// finds it: where it ends, with the winner's first `n` slots left in `c.found`. An anchored search starts
-    /// threads at `start` only.
-    fn run(&self, c: &mut Cache, h: &[u8], start: usize, end: usize, anchored: bool, n: usize) -> Option<usize> {
-        if start > end {
+    /// The leftmost-first match in `h` that starts at or after `start`: where it ends, with the winner's first
+    /// `n` slots left in `c.found`.
+    fn run(&self, c: &mut Cache, h: &[u8], start: usize, n: usize) -> Option<usize> {
+        if start > h.len() {
             return None;
         }
+        let mut at = self.skip(c, h, start)?;
         c.curr.reset(self.insts.len(), n);
         c.next.reset(self.insts.len(), n);
         c.blank.clear();
@@ -1398,19 +1408,8 @@ impl Regex {
         c.found.clear();
         c.found.resize(n, NONE);
         let mut matched = None;
-        let mut at = start;
         loop {
-            if c.curr.list.is_empty() {
-                if matched.is_some() || (anchored && at > start) {
-                    break;
-                }
-                // States passed at the last position no longer hold anything once the search jumps ahead.
-                if !anchored {
-                    at = self.skip(c, h, at)?;
-                    c.curr.clear();
-                }
-            }
-            if matched.is_none() && (!anchored || at == start) {
+            if matched.is_none() {
                 self.closure(h, at, self.start, &mut c.blank, &mut c.curr, &mut c.stack);
             }
             let (ch, len) = decode(h, at);
@@ -1436,8 +1435,13 @@ impl Regex {
             std::mem::swap(curr, next);
             next.clear();
             at += len;
-            if at > end {
-                break;
+            if curr.list.is_empty() {
+                if matched.is_some() {
+                    break;
+                }
+                // States passed at the last position no longer hold anything once the search jumps ahead.
+                at = self.skip(c, h, at)?;
+                c.curr.clear();
             }
         }
         matched
@@ -1551,11 +1555,6 @@ impl Threads {
 enum Frame {
     Explore(u32),
     Restore(u32, usize),
-}
-
-thread_local! {
-    /// The cache a thread's last search used, so the next one doesn't allocate and clear its own.
-    static SPARE: std::cell::Cell<Cache> = std::cell::Cell::default();
 }
 
 /// What a search reuses from one match to the next.

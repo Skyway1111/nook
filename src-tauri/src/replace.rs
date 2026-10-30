@@ -37,9 +37,7 @@ pub struct Query {
     word: bool,
     /// `text` is a regular expression, and a replacement's `$1` or `${name}` takes what a group matched.
     regex: bool,
-    /// Which files, by path: comma-separated parts, each text the path holds or, with `*` (any run of characters
-    /// but `/`) or `**` (any run at all), a pattern its end matches; `!` before a part leaves out what it
-    /// matches. Empty for every file.
+    /// Which files, by path, as `Filter` reads it. Empty for every file.
     #[serde(default)]
     files: String,
 }
@@ -113,7 +111,7 @@ fn find_in(path: &Path, q: &Query, re: &Finder, with: Option<&str>, room: usize)
     // The line the last match was on: its number, start, end and the match's column, which the next match on
     // it counts on from, so a long line is read once, not once a match.
     let (mut line, mut start, mut end, mut col, mut counted) = (1u32, 0, 0, 1, 0);
-    let mut found = re.matches(text);
+    let mut found = re.matches(text, with.is_some_and(|w| w.contains('$')));
     while let Some((m, m_end)) = found.next() {
         let gap = &text.as_bytes()[counted..m];
         let breaks = gap.iter().filter(|&&b| b == b'\n').count();
@@ -224,7 +222,7 @@ pub struct Replaced {
 fn replace_text(text: &str, q: &Query, re: &Finder, with: &str, skip: &HashSet<usize>) -> (String, usize) {
     let mut out = String::with_capacity(text.len());
     let (mut last, mut n) = (0, 0);
-    let mut found = re.matches(text);
+    let mut found = re.matches(text, with.contains('$'));
     while let Some((start, end)) = found.next() {
         if skip.contains(&start) {
             continue;
@@ -320,7 +318,7 @@ mod tests {
     #[test]
     fn patterns_follow_case_words_and_regex() {
         let text = "Foo foo food a.b axb";
-        let count = |q: Query| pattern(&q).unwrap().matches(text).count();
+        let count = |q: Query| pattern(&q).unwrap().matches(text, false).count();
         assert_eq!(count(q("foo", false, false, false)), 3);
         assert_eq!(count(q("foo", true, false, false)), 2);
         assert_eq!(count(q("foo", false, true, false)), 2);
@@ -328,7 +326,7 @@ mod tests {
         assert_eq!(count(q("a.b", false, false, true)), 2);
         assert!(pattern(&q("(", false, false, true)).is_err());
         // CRLF lines end before the \r.
-        assert_eq!(pattern(&q("b$", false, false, true)).unwrap().matches("ab\r\nb\n").count(), 2);
+        assert_eq!(pattern(&q("b$", false, false, true)).unwrap().matches("ab\r\nb\n", false).count(), 2);
     }
 
     #[test]
