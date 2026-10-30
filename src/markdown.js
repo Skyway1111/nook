@@ -10,6 +10,7 @@ const HTML6 = `<\\/?(?:${TAG})(?: +|\\n|\\/?>)|<(?:script|pre|style|textarea|!--
 const DELIM = /((?:\| *)?:?-+:? *(?:\| *:?-+:? *)*(?:\| *)?)/.source
 const re = (s, f = 'y') => new RegExp(s, f)
 
+// marked's block and inline patterns, sticky, so a document splits into the same pieces.
 const B_FENCES = /( {0,3})(`{3,}(?=[^`\n]*(?:\n|$))|~{3,})([^\n]*)(?:\n|$)(?:|([\s\S]*?)(?:\n|$))(?: {0,3}\2[~`]* *(?=\n|$)|$)/y
 const B_HEADING = / {0,3}(#{1,6})(?=\s|$)(.*)(?:\n+|$)/y
 const B_HR = re(HR)
@@ -493,12 +494,11 @@ function list(s, i) {
     }
     token.items.push({ raw, task: IS_TASK.test(contents), text: contents, tokens: null })
   }
-  token.raw = p > n ? s.slice(i, n) + '\n' : s.slice(i, p)
   const lastItem = token.items[token.items.length - 1]
   if (!lastItem) return
   lastItem.raw = lastItem.raw.trimEnd()
   lastItem.text = lastItem.text.trimEnd()
-  token.raw = token.raw.trimEnd()
+  token.raw = (p > n ? s.slice(i, n) + '\n' : s.slice(i, p)).trimEnd()
   for (const it of token.items) {
     top = false
     it.tokens = lex(it.text, [])
@@ -813,17 +813,15 @@ function textEnd(s, p, k) {
   let end = k.stop
   // An email's name, then its `@`.
   if (k.at <= q) {
-    let a = q
-    for (;;) {
+    for (let a = q; ; a++) {
       a = find(s, '@', a)
       let u = a
-      while (u > 0 && cls(s.charCodeAt(u - 1)) & 2) u--
+      if (a < n) while (u > 0 && cls(s.charCodeAt(u - 1)) & 2) u--
       if (a === n || (u < a && a > q)) {
         k.at = a
         k.name = u
         break
       }
-      a++
     }
   }
   if (k.at < n) end = Math.min(end, Math.max(k.name, q))
