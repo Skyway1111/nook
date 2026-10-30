@@ -125,15 +125,15 @@ export function summary(marks) {
   return parts.length ? parts.map(([c, w]) => `${c} ${w}`).join(' · ') : `${marks.length} idle`
 }
 
-/** Polls the reports of the tabs `tabs()` lists that have a session (`tab.terminal.id`): those `shown(tab)` every
+/** Polls the reports of the tabs `tabs()` lists that have a session (`tab.terminal.id`): those `visible(tab)` every
  * 500 ms, so a composer's menus follow a pick, and the rest each second. `onChange(tab, view, report)` hears each tab
  * whose view or report changed. Costs one IPC call each 500 ms while any Claude tab is open, and nothing else while
  * their reports stay the same. */
-export function watchSessions({ invoke, tabs, shown, watched, onChange }) {
+export function watchSessions({ invoke, tabs, visible, watched, onChange }) {
   const seen = new WeakMap() // tab -> { view, text }
   let ticks = 0
   async function poll(all = true) {
-    const live = tabs().filter(t => t.terminal?.id != null && (all || shown(t)))
+    const live = tabs().filter(t => t.terminal?.id != null && (all || visible(t)))
     if (!live.length) return
     const texts = await invoke('pty_states', { ids: live.map(t => t.terminal.id) })
     live.forEach((tab, i) => {

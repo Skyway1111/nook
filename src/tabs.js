@@ -140,7 +140,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
   const sessions = watchSessions({
     invoke,
     tabs: () => tabs,
-    shown: tab => !tab.view.hidden,
+    visible: tab => !tab.view.hidden,
     watched: tab => (tab === active || tab === beside) && document.hasFocus(),
     onChange: (tab, view, report) => {
       tab.el.dataset.mark = view.mark
