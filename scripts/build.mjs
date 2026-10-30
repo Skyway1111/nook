@@ -667,7 +667,10 @@ function bundle() {
     : `E[${m.n}]=(()=>{${imports(m)}\n${m.body}\nreturn${exports(m)}})()\n`).join(''))
   for (const [, list] of chunks) put(list[0].chunk, `export default{${list.map(m =>
     `${m.n}:(${m.async ? 'async function(J)' : 'J=>'}{${imports(m)}\n${m.body}\nreturn${exports(m)}})`).join(',\n')}}\n`)
-  for (const f of readdirSync(dist, { recursive: true })) if (!written.has(join(dist, f)) && statSync(join(dist, f)).isFile()) rmSync(join(dist, f))
+  // What an earlier build left: each file this one didn't write, then each folder left empty, deepest first.
+  for (const f of readdirSync(dist, { recursive: true }).map(f => join(dist, f)).sort((a, b) => b.length - a.length)) {
+    if (!written.has(f) && (statSync(f).isFile() || !readdirSync(f).length)) rmSync(f, { recursive: true })
+  }
   const kb = n => `${(n / 1024).toFixed(1)} KB`
   const open = ['index.html', 'index.js', 'index.css'].reduce((s, f) => s + statSync(join(dist, f)).size, 0)
   console.log(`dist: ${startup.length} modules to open (${kb(open)} with the page and its CSS), ${all.length - startup.length} more in ${chunks.size} chunks, in ${Math.round(performance.now() - started)} ms`)
