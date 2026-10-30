@@ -66,7 +66,7 @@ export class Term {
     palette()
     this.host = host
     this.keys = keys
-    this.listeners = { data: [], resize: [], title: [], render: [], parsed: [] }
+    this.listeners = { data: [], resize: [], title: [], render: [], parsed: [], raise: [] }
     this.vt = new Vt(80, 24, {
       reply: s => this.emit('data', s),
       title: s => this.emit('title', s),
@@ -189,6 +189,8 @@ export class Term {
   onRender(fn) { return on(this.listeners.render, fn) }
   /** After each slice of parsing. */
   onWriteParsed(fn) { return on(this.listeners.parsed, fn) }
+  /** After each change to the rows drawn higher (see raise). */
+  onRaise(fn) { return on(this.listeners.raise, fn) }
 
   // ---- metrics
 
@@ -675,11 +677,15 @@ export class Term {
         const end = ey - view
         const first = Math.max(start, 0)
         const last = Math.min(end, rows - 1)
+        const r = this.raised
         const box = (row, from, to, n = 1) => {
-          if (n <= 0) return
           const left = from * cellW
           const width = Math.min(cellW * (to - from), this.canvasW - left)
-          html += `<div style="top:${row * cellH}px;left:${left}px;width:${width}px;height:${n * cellH}px"></div>`
+          for (const end = row + n; row < end;) { // cut where raised rows start and end
+            const stop = !r ? end : Math.min(end, row < r.from ? r.from : row < r.to ? r.to : end)
+            html += `<div style="top:${row * cellH - this.lift(row)}px;left:${left}px;width:${width}px;height:${(stop - row) * cellH}px"></div>`
+            row = stop
+          }
         }
         if (first < rows && last >= 0 && (sx !== ex || sy !== ey)) {
           box(first, start === first ? sx : 0, first === end ? ex : cols)
@@ -712,14 +718,13 @@ export class Term {
   placeMark(m, view) {
     const y = m.line - view
     const shown = m.buffer === this.vt.buffer && y >= 0 && y < this.vt.rows
-    const r = this.raised
-    const top = y * this.cellH - (r && y >= r.from && y < r.to ? r.px : 0)
+    const top = y * this.cellH - this.lift(y)
     const css = shown ? `top:${top}px;left:${m.x * this.cellW}px;width:${m.width * this.cellW}px;height:${this.cellH}px` : 'display:none'
     if (css !== m.css) m.el.style.cssText = m.css = css
   }
 
-  /** Draws screen rows `r.from` to `r.to` `r.px` px higher than their place, with their marks; null puts them
-   * back. The composer raises the rows between a short transcript and Claude's prompt. */
+  /** Draws screen rows `r.from` to `r.to` `r.px` px higher than their place, with the selection and marks over
+   * them; null puts them back. The composer raises the rows between a short transcript and Claude's prompt. */
   raise(r) {
     const old = this.raised
     if (old?.from === r?.from && old?.to === r?.to && old?.px === r?.px) return
@@ -728,7 +733,15 @@ export class Term {
     if (r) set(r, `translateY(${-r.px}px)`)
     this.raised = r
     const b = this.vt.buffer
-    for (const m of this.marksList) this.placeMark(m, b.trimmed + b.ydisp)
+    this.selKey = null
+    this.place(b.trimmed + b.ydisp, this.selRange(), true)
+    this.emit('raise')
+  }
+
+  /** How many px higher than its place screen row `y` draws. */
+  lift(y) {
+    const r = this.raised
+    return r && y >= r.from && y < r.to ? r.px : 0
   }
 
   // ---- scrolling

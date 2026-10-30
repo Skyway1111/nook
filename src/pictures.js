@@ -210,7 +210,9 @@ export function startPictures(term, reply = () => {}) {
       if (!file) continue
       const { columns: c, rows: r } = file
       const pct = (n, of) => `${(n / of) * 100}%`
+      const lift = term.lift(top) // raised rows carry their pictures; one's rows are all raised or none
       const css = `left:${pct(x0, term.cols)};top:${pct(y0, term.rows)};width:${pct(c, term.cols)};height:${pct(r, term.rows)};`
+        + (lift ? `translate:0 ${-lift}px;` : '')
         + (file.page || file.math ? '' : `background-image:url("${file.url}");${file.left ? 'background-position:left center;' : ''}`)
         + `clip-path:inset(${pct(top - y0, r)} ${pct(x0 + c - 1 - right, c)} ${pct(y0 + r - 1 - bottom, r)} ${pct(left - x0, c)})`
       const pic = shown.get(id) ?? { el: layer.appendChild(el('div')) }
@@ -278,6 +280,7 @@ export function startPictures(term, reply = () => {}) {
   }
 
   term.onRender(() => seen && draw())
+  term.onRaise(() => seen && draw())
   return {
     apc,
     wrote,
