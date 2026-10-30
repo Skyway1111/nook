@@ -9,15 +9,7 @@ mod mime;
 use std::path::{Path, PathBuf};
 
 fn main() {
-    let var = |k: &str, default: &str| {
-        println!("cargo:rerun-if-env-changed={k}");
-        let v = std::env::var(k).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.into());
-        assert!(!v.contains(['\\', '/']), "{k} names a folder, not a path");
-        println!("cargo:rustc-env={k}={v}");
-        v
-    };
-    let name = var("NOOK_NAME", "nook");
-    var("NOOK_ID", "dev.nook.app");
+    let name = rsrc::identity();
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
         rsrc::link("icons/icon.ico", &name, env!("CARGO_PKG_VERSION"));
     }

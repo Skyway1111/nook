@@ -6,6 +6,7 @@
 // NOOK_ID and NOOK_NAME, the build's identity, reach both cargo builds through the environment.
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
@@ -20,10 +21,8 @@ const PAYLOAD = [
   ...(windows ? [
     ['native/conpty/conpty.dll', 'conpty.dll'],
     ['native/conpty/OpenConsole.exe', 'OpenConsole.exe'],
-    ['native/conpty/LICENSE', 'conpty-LICENSE.txt'],
   ] : []),
-  ['src/fonts/OFL.txt', 'Libron-LICENSE.txt'],
-  ['src/fonts/FluentIcons-LICENSE.txt', 'FluentIcons-LICENSE.txt'],
+  ['LICENSES.txt', 'LICENSES.txt'],
   ['mod/.claude-plugin/plugin.json', 'mod/.claude-plugin/plugin.json'],
   ['mod/hooks/hooks.json', 'mod/hooks/hooks.json'],
   ['mod/hooks/register.js', 'mod/hooks/register.js'],
@@ -669,7 +668,10 @@ function bundle() {
     : `E[${m.n}]=(()=>{${imports(m)}\n${m.body}\nreturn${exports(m)}})()\n`).join(''))
   for (const [, list] of chunks) put(list[0].chunk, `export default{${list.map(m =>
     `${m.n}:(${m.async ? 'async function(J)' : 'J=>'}{${imports(m)}\n${m.body}\nreturn${exports(m)}})`).join(',\n')}}\n`)
-  for (const f of readdirSync(dist, { recursive: true })) if (!written.has(join(dist, f)) && statSync(join(dist, f)).isFile()) rmSync(join(dist, f))
+  // What an earlier build left: each file this one didn't write, then each folder left empty, deepest first.
+  for (const f of readdirSync(dist, { recursive: true }).map(f => join(dist, f)).sort((a, b) => b.length - a.length)) {
+    if (!written.has(f) && (statSync(f).isFile() || !readdirSync(f).length)) rmSync(f, { recursive: true })
+  }
   const kb = n => `${(n / 1024).toFixed(1)} KB`
   const open = ['index.html', 'index.js', 'index.css'].reduce((s, f) => s + statSync(join(dist, f)).size, 0)
   console.log(`dist: ${startup.length} modules to open (${kb(open)} with the page and its CSS), ${all.length - startup.length} more in ${chunks.size} chunks, in ${Math.round(performance.now() - started)} ms`)
@@ -697,7 +699,11 @@ if (!process.argv.includes('--dist')) {
   if (process.env.CARGO_TARGET_DIR) process.env.CARGO_TARGET_DIR = resolve(process.env.CARGO_TARGET_DIR)
   const release = join(process.env.CARGO_TARGET_DIR ?? join(native, 'target'), 'release')
   const exe = windows ? 'nook.exe' : 'nook'
-  run('cargo', ['build', '--release'], native)
+  // ~ for the home folder in the paths the exes hold, and on MSVC the C runtime linked in, so nook.exe needs no
+  // vcruntime140.dll. cargo rustc adds them to the exe's own compile, after any flags the user set.
+  const msvc = /^host: .*-msvc$/m.test(spawnSync('rustc', ['-vV'], { cwd: native, encoding: 'utf8' }).stdout)
+  const compile = ['rustc', '--release', '--', `--remap-path-prefix=${homedir()}=~`, ...(msvc ? ['-Ctarget-feature=+crt-static'] : [])]
+  run('cargo', compile, native)
   // The stage is a nook that runs where it is: the exe and what ships beside it, and nothing else.
   const stage = join(release, 'stage')
   rmSync(stage, { recursive: true, force: true })
@@ -709,7 +715,7 @@ if (!process.argv.includes('--dist')) {
   const [version, about, home] = ['version', 'description', 'repository'].map(k => new RegExp(`^${k} = "(.+)"`, 'm').exec(cargo)[1])
   const name = NOOK_NAME || 'nook'
   if (pack && windows) {
-    run('cargo', ['build', '--release'], join(native, 'setup'))
+    run('cargo', compile, join(native, 'setup'))
     const out = join(release, `${name}_${version}_x64-setup.exe`)
     run(join(process.env.CARGO_TARGET_DIR ?? join(native, 'setup', 'target'), 'release', 'setup.exe'), ['--pack', stage, out], root)
     console.log(out)

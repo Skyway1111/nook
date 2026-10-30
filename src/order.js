@@ -25,7 +25,7 @@ function isDigit(c) { return c >= 48 && c <= 57 }
  * printable ASCII. Each character becomes its weight; a run of digits becomes the digits' weight, the run's
  * length without leading zeros, then those digits, so a longer number ranks higher.
  */
-export const nameKey = name => key(name, -1)
+const nameKey = name => key(name, -1)
 
 /** nameKey(name), led by the code `lead` unless it's -1 and followed by a 0 and `index` when `index` is given. */
 function key(name, lead, index = -1) {

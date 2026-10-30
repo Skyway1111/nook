@@ -71,8 +71,11 @@ pub fn run(cmd: &mut Command, input: Option<&str>) -> Result<String, String> {
     }
     let mut child = spawning(|| cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn())
         .map_err(|e| format!("can't run {}: {e}", Path::new(cmd.get_program()).file_stem().unwrap_or_default().to_string_lossy()))?;
+    // The input goes in on a worker while the output comes out, so a tool that writes before it has read
+    // everything never waits on a full pipe. A tool that quit early says why below.
     if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        let _ = stdin.write_all(input.as_bytes()); // a tool that quit early says why below
+        let input = input.to_owned();
+        host::ipc::work(move || drop(stdin.write_all(input.as_bytes())));
     }
     let out = child.wait_with_output().map_err(err)?;
     if out.status.success() {

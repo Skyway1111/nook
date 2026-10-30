@@ -136,7 +136,7 @@ export function startComplete(v) {
       const li = el('li', { role: 'option' })
       li.dataset.n = n
       if (n === list.picked) li.setAttribute('aria-selected', 'true')
-      const label = el('span', { className: 'cm-completionLabel' })
+      const label = el('span')
       let k = 0
       for (let h = 0; h < it.hits.length; h += 2) {
         if (it.hits[h] > k) label.append(it.label.slice(k, it.hits[h]))

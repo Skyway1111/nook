@@ -36,7 +36,6 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openPath, ope
   document.body.append(box)
 
   const indexes = new Map() // a folder asked about → { root, files, lower, at, partial, building }
-  let results = []
   let at = 0 // the highlighted row
   let index = null // the index the box shows
   let asked = '' // the folder it was asked for

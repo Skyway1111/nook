@@ -80,7 +80,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   const dom = el('div', { className: 'cm-editor' })
   const scroller = el('div', { className: 'cm-scroller' })
   const content = el('div', { className: 'cm-content' })
-  const rowsBox = el('div', { className: 'cm-rows' })
+  const rowsBox = el('div')
   const selLayer = el('div', { className: 'cm-selectionLayer' })
   const curLayer = el('div', { className: 'cm-cursorLayer' })
   const probe = el('div', { className: 'cm-probe' })
@@ -991,11 +991,11 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     selectionMatches(sels)
     brackets(sels)
     for (const r of ranges) if (r.anchor !== r.head) rects(from(r), to(r), 'cm-selectionBackground', sels)
-    for (const [k, r] of ranges.entries()) {
+    for (const r of ranges) {
       const i = doc.lineOf(r.head)
       if (!rows.has(i)) continue
       const c = coords(r.head, r.assoc)
-      cur.push([c.x, c.y + (lh - th) / 2, 0, th, k === main ? 'cm-cursor cm-cursor-primary' : 'cm-cursor'])
+      cur.push([c.x, c.y + (lh - th) / 2, 0, th, 'cm-cursor'])
     }
     if (drop_ != null && rows.has(doc.lineOf(drop_))) {
       const c = coords(drop_)
@@ -1442,8 +1442,12 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   const find = (view.find = startFind(view))
   const complete = (view.complete = startComplete(view))
 
+  // NaN passes every bounds check and hangs the next draw, so an offset from outside must be an integer.
+  const offsets = (...ns) => { if (!ns.every(Number.isInteger)) throw new RangeError('offsets must be integers') }
+
   function setSel(s, { center, scroll = true } = {}) {
     const sel = typeof s === 'number' ? { ranges: [sel1(s)], main: 0 } : s
+    offsets(...sel.ranges.flatMap(r => [r.anchor, r.head]))
     dispatch({ sel, kind: 'select', scroll: false })
     if (center || scroll) { want = { pos: ranges[main].head, center }; dirty() }
   }
@@ -1474,6 +1478,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     /** Replaces offsets `from` to `to` with `insert` as one undoable change. With `clean`, the result is the text as
      * saved, before anyone hears of the change. */
     replace(a, b, insert, { clean: c } = {}) {
+      offsets(a, b)
       insert = split(insert).join('\n')
       if (c) hist.sealed = true
       dispatch({ changes: a !== b || insert ? [{ from: a, to: b, insert }] : null, kind: 'other', scroll: false, clean: c, done: c })

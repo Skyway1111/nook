@@ -1,6 +1,6 @@
 // A terminal without a screen: parses what a program writes, keeps the normal buffer with its scrollback and the
-// alternate one, and answers what the program asks. Its behavior is xterm.js's, which Claude Code and ConPTY
-// were built against. No DOM: the view reads it through `buffer`.
+// alternate one, and answers what the program asks. Its behavior follows xterm's control sequences, which Claude
+// Code and ConPTY emit. No DOM: the view reads it through `buffer`.
 import { wcwidth } from './wcwidth.js'
 
 // A cell is three words. content: code point | COMBINED | width << 22, where an empty cell has width 1 and the
@@ -383,8 +383,9 @@ class Buffer {
     return x >= cols ? cols - 1 : x < 0 ? 0 : x
   }
 
-  /** Rows below the cursor go first, then the top scrolls off; a Linux PTY pulls
-   * scrollback back down as rows grow, ConPTY gets blank rows. The normal buffer reflows wrapped lines. */
+  /** Rows below the cursor go first, then the top scrolls off; a Linux PTY pulls scrollback back down as rows grow,
+   * ConPTY gets blank rows. The normal buffer reflows wrapped lines. This and the reflows below are xterm.js's
+   * Buffer and BufferReflow (LICENSES.txt). */
   resize(cols, rows, oldCols, oldRows) {
     const { lines, vt } = this
     const max = rows + this.scrollback
@@ -631,7 +632,8 @@ function newLineLengths(wrapped, oldCols, cols) {
   return lengths
 }
 
-// The parser's states and actions: Paul Williams' DEC parser, with xterm.js's transitions.
+// The parser's states and actions: Paul Williams' DEC parser, as xterm.js's EscapeSequenceParser builds it
+// (LICENSES.txt).
 const GROUND = 0
 const ESCAPE = 1
 const ESCAPE_INTERMEDIATE = 2

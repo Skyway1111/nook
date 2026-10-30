@@ -10,6 +10,9 @@ const USAGE = {
   cost: { usd: 0.42 },
 }
 
+/** A path as the test names it, where the kit hands a stand-in the system's own (`C:\nook\1-0.json` on Windows). */
+const posix = (p: string) => p.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
+
 /** A session that nook started, whose reports land in `reports`. */
 function nook(on, reports: Record<string, unknown>[], surfaces = ['terminal'], written: Record<string, string> = {}, results: Record<string, unknown> = {}) {
   on('env.get', (_, e) => ({ value: e.name === 'NOOK_STATE' ? STATE : '' }))
@@ -22,10 +25,10 @@ function nook(on, reports: Record<string, unknown>[], surfaces = ['terminal'], w
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('config.list', () => ({ value: [] }))
   on('settings.read', () => ({ value: {} }))
-  on('fs.read', (_, e) => ({ value: written[e.path] ?? '' }))
+  on('fs.read', (_, e) => ({ value: written[posix(e.path)] ?? '' }))
   on('fs.write', (_, e) => {
-    if (e.path === STATE) reports.push(JSON.parse(e.text))
-    else written[e.path] = e.text
+    if (posix(e.path) === STATE) reports.push(JSON.parse(e.text))
+    else written[posix(e.path)] = e.text
     return { value: undefined }
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -295,7 +298,7 @@ test('a picture a command wrote shows under it: one it names, or a new one in th
   on('session.root', () => ({ value: '/work' }))
   const files: Record<string, number> = { '/work/plot.png': 11_500, '/work/old.png': 1_000, '/work/out/chart.svg': 11_500 }
   on('fs.list', () => ({ value: [{ name: 'plot.png', kind: 'file', size: 9, mtimeMs: 11_500, isLink: false }, { name: 'old.png', kind: 'file', size: 9, mtimeMs: 1_000, isLink: false }, { name: 'notes.md', kind: 'file', size: 9, mtimeMs: 11_500, isLink: false }] }))
-  on('fs.stat', (_, e) => (e.path in files ? { value: { kind: 'file', size: 9, mtimeMs: files[e.path], isLink: false } } : { error: 'ENOENT' }))
+  on('fs.stat', (_, e) => (posix(e.path) in files ? { value: { kind: 'file', size: 9, mtimeMs: files[posix(e.path)], isLink: false } } : { deny: 'ENOENT' }))
   on('fs.read', (_, e) => ({ value: e.path.endsWith('.svg') ? '<svg viewBox="0 0 400 200"></svg>' : { base64: png(640, 480) } }))
   on('tool.call', () => ({ result: { stdout: 'saved out/chart.svg\n', stderr: '' } }))
   on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'engine' }))
@@ -419,7 +422,7 @@ test('a reply\'s Markdown pictures: local picture files only, outside code, cut 
 test('a reply that links a picture file draws it after its paragraph, in any terminal', async ($, on) => {
   const png = (w: number, h: number) => btoa(String.fromCharCode(137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, w >> 8, w & 255, 0, 0, h >> 8, h & 255))
   on('session.root', () => ({ value: '/work' }))
-  on('fs.stat', (_, e) => (e.path === '/work/out/plot.png' ? { value: { kind: 'file', size: 9, mtimeMs: 1, isLink: false } } : { deny: 'ENOENT' }))
+  on('fs.stat', (_, e) => (posix(e.path) === '/work/out/plot.png' ? { value: { kind: 'file', size: 9, mtimeMs: 1, isLink: false } } : { deny: 'ENOENT' }))
   on('fs.read', () => ({ value: { base64: png(400, 200) } }))
   on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: `engine: ${e.props.text}` }))
   const text = 'Here is the plot:\n\n![plot](./out/plot.png)\n\nThe peak is at 3. ![missing](gone.png)'
@@ -662,9 +665,9 @@ test('an edit is taken back out where its lines stand, and put back, or not at a
 test('a finished edit has an Undo under its diff, which takes the edit out of its file and then puts it back', async ($, on) => {
   const files: Record<string, string> = { '/work/src/app.js': 'a\nb\nC\nd\ne\n' }
   on('session.root', () => ({ value: '/work' }))
-  on('fs.read', (_, e) => (e.path in files ? { value: files[e.path] } : { error: 'missing' }))
+  on('fs.read', (_, e) => (posix(e.path) in files ? { value: files[posix(e.path)] } : { deny: 'missing' }))
   on('fs.write', (_, e) => {
-    files[e.path] = e.text
+    files[posix(e.path)] = e.text
     return { value: undefined }
   })
   const toasts: string[] = []

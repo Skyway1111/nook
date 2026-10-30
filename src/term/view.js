@@ -1,16 +1,16 @@
 // A terminal on the page: a Vt's screen drawn as DOM rows, and keys, the mouse, and the clipboard turned into
-// what the program reads, as xterm.js turns them. Its classes are the ones nook's CSS and benches use: .xterm,
+// what the program reads, as xterm turns them. Its classes are the ones nook's CSS and benches use: .xterm,
 // .xterm-screen, .xterm-rows, .xterm-cursor, .xterm-helper-textarea. Each frame compares every row with what it
 // drew last and rewrites only the rows that changed. Colors are classes bound to theme variables, so a theme
 // change redraws nothing.
 import { Vt, CP, COMBINED, CM, RGB, INVERSE, BOLD, UNDERLINE, INVISIBLE, STRIKE, ITALIC, DIM, EXT, OVERLINE } from './vt.js'
 import { keyData } from './keys.js'
-import { slotVar, bytes } from '../palette.js'
+import { slotVar, bytes, cube } from '../palette.js'
 import { WINDOWS } from '../paths.js'
 
 const SCROLLBAR = 14 // px the scrollbar takes beside the screen
 const SLICE_MS = 12 // the longest one parse runs before the page gets a turn
-const HOLD_MS = 1000 // the longest a synchronized update (DEC 2026) holds the frame
+const SYNC_MAX_MS = 1000 // the longest a synchronized update (DEC 2026) holds the frame
 const BURST_MS = 8 // the longest a frame waits for the cursor a program hid mid-frame to show again
 const SEPARATORS = ' ()[]{}\',"`' // what ends a double-clicked word
 const CURSORS = { block: 'xterm-cursor xterm-cursor-block', bar: 'xterm-cursor xterm-cursor-bar', underline: 'xterm-cursor xterm-cursor-underline' }
@@ -26,9 +26,7 @@ const WEB = /^(https?|mailto):/i
 function slot(n) {
   const v = slotVar(n)
   if (v) return `var(${v})`
-  const cube = [0, 0x5f, 0x87, 0xaf, 0xd7, 0xff]
-  const rgb = n < 232 ? [cube[((n - 16) / 36 | 0) % 6], cube[((n - 16) / 6 | 0) % 6], cube[(n - 16) % 6]] : Array(3).fill(8 + 10 * (n - 232))
-  return '#' + rgb.map(c => c.toString(16).padStart(2, '0')).join('')
+  return '#' + cube(n).map(c => c.toString(16).padStart(2, '0')).join('')
 }
 /** Each palette slot's color as CSS. */
 export const PALETTE = Array.from({ length: 256 }, (_, n) => slot(n))
@@ -80,9 +78,9 @@ export class Term {
     }, { pull })
 
     const root = this.element = document.createElement('div')
-    root.className = 'terminal xterm'
+    root.className = 'xterm'
     root.innerHTML = '<div class="xterm-screen"><div class="xterm-selection"></div><div class="xterm-rows"></div>'
-      + '<div class="xterm-marks"></div></div><div class="scrollbar vertical"><div class="slider"></div></div>'
+      + '<div class="xterm-marks"></div></div><div class="scrollbar"><div class="slider"></div></div>'
       + '<div class="xterm-helpers"><textarea class="xterm-helper-textarea" aria-label="Terminal input" autocorrect="off"'
       + ' autocapitalize="off" spellcheck="false" tabindex="0"></textarea><div class="composition-view"></div>'
       + '<div class="xterm-width-cache-measure-container"></div></div>'
@@ -406,14 +404,14 @@ export class Term {
 
   // ---- frames
 
-  /** Asks for a frame. A synchronized update holds it, up to HOLD_MS; a terminal off screen draws once it shows. */
+  /** Asks for a frame. A synchronized update holds it, up to SYNC_MAX_MS; a terminal off screen draws once it shows. */
   refresh() {
     if (this.vt.sync) {
       this.holdTimer ||= setTimeout(() => {
         this.holdTimer = 0
         this.vt.sync = false
         this.refresh()
-      }, HOLD_MS)
+      }, SYNC_MAX_MS)
       return
     }
     if (this.holdTimer) {
