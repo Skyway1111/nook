@@ -118,7 +118,7 @@ export function startPictures(term, reply = () => {}) {
       if (/\.mmd$/i.test(path)) {
         // A diagram the mod saved: drawn at the box's left, since its size there is the mod's guess.
         const [columns, rows] = [Number(k.c), Number(k.r)]
-        const made = import('./diagrams.js').then(d => d.diagramUrl(path))
+        const made = import('./diagrams.js').then(d => d.diagramUrl(path, boxSize(columns, rows)))
         made.then(url => {
           keep(id, { url, columns, rows, blob: true, left: true })
           answer('OK')
@@ -156,12 +156,12 @@ export function startPictures(term, reply = () => {}) {
     }, () => k.i && k.q !== '2' && reply(`\x1b_Gi=${k.i};EBADPNG:can't decode the picture\x1b\\`))
   }
 
-  /** A box of cells' size in pixels. */
+  /** A box of cells' size in pixels, and the terminal's font size, which caps a diagram's text. */
   function boxSize(columns, rows) {
     const { fontSize } = term
     // A tab that isn't showing has no size yet; a cell is then about 0.6 by 1.2 of the font's size.
     const [w, h] = size[0] ? [size[0] / term.cols, size[1] / term.rows] : [fontSize * 0.6, fontSize * 1.2]
-    return { width: columns * w, height: rows * h }
+    return { width: columns * w, height: rows * h, fontSize }
   }
 
   function keep(id, file) {
