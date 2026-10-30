@@ -136,8 +136,14 @@ static WAKE: std::sync::Condvar = std::sync::Condvar::new();
 /// thread is kept, since starting one costs more than most commands (every DLL in the process hears of it), and
 /// leaves after a minute without work.
 pub fn work(job: impl FnOnce() + Send + 'static) {
+    queue(Box::new(job))
+}
+
+/// `work`'s one copy, which each kind of job shares.
+#[inline(never)]
+fn queue(job: Box<dyn FnOnce() + Send>) {
     let mut w = WORKERS.lock().unwrap();
-    w.jobs.push_back(Box::new(job));
+    w.jobs.push_back(job);
     if w.jobs.len() > w.waiting {
         drop(w);
         std::thread::spawn(worker);
