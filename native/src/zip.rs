@@ -49,9 +49,17 @@ pub fn path(name: &str) -> Option<String> {
     if name.starts_with(['/', '\\']) {
         return None;
     }
-    let parts: Vec<_> = name.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".").collect();
-    let bad = |p: &&str| p.contains(':') || p.trim_end_matches(['.', ' ']).is_empty();
-    (!parts.iter().any(bad)).then(|| parts.join("/"))
+    let mut out = String::with_capacity(name.len());
+    for p in name.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".") {
+        if p.contains(':') || p.trim_end_matches(['.', ' ']).is_empty() {
+            return None;
+        }
+        if !out.is_empty() {
+            out.push('/');
+        }
+        out.push_str(p);
+    }
+    Some(out)
 }
 
 /// Code page 437's upper half, which a name without the UTF-8 flag is in unless it reads as UTF-8.
@@ -165,7 +173,8 @@ pub fn write(out: &mut dyn Write, files: &[(String, PathBuf)]) -> Result<(), Str
     out.write_all(&dir).and_then(|()| out.write_all(&end)).map_err(|e| e.to_string())
 }
 
-/// Appends each value, little-endian, in the number of bytes given.
+/// Appends each value, little-endian, in the number of bytes given. One copy serves every header.
+#[inline(never)]
 fn fields(v: &mut Vec<u8>, list: &[(u32, usize)]) {
     for &(x, n) in list {
         v.extend_from_slice(&x.to_le_bytes()[..n]);
@@ -293,6 +302,7 @@ const DIST_EXTRA: [u8; 30] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7,
 const ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 
 /// Raw DEFLATE `data`, which must unpack to exactly `size` bytes.
+#[inline(never)]
 pub fn inflate(data: &[u8], size: usize) -> Result<Vec<u8>, &'static str> {
     const TOO_BIG: &str = "it unpacks to more than it says";
     // No deflate stream grows past 1032 times its size, so a size it lies about allocates no more than that.
