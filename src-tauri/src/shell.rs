@@ -3,34 +3,8 @@
 
 use std::{ffi::OsStr, mem::size_of, path::Path, ptr::null_mut};
 use tauri::async_runtime::spawn_blocking;
-use windows_sys::Win32::{
-    Foundation::GlobalFree,
-    System::{
-        DataExchange::{
-            CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable, OpenClipboard,
-            RegisterClipboardFormatW, SetClipboardData,
-        },
-        Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
-    },
-    UI::{
-        Shell::{
-            DragQueryFileW, SHFileOperationW, ShellExecuteExW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOCONFIRMMKDIR, FOF_RENAMEONCOLLISION,
-            FOF_WANTNUKEWARNING, FO_COPY, FO_DELETE, FO_MOVE, FO_RENAME, SEE_MASK_INVOKEIDLIST, SHELLEXECUTEINFOW, SHFILEOPSTRUCTW,
-        },
-        WindowsAndMessaging::SW_SHOWNORMAL,
-    },
-};
 
-use crate::err;
-
-const CF_HDROP: u32 = 15;
-const DROPEFFECT_COPY: u32 = 1;
-const DROPEFFECT_MOVE: u32 = 2;
-const DROPEFFECT_LINK: u32 = 4;
-
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain([0]).collect()
-}
+use crate::{err, sys::*};
 
 /// Paths as the shell takes a list of them: each ends in a null, and the list in one more.
 fn wide_list(paths: &[String]) -> Vec<u16> {
@@ -66,10 +40,10 @@ pub fn reveal(path: String) {
 
 /// One of Explorer's file operations, with its progress, conflict, and error dialogs. True when it
 /// finished; false after a cancel or an error the shell has already shown.
-fn file_op(func: u32, flags: u32, from: &[String], to: &str) -> bool {
+fn file_op(func: u32, flags: u16, from: &[String], to: &str) -> bool {
     let (from, to) = (wide_list(from), wide_list(&[to.into()]));
     // No owner window: a dialog that owned nook's window would disable it, typing included, until it closed.
-    let mut op = SHFILEOPSTRUCTW { wFunc: func, pFrom: from.as_ptr(), pTo: to.as_ptr(), fFlags: flags as u16, ..Default::default() };
+    let mut op = SHFILEOPSTRUCTW { wFunc: func, pFrom: from.as_ptr(), pTo: to.as_ptr(), fFlags: flags, ..Default::default() };
     unsafe { SHFileOperationW(&mut op) == 0 && op.fAnyOperationsAborted == 0 }
 }
 
@@ -221,9 +195,9 @@ pub async fn drop_files(paths: Vec<String>, dir: String, copy: bool) -> Result<b
 
 #[cfg(test)]
 mod tests {
-    use super::{file_op, in_dir, FOF_ALLOWUNDO, FOF_NOCONFIRMMKDIR, FOF_RENAMEONCOLLISION, FO_COPY, FO_MOVE, FO_RENAME};
+    use super::{file_op, in_dir};
+    use crate::sys::{FOF_ALLOWUNDO, FOF_NOCONFIRMMKDIR, FOF_NOERRORUI, FOF_RENAMEONCOLLISION, FO_COPY, FO_MOVE, FO_RENAME};
     use std::fs;
-    use windows_sys::Win32::UI::Shell::FOF_NOERRORUI;
 
     #[test]
     fn matches_a_parent_folder_in_any_case() {

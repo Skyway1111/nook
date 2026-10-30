@@ -2,14 +2,8 @@
 //! WebView2 processes, the console host, the shell, and Claude run above normal priority.
 //! What Claude launches stays normal: the walk stops at claude.exe, and Windows never passes
 //! above-normal priority on to child processes.
+use crate::sys::*;
 use std::{collections::HashSet, path::Path, thread, time::Duration};
-use windows_sys::Win32::{
-    Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
-    System::{
-        Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS},
-        Threading::{GetCurrentProcessId, OpenProcess, SetPriorityClass, ABOVE_NORMAL_PRIORITY_CLASS, PROCESS_SET_INFORMATION},
-    },
-};
 
 const TYPING_PATH: [&str; 4] = ["msedgewebview2.exe", "conhost.exe", "openconsole.exe", "claude.exe"];
 
@@ -58,8 +52,7 @@ fn processes() -> Vec<Process> {
         if snap == INVALID_HANDLE_VALUE {
             return out;
         }
-        let mut e: PROCESSENTRY32W = std::mem::zeroed();
-        e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut e = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
         let mut more = Process32FirstW(snap, &mut e) != 0;
         while more {
             let len = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());

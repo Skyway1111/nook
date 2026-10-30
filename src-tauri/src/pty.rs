@@ -1,15 +1,15 @@
 //! One pseudoconsole per Claude tab, and the files that carry nook's mod's reports and requests.
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::{
     collections::HashMap,
     env::{self, JoinPathsError},
     ffi::{OsStr, OsString},
+    fs::File,
     io::{Read, Write},
+    path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
-    path::PathBuf,
     thread,
 };
 use tauri::{
@@ -19,12 +19,17 @@ use tauri::{
 
 use crate::err;
 
+#[cfg_attr(windows, path = "pty_windows.rs")]
+#[cfg_attr(unix, path = "pty_unix.rs")]
+mod os;
+
 struct Session {
-    master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    pty: os::Pty,
+    /// Written outside the map's lock, so a blocked write never holds up another tab's spawn or exit.
+    input: Arc<File>,
 }
 
-/// Dropping the master closes the pseudoconsole, which ends every process attached to it.
+/// Dropping the pseudoconsole closes it, which ends every process attached to it, and can block meanwhile.
 fn end(session: Session) {
     thread::spawn(move || drop(session));
 }
@@ -64,9 +69,6 @@ fn forget(id: u64) {
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-/// The user's plugin folders, then nook's mod, which loads beside them, never in place of them. A nook
-/// started from inside a nook session inherits that nook's mod, the `mod` beside its `nook` program, and
-/// the first `nook` would load in place of this one.
 /// Where Claude Code keeps its sessions' temporary files, pasted images among them: `claude` in the temp
 /// folder on Windows, and elsewhere `claude-<uid>`, so users who share /tmp don't share it.
 fn claude_temp() -> PathBuf {
@@ -82,15 +84,14 @@ fn claude_temp() -> PathBuf {
 
 const NOOK_EXE: &str = if cfg!(windows) { "nook.exe" } else { "nook" };
 
+/// The user's plugin folders, then nook's mod, which loads beside them, never in place of them. A nook
+/// started from inside a nook session inherits that nook's mod, the `mod` beside its `nook` program, and
+/// the first `nook` would load in place of this one.
 fn plugin_dirs(inherited: &OsStr, nook_mod: PathBuf) -> Result<OsString, JoinPathsError> {
     let theirs = env::split_paths(inherited).filter(|d| {
         !d.as_os_str().is_empty() && !(d.ends_with("mod") && d.with_file_name(NOOK_EXE).is_file())
     });
     env::join_paths(theirs.chain([nook_mod]))
-}
-
-fn size(cols: u16, rows: u16) -> PtySize {
-    PtySize { cols, rows, pixel_width: 0, pixel_height: 0 }
 }
 
 #[tauri::command(async)]
@@ -104,41 +105,41 @@ pub fn pty_spawn(
     on_data: Channel<InvokeResponseBody>,
 ) -> Result<u64, String> {
     let (program, args) = command.split_first().ok_or("settings.json: command is empty")?;
-    let pair = native_pty_system().openpty(size(cols, rows)).map_err(err)?;
+    let console = os::open(cols, rows).map_err(err)?; // it starts up while the rest is built
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let mut cmd = CommandBuilder::new(program);
-    cmd.args(args);
-    cmd.cwd(&cwd);
-    cmd.env("TERM", "xterm-256color");
-    cmd.env("COLORTERM", "truecolor");
-    cmd.env("FORCE_HYPERLINK", "1"); // Claude sends OSC 8 links only to terminals it recognizes
-    // Claude draws a mod's Image as kitty graphics only in kitty and Ghostty unless this is set.
-    cmd.env("CLAUDE_CODE_FORCE_TERMINAL_IMAGES", "1");
     let nook_mod = app.path().resource_dir().map_err(err)?.join("mod");
     let inherited = std::env::var_os("CLAUDE_CODE_PLUGIN_DIRS").unwrap_or_default();
-    cmd.env("CLAUDE_CODE_PLUGIN_DIRS", plugin_dirs(&inherited, nook_mod).map_err(err)?);
-    cmd.env("NOOK_STATE", state_file(id));
-    cmd.env("NOOK_CLAUDE_TEMP", claude_temp()); // where the mod finds the session's pasted images
+    let mut vars: Vec<(&str, OsString)> = vec![
+        ("TERM", "xterm-256color".into()),
+        ("COLORTERM", "truecolor".into()),
+        ("FORCE_HYPERLINK", "1".into()), // Claude sends OSC 8 links only to terminals it recognizes
+        // Claude draws a mod's Image as kitty graphics only in kitty and Ghostty unless this is set.
+        ("CLAUDE_CODE_FORCE_TERMINAL_IMAGES", "1".into()),
+        ("CLAUDE_CODE_PLUGIN_DIRS", plugin_dirs(&inherited, nook_mod).map_err(err)?),
+        ("NOOK_STATE", state_file(id).into()),
+        ("NOOK_CLAUDE_TEMP", claude_temp().into()), // where the mod finds the session's pasted images
+    ];
     if let Some(port) = crate::ide::open(&app, id) {
-        cmd.env("CLAUDE_CODE_SSE_PORT", port.to_string()); // Claude connects to nook as its editor
+        vars.push(("CLAUDE_CODE_SSE_PORT", port.to_string().into())); // Claude connects to nook as its editor
     }
-    let mut child = pair.slave.spawn_command(cmd).map_err(err)?;
-    let mut reader = pair.master.try_clone_reader().map_err(err)?;
-    let writer = pair.master.take_writer().map_err(err)?;
+    let (pty, input, mut output, exit) = console.spawn(program, args, &cwd, &vars).map_err(|e| {
+        forget(id);
+        e.to_string()
+    })?;
 
     let exited = on_data.clone();
     thread::spawn(move || {
         let mut buf = vec![0; 1 << 16];
-        // Keep draining after the webview is gone: an undrained pipe can stall ClosePseudoConsole.
-        while let Ok(n @ 1..) = reader.read(&mut buf) {
+        // Keep draining after the webview is gone: an undrained pipe can stall closing the console.
+        while let Ok(n @ 1..) = output.read(&mut buf) {
             let _ = on_data.send(InvokeResponseBody::Raw(buf[..n].to_vec()));
         }
     });
-    sessions.0.lock().unwrap().insert(id, Session { master: pair.master, writer });
+    sessions.0.lock().unwrap().insert(id, Session { pty, input: Arc::new(input) });
     // The shell exited: an empty chunk tells its tab to close.
     let handle = app.clone();
     thread::spawn(move || {
-        let _ = child.wait();
+        exit.wait();
         if handle.state::<Sessions>().close(id) {
             let _ = exited.send(InvokeResponseBody::Raw(Vec::new()));
         }
@@ -152,16 +153,15 @@ pub fn pty_spawn(
 
 #[tauri::command]
 pub fn pty_write(sessions: State<Sessions>, id: u64, data: String) -> Result<(), String> {
-    let mut map = sessions.0.lock().unwrap();
-    let Some(s) = map.get_mut(&id) else { return Ok(()) };
-    s.writer.write_all(data.as_bytes()).map_err(err)
+    let Some(input) = sessions.0.lock().unwrap().get(&id).map(|s| s.input.clone()) else { return Ok(()) };
+    (&*input).write_all(data.as_bytes()).map_err(err)
 }
 
 #[tauri::command]
 pub fn pty_resize(sessions: State<Sessions>, id: u64, cols: u16, rows: u16) -> Result<(), String> {
     let map = sessions.0.lock().unwrap();
     let Some(s) = map.get(&id) else { return Ok(()) };
-    s.master.resize(size(cols, rows)).map_err(err)
+    s.pty.resize(cols, rows).map_err(err)
 }
 
 #[tauri::command]
