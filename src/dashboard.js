@@ -7,7 +7,7 @@
 // every ticked session at once, which starts ticked when it sits between turns, queues it for each to take when
 // its turn ends, or starts it in several new sessions, each in a git worktree of its own. A card for a session in a worktree says how much it changed
 // there, and between turns offers to keep it: its changes staged in the main checkout.
-import { el } from './ui.js'
+import { el, letter } from './ui.js'
 import { ago, modelName, summary, cannotSend, pickedAtFirst, asking, planLine, fill, FULL, money, limits } from './sessions.js'
 import { isWorktree, changeLine } from './keep.js'
 
@@ -313,7 +313,7 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
 
   if (button) button.onclick = () => (box ? close() : show())
   addEventListener('keydown', e => {
-    if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyS') {
+    if (e.ctrlKey && e.shiftKey && !e.altKey && letter(e) === 's') {
       e.preventDefault()
       box ? close() : show()
     }

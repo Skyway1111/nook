@@ -3,7 +3,7 @@
 // bar loads the first time it opens, so a tab that never searches pays nothing for it. While Claude runs
 // fullscreen, the terminal holds only the screen, so the count is of the matches in view, and a step past
 // the last one in view pages Claude's own view until another shows, wrapping at either end.
-import { el } from './ui.js'
+import { el, letter } from './ui.js'
 import { startPaging, transcriptEnd } from './turns.js'
 
 const LIMIT = 2000 // matches marked at once; past that only the current one is
@@ -107,7 +107,7 @@ export function startSearch(term, host, send) {
       e.stopPropagation() // these keys are the bar's, not Claude's or the window's
       if (e.key === 'Escape') close()
       else if (e.key === 'Enter' || e.key === 'F3') run(!e.shiftKey)
-      else if (e.ctrlKey && e.shiftKey && e.code === 'KeyF') input.select()
+      else if (e.ctrlKey && e.shiftKey && letter(e) === 'f') input.select()
       else return
       e.preventDefault()
     })

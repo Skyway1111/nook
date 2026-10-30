@@ -2,7 +2,7 @@
 // with no script open rendered and toggle to their source. previews.js draws all but Markdown, and loads when one first opens.
 import { invoke, convertFileSrc } from './host.js'
 import { IMAGE, basename } from './files.js'
-import { el, openMenu } from './ui.js'
+import { el, letter, openMenu } from './ui.js'
 import { path as paths } from './paths.js'
 
 const SCHEME = /^[a-z][\w+.-]*:/i
@@ -362,9 +362,10 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
 
   view.addEventListener('keydown', e => {
     // Ctrl+Alt+K, as in Claude's own editor extensions.
-    if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'k') (e.preventDefault(), mention())
-    else if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 's') save()
-    else if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === 'b' && editor) (e.preventDefault(), setBlameOn(!blameOn))
+    const k = letter(e)
+    if (e.ctrlKey && e.altKey && k === 'k') (e.preventDefault(), mention())
+    else if (e.ctrlKey && !e.altKey && k === 's') save()
+    else if (e.altKey && !e.ctrlKey && k === 'b' && editor) (e.preventDefault(), setBlameOn(!blameOn))
   })
   view.addEventListener('contextmenu', e => {
     if (!editor || !e.target.closest('.cm-gutterElement')) return
