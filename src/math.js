@@ -4,6 +4,7 @@
 // a formula that doesn't parse shows as its source. Every node is built through the DOM, so no text from the
 // formula is ever read as markup.
 import { invoke } from './host.js'
+import './math.css'
 
 const NS = 'http://www.w3.org/1998/Math/MathML'
 
@@ -59,7 +60,7 @@ const TABLE = {
   c: 'rangle ⟩ rbrace } rbrack ] rfloor ⌋ rceil ⌉ rgroup ⟯ rmoustache ⎱ urcorner ⌝ lrcorner ⌟ rrbracket ⟧ '
     + 'rvert | rVert ‖ } }',
   f: 'vert | Vert ‖ | ‖ backslash \\',
-  d: 'ldots … dots … cdots ⋯ vdots ⋮ ddots ⋱ dotsc … dotsb ⋯ dotsm ⋯ dotsi ⋯ dotso … iddots ⋰ prime ′',
+  d: 'ldots … cdots ⋯ vdots ⋮ ddots ⋱ dotsc … dotsb ⋯ dotsm ⋯ dotsi ⋯ dotso … iddots ⋰ prime ′',
   L: 'sum ∑ prod ∏ coprod ∐ bigcup ⋃ bigcap ⋂ bigvee ⋁ bigwedge ⋀ bigoplus ⨁ bigotimes ⨂ bigodot ⨀ biguplus ⨄ '
     + 'bigsqcup ⨆',
   I: 'int ∫ iint ∬ iiint ∭ iiiint ⨌ oint ∮ oiint ∯ oiiint ∰ intop ∫ smallint ∫',
@@ -100,15 +101,41 @@ const SWITCHES = new Map(Object.entries({ '\\rm': 'rm', '\\bf': 'bf', '\\it': 'i
 const STYLES = new Map(Object.entries({ '\\displaystyle': ['true', ''], '\\textstyle': ['false', ''], '\\scriptstyle': ['false', '1'],
   '\\scriptscriptstyle': ['false', '2'] }))
 
-// name -> its mark, over the argument, or under it for under… and utilde. wide…, over… and under… stretch.
-const ACCENTS = { hat: '\u0302', widehat: '\u0302', check: 'ˇ', widecheck: 'ˇ', tilde: '˜', widetilde: '˜', utilde: '˜',
+// name -> its mark, over the argument, or under it for utilde. wide… stretch, and so does a combining mark,
+// which draws in place only as one of the font's own sizes of it.
+const ACCENTS = { hat: 'ˆ', widehat: '\u0302', check: 'ˇ', widecheck: 'ˇ', tilde: '˜', widetilde: '˜', utilde: '˜',
   acute: '´', grave: '`', dot: '˙', ddot: '¨', dddot: '\u20db', ddddot: '\u20dc', breve: '˘', bar: '¯', vec: '\u20d7',
-  mathring: '˚', overrightarrow: '→', overleftarrow: '←', overleftrightarrow: '↔', underrightarrow: '→',
-  underleftarrow: '←', underleftrightarrow: '↔', overbrace: '⏞', underbrace: '⏟', overparen: '⏜', underparen: '⏝' }
-const ARROWS = { xrightarrow: '→', xleftarrow: '←', xRightarrow: '⇒', xLeftarrow: '⇐', xleftrightarrow: '↔',
-  xLeftrightarrow: '⇔', xmapsto: '↦', xhookrightarrow: '↪', xhookleftarrow: '↩', xrightharpoonup: '⇀',
-  xrightharpoondown: '⇁', xleftharpoonup: '↼', xleftharpoondown: '↽', xrightleftharpoons: '⇌',
-  xleftrightharpoons: '⇋', xtwoheadrightarrow: '↠', xtwoheadleftarrow: '↞', xlongequal: '=' }
+  mathring: '˚' }
+// Arrows, braces and parens as wide as what they span, drawn by CSS masks, since the webview's own stretching
+// of them breaks at some widths. A shape is an SVG path 26 by 10, a unit .05em, whose middle 6 stretch.
+const HEAD = 'M20 1.5Q22.5 4 25.5 5Q22.5 6 20 8.5'
+const SHAPES = {
+  r: `M.5 5H25.5${HEAD}`,
+  lr: `M.5 5H25.5${HEAD}M6 1.5Q3.5 4 .5 5Q3.5 6 6 8.5`,
+  R: 'M.5 3.5H23M.5 6.5H23M20 .5Q22.5 3.5 25.5 5Q22.5 6.5 20 9.5',
+  LR: 'M3 3.5H23M3 6.5H23M20 .5Q22.5 3.5 25.5 5Q22.5 6.5 20 9.5M6 .5Q3.5 3.5 .5 5Q3.5 6.5 6 9.5',
+  bar: `M.5 2V8M.5 5H25.5${HEAD}`,
+  hook: `M3.5 1A2 2 0 0 0 3.5 5H25.5${HEAD}`,
+  up: 'M.5 5H25.5M20 1.5Q22.5 4 25.5 5',
+  down: 'M.5 5H25.5M20 8.5Q22.5 6 25.5 5',
+  two: `M.5 5H25.5${HEAD}M16.5 1.5Q19 4 22 5Q19 6 16.5 8.5`,
+  harpoons: 'M.5 3.5H25.5M20 .5Q22.5 3 25.5 3.5M.5 6.5H25.5M6 9.5Q3.5 7 .5 6.5',
+  eq: 'M.5 3.5H25.5M.5 6.5H25.5',
+  paren: 'M.5 1.5Q1.5 7.5 8 7.5H18Q24.5 7.5 25.5 1.5',
+}
+const svg = (width, d) => `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='${width}' height='10' `
+  + `fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round'><path d='${d}'/></svg>")`
+// A brace's curls, tip and the lines between them, as mask layers.
+const BRACE = `${svg(5, 'M.5 1.5Q.5 5 5 5')} left/auto 100% no-repeat,${svg(5, 'M4.5 1.5Q4.5 5 0 5')} right/auto 100% no-repeat,`
+  + `${svg(10, 'M0 5Q5 5 5 9.5Q5 5 10 5')} center/auto 100% no-repeat,`
+  + 'linear-gradient(#0000 calc(50% - .025em),#000 0 calc(50% + .025em),#0000 0) center/calc(100% - .4em) 100% no-repeat'
+// name -> its shape, then x to flip it left to right or y upside down. x… take labels, over… and under… a base.
+const DRAWN = { xrightarrow: 'r', xleftarrow: 'r x', xRightarrow: 'R', xLeftarrow: 'R x', xleftrightarrow: 'lr',
+  xLeftrightarrow: 'LR', xmapsto: 'bar', xhookrightarrow: 'hook', xhookleftarrow: 'hook x', xrightharpoonup: 'up',
+  xrightharpoondown: 'down', xleftharpoonup: 'up x', xleftharpoondown: 'down x', xrightleftharpoons: 'harpoons',
+  xleftrightharpoons: 'harpoons x', xtwoheadrightarrow: 'two', xtwoheadleftarrow: 'two x', xlongequal: 'eq',
+  overrightarrow: 'r', overleftarrow: 'r x', overleftrightarrow: 'lr', underrightarrow: 'r', underleftarrow: 'r x',
+  underleftrightarrow: 'lr', overbrace: 'brace y', underbrace: 'brace', overparen: 'paren y', underparen: 'paren' }
 const SPACES = { ',': 3, thinspace: 3, ':': 4, '>': 4, medspace: 4, ';': 5, thickspace: 5, '!': -3, negthinspace: -3,
   negmedspace: -4, negthickspace: -5, ' ': 4.5, enspace: 9, enskip: 9, quad: 18, qquad: 36 } // in mu, 1/18 em
 const UNITS = { em: 1, ex: 0.43, pt: 0.1, pc: 1.2, mu: 1 / 18, cm: 2.845, mm: 0.2845, in: 7.227, px: 0.075, bp: 0.1004, dd: 0.107 }
@@ -117,13 +144,14 @@ const TEXT = { text: '', textrm: '', textnormal: '', textup: '', textmd: '', mbo
 const IGNORED = 'nonumber notag nobreak allowbreak relax displaybreak strut limits nolimits hline hdashline tiny scriptsize '
   + 'footnotesize small normalsize large Large LARGE huge Huge'
 
-// environment -> [layout, opening, closing, attributes]
+// environment -> [layout, opening, closing, attributes, its columns when it takes none]
 const ENVIRONMENTS = new Map(Object.entries({
   matrix: ['matrix'], pmatrix: ['matrix', '(', ')'], bmatrix: ['matrix', '[', ']'], Bmatrix: ['matrix', '{', '}'],
   vmatrix: ['matrix', '|', '|'], Vmatrix: ['matrix', '‖', '‖'], smallmatrix: ['small', '', '', { scriptlevel: '1' }],
   cases: ['cases', '{'], dcases: ['cases', '{', '', { displaystyle: 'true' }], rcases: ['cases', '', '}'],
   array: ['array'], darray: ['array', '', '', { displaystyle: 'true' }], subarray: ['substack'],
-  ...Object.fromEntries('aligned align split alignat alignedat flalign eqnarray'.split(' ').map(n => [n, ['align', '', '', { displaystyle: 'true' }]])),
+  eqnarray: ['array', '', '', { displaystyle: 'true' }, 'rcl'],
+  ...Object.fromEntries('aligned align split alignat alignedat flalign'.split(' ').map(n => [n, ['align', '', '', { displaystyle: 'true' }]])),
   ...Object.fromEntries('gathered gather equation multline'.split(' ').map(n => [n, ['gather', '', '', { displaystyle: 'true' }]])),
 }))
 
@@ -148,7 +176,7 @@ let budget = 0 // macro expansions left, so a macro that calls itself ends
 const macros = new Map() // \newcommand's, kept from formula to formula
 
 /** `source`, TeX, as a <math> element. */
-export function mathml(source) {
+function mathml(source) {
   const math = m('math')
   math.setAttribute('display', 'block')
   math.setAttribute('class', 'tex')
@@ -167,7 +195,7 @@ export function mathml(source) {
     math.append(...nodes)
     if (tag) math.append(tag)
   } catch {
-    math.replaceChildren(klass(m('mtext', source.trim().replace(/\s+/g, ' ')), 'source'))
+    math.replaceChildren(m('mtext', source.trim().replace(/\s+/g, ' ')))
   }
   return math
 }
@@ -220,7 +248,11 @@ function next() {
     const start = at - t.length
     const args = macro.opt === undefined ? [] : [optional() ?? macro.opt]
     while (args.length < macro.n) args.push(braced())
-    const body = macro.body.replace(/#([1-9])/g, (_, k) => args[k - 1] ?? '')
+    // An argument after a command, or a command at an argument's end, stays its own token.
+    const body = macro.body.replace(/(\\[A-Za-z]+)?#([1-9])/g, (_, cs, k) => {
+      const a = args[k - 1] ?? ''
+      return (cs ? `${cs} ` : '') + a + (/\\[A-Za-z]+$/.test(a) ? ' ' : '')
+    })
     src = src.slice(0, start) + body + (/\\[A-Za-z]+$/.test(body) ? ' ' : '') + src.slice(at)
     at = start
   }
@@ -351,7 +383,11 @@ function atom(out, prev, t) {
       break
     }
   }
-  if (primes) node = m('mrow', node, mo(primes.replace(/′{2,3}/g, s => (s.length === 2 ? '″' : '‴')), ZERO))
+  if (primes) {
+    const p = mo(primes.replace(/′{2,3}/g, s => (s.length === 2 ? '″' : '‴')), ZERO)
+    if (sub) sup = sup ? m('mrow', p, sup) : p // x'_1: the prime over the subscript
+    else node = m('mrow', node, p)
+  }
   if (sub && sup) node = m(limits ? 'munderover' : 'msubsup', node, sub, sup)
   else if (sub) node = m(limits ? 'munder' : 'msub', node, sub)
   else if (sup) node = m(limits ? 'mover' : 'msup', node, sup)
@@ -552,7 +588,10 @@ function text(s, css = '') {
       const w = /^(?:[A-Za-z]+|[^])/.exec(s.slice(i + 1))?.[0] ?? ''
       i += w.length
       if (/^[A-Za-z]/.test(w)) while (s[i + 1] === ' ') i++
-      if (w === ',' || w === ' ' || w === '\\') run += w === ',' ? '\u2009' : ' '
+      if (w in SPACES) {
+        flush()
+        kids.push(space(SPACES[w] / 18))
+      } else if (w === '\\') run += ' '
       else if (w.length === 1 && !/[A-Za-z]/.test(w)) run += w
       else if (SYMBOLS.has(w)) run += SYMBOLS.get(w)[0]
       else if (!(w in TEXT)) {
@@ -802,6 +841,11 @@ const COMMANDS = new Map(Object.entries({
   Braket: () => braket(true),
   abs: () => fenced('|', arg(), '|'),
   norm: () => fenced('‖', arg(), '‖'),
+  dots: () => { // ⋯ before a + or an =, as amsmath has it
+    const t = peek()
+    const kind = t && (t[0] === '\\' ? SYMBOLS.get(t.slice(1))?.[1] : KIND.get(t === '-' ? '−' : t))
+    return symbol(kind === 'b' || kind === 'r' ? '⋯' : '…', 'd')
+  },
   substack: () => {
     if (next() !== '{') throw new Error('\\substack')
     return { node: table('}', 'substack', null), cls: 'ord' }
@@ -811,13 +855,27 @@ const COMMANDS = new Map(Object.entries({
     const base = name.replace(/\*$/, '')
     const e = ENVIRONMENTS.get(base)
     if (!e) throw new Error(name)
+    const array = /^(?:d|sub)?array$/.test(base)
+    // [t] places an array or an aligned, which nook doesn't; [r] aligns a matrix*'s columns.
+    const opt = array || /^(?:aligned|alignedat|gathered)$/.test(base) || (e[0] === 'matrix' && name !== base) ? optional() : null
     if (/^align(?:ed)?at$/.test(base)) braced()
-    if (base.endsWith('array')) optional()
-    const t = table(name, e[0], base.endsWith('array') ? columns(braced()) : null)
+    const cols = array ? columns(braced()) : e[4] ? columns(e[4]) : opt && e[0] === 'matrix' ? Array(99).fill(columns(opt)[0]) : null
+    const t = table(name, e[0], cols)
     for (const k in e[3]) t.setAttribute(k, e[3][k])
     return e[1] || e[2] ? fenced(e[1], t, e[2]) : { node: t, cls: 'ord' }
   },
 }))
+
+/** A box as wide as `node`, which lays out unseen, painted with `shape` from DRAWN. */
+function drawn(shape, node) {
+  const [name, turn] = shape.split(' ')
+  const e = klass(m('mpadded', m('mphantom', node)), 'drawn')
+  e.setAttribute('height', '.5em')
+  e.setAttribute('depth', '0')
+  e.style.cssText = (name === 'brace' ? `mask:${BRACE}` : `-webkit-mask-box-image:${svg(26, SHAPES[name])} 0 10/0 .5em`)
+    + (turn ? `;transform:scale${turn.toUpperCase()}(-1)` : '')
+  return e
+}
 
 /** ⟨a|b⟩, written \braket{a|b} or \braket{a}{b}. */
 function braket(stretch) {
@@ -848,21 +906,27 @@ for (const name of ['overline', 'underline', 'boxed', 'cancel', 'bcancel', 'xcan
   COMMANDS.set(name, () => ({ node: klass(m('mrow', arg()), name), cls: 'ord' }))
 }
 for (const [name, ch] of Object.entries(ACCENTS)) {
-  const under = name.startsWith('under') || name === 'utilde'
-  const brace = /(?:brace|paren)$/.test(name)
+  const under = name === 'utilde'
   COMMANDS.set(name, () => {
-    const e = m(under ? 'munder' : 'mover', arg(), mo(ch, { stretchy: /^(?:wide|over|under)/.test(name) ? 'true' : 'false' }))
-    if (!brace) e.setAttribute(under ? 'accentunder' : 'accent', 'true')
-    return { node: e, cls: 'ord', limits: brace }
+    const e = m(under ? 'munder' : 'mover', arg(), mo(ch, { stretchy: /^wide/.test(name) || /\p{M}/u.test(ch) ? 'true' : 'false' }))
+    e.setAttribute(under ? 'accentunder' : 'accent', 'true')
+    return { node: e, cls: 'ord' }
   })
 }
-for (const [name, ch] of Object.entries(ARROWS)) {
-  COMMANDS.set(name, () => {
+for (const [name, shape] of Object.entries(DRAWN)) {
+  COMMANDS.set(name, name[0] === 'x' ? () => {
     const below = optional()
-    const label = node => klass(m('mrow', node), 'xarrow')
-    const arrow = mo(ch, { stretchy: 'true' })
-    const over = label(arg())
-    return { node: below === null ? m('mover', arrow, over) : m('munderover', arrow, label(inner(below)), over), cls: 'rel' }
+    const labels = [arg()]
+    if (below !== null) labels.unshift(inner(below))
+    const scripts = labels[1] ? 'munderover' : 'mover'
+    const arrow = drawn(shape, m(scripts, m('mrow'), ...labels.map(n => n.cloneNode(true))))
+    return { node: klass(m(scripts, arrow, ...labels), 'xarrow'), cls: 'rel' }
+  } : () => {
+    const under = name.startsWith('under')
+    const base = arg()
+    const e = m(under ? 'munder' : 'mover', base, drawn(shape, base.cloneNode(true)))
+    e.setAttribute(under ? 'accentunder' : 'accent', 'true')
+    return { node: e, cls: 'ord', limits: /(?:brace|paren)$/.test(name) }
   })
 }
 for (const [name, em] of [['big', 1.2], ['Big', 1.623], ['bigg', 2.047], ['Bigg', 2.47]]) {

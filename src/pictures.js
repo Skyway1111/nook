@@ -68,7 +68,9 @@ async function pictureUrl(k, base64) {
 export function startPictures(term, screen, reply = () => {}) {
   const layer = screen.appendChild(el('div', { className: 'pictures' }))
   const cell = term.buffer.active.getNullCell()
-  const files = new Map() // id -> { url, columns, rows, blob, page: an HTML page's folder, path: a named file's }, oldest first
+  // id -> { url, columns, rows, blob, left, page: an HTML page's folder, path: a named file's, math: a formula's
+  // element, size: its own size in font sizes }, oldest first
+  const files = new Map()
   let sending = null // a picture arriving in chunks: { keys, parts, size }
   const shown = new Map() // id -> { el, css }
   let seen = false // whether Claude has drawn a picture yet
@@ -175,12 +177,12 @@ export function startPictures(term, screen, reply = () => {}) {
     }, () => k.i && k.q !== '2' && reply(`\x1b_Gi=${k.i};EBADPNG:can't decode the picture\x1b\\`))
   }
 
-  /** A box of cells' size in pixels, and the terminal's font size: a formula draws at the text's size. */
+  /** A box of cells' size in pixels. */
   function boxSize(columns, rows) {
     const { fontSize } = term.options
     // A tab that isn't showing has no size yet; a cell is then about 0.6 by 1.2 of the font's size.
-    const [w, h] = screen.clientWidth ? [screen.clientWidth / term.cols, screen.clientHeight / term.rows] : [fontSize * 0.6, fontSize * 1.2]
-    return { width: columns * w, height: rows * h, fontSize }
+    const [w, h] = size[0] ? [size[0] / term.cols, size[1] / term.rows] : [fontSize * 0.6, fontSize * 1.2]
+    return { width: columns * w, height: rows * h }
   }
 
   function keep(id, file) {
@@ -218,7 +220,11 @@ export function startPictures(term, screen, reply = () => {}) {
         }
       }
     }
-    for (const [id, pic] of shown) if (!boxes.has(id) || !files.has(id)) { pic.el.remove(); shown.delete(id) }
+    for (const [id, pic] of shown) {
+      if (boxes.has(id) && files.has(id)) continue
+      if (!pic.math || pic.math !== files.get(id)?.math) pic.el.remove(), shown.delete(id)
+      else if (pic.css) (pic.el.style.contentVisibility = 'hidden'), (pic.css = '') // a formula keeps its layout for when it scrolls back
+    }
     for (const [id, { x0, y0, left, right, top, bottom }] of boxes) {
       const file = files.get(id)
       if (!file) continue
@@ -250,8 +256,8 @@ export function startPictures(term, screen, reply = () => {}) {
       pic.el.append(pic.frame)
       pic.style = ''
     }
-    const width = (screen.clientWidth * columns) / term.cols
-    const height = (screen.clientHeight * rows) / term.rows
+    const width = (size[0] * columns) / term.cols
+    const height = (size[1] * rows) / term.rows
     if (!width || !height) return
     const style = `height:${Math.round((PAGE * height) / width)}px;transform:scale(${(width / PAGE).toFixed(4)})`
     if (pic.style !== style) pic.frame.style.cssText = pic.style = style
@@ -263,7 +269,7 @@ export function startPictures(term, screen, reply = () => {}) {
     if (!pic.math) {
       pic.el.className = 'math'
       pic.el.append((pic.math = file.math))
-      pic.fit = ''
+      pic.fit = file.math.style.cssText // a scale from a box it showed in before
     }
     const { fontSize } = term.options
     if (!file.size) {

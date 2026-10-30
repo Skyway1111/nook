@@ -441,15 +441,15 @@ export function runnable({ code, lang }) {
 }
 
 /** About how many rows a display formula takes at the terminal's own text size, as nook's MathML lays it
- * out: a row a line, more for a fraction, a nested one, a big operator with limits, an arrow with a label,
- * a matrix or cases as tall as their rows, and a row and a half for each line of aligned math. nook fits the
- * formula inside the box, so a guess too small only draws it smaller. */
+ * out: a row a line, more for a fraction, a nested one, a big operator, a radical over either, a labeled
+ * brace, a box, a matrix or cases as tall as their rows, and a row and a half for each line of aligned math.
+ * nook fits the formula inside the box, so a guess too small only draws it smaller. */
 export function mathBox(source, room) {
   const blocks = [] // the heights of the matrices, cases and arrays, each stood in for by \block<n>
   const BLOCK = /\\begin\{((?:small|[pbBvV])?matrix|[dr]?cases|d?array)\*?\}((?:(?!\\begin\{)[\s\S])*?)\\end\{\1\*?\}(\s*\^)?/
   let text = source.replace(/\\substack\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, body) => ' \\stack'.repeat(body.split('\\\\').length - 1))
   for (let m; (m = BLOCK.exec(text));) {
-    const rows = m[2].split(/\\\\(?![a-zA-Z])/)
+    const rows = m[2].split(/\\\\(?![a-zA-Z])/).filter(row => row.replace(/\\h(?:dash)?line|&|\s/g, ''))
     const h = m[1] === 'smallmatrix' ? 0.8 * rows.length : rows.reduce((h, row) => h + Math.max(1.4, tall(row)), 0.1)
     blocks.push(h + (m[3] ? 0.3 : 0))
     text = `${text.slice(0, m.index)} \\block${blocks.length - 1} ${m[3] ?? ''}${text.slice(m.index + m[0].length)}`
@@ -462,9 +462,15 @@ export function mathBox(source, room) {
     if (/\\(?:[cdt]?frac|binom|over\b)/.test(line)) h = /\\[cdt]?frac\s*\{[^{}]*\\[cdt]?frac|\\[cdt]?frac\s*\{[^{}]*\}\s*\{[^{}]*\\[cdt]?frac/.test(line) ? 3.6 : 2.7
     if (op(big, twice)) h = Math.max(h, 3.7)
     else if (op(big) || op('int|iint|iiint|oint') || /\\Bigg[lrm]?(?![a-zA-Z])/.test(line)) h = Math.max(h, 2.7)
-    else if (op('lim|liminf|limsup|max|min|sup|inf') || /\\(?:x[a-zA-Z]*arrow|xmapsto|overset|underset|stackrel|bigg[lrm]?)(?![a-zA-Z])/.test(line)) h = Math.max(h, 2.3)
-    for (const [, n] of line.matchAll(/\\block(\d+)/g)) h = Math.max(h, blocks[n])
-    return h + 0.85 * (line.match(/\\stack/g)?.length ?? 0) + 0.7 * (line.match(/\\(?:over|under)brace\s*\{(?:[^{}]|\{[^{}]*\})*\}\s*[_^]/g)?.length ?? 0)
+    else if (/\\(?:bigg[lrm]?|i+nt|oi*nt)(?![a-zA-Z])/.test(line)) h = Math.max(h, 2.3)
+    else if (op('lim|liminf|limsup|max|min|sup|inf')) h = Math.max(h, 1.6)
+    // A radical over scripts takes the font's next size; over a fraction or a big operator, it adds its own.
+    const root = /\\sqrt\s*(?:\[[^\]]*\])?\s*\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}/.exec(line)?.[1] ?? ''
+    if (/[_^]|\\sqrt/.test(root)) h = Math.max(h, 2.4)
+    if (/\\(?:[cdt]?frac|sum|prod)(?![a-zA-Z])/.test(root)) h += 0.7
+    for (const [, n] of line.matchAll(/\\block(\d+)/g)) h = Math.max(h, blocks[n] ?? 0)
+    const labeled = side => new RegExp(String.raw`\\${side}brace\s*\{(?:[^{}]|\{[^{}]*\})*\}\s*[_^]`).test(line) ? 1 : 0
+    return h + 0.85 * (line.match(/\\stack(?![a-zA-Z])/g)?.length ?? 0) + labeled('over') + labeled('under') + (/\\boxed/.test(line) ? 0.5 : 0)
   }
   const lines = text.split(/\\\\(?![a-zA-Z])/).filter(l => l.replace(/\\(?:begin|end)\{[^}]*\}|&|\s/g, ''))
   const rows = lines.length > 1 ? lines.reduce((sum, l) => sum + Math.max(1.55, tall(l)), 0) : tall(lines[0] ?? '')

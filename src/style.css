@@ -243,38 +243,8 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 .pictures > div { position: absolute; background: center / contain no-repeat; }
 .pictures > .page { overflow: hidden; border-radius: 4px; outline: 1px solid var(--line); }
 .pictures > .page > iframe { width: 1280px; border: 0; transform-origin: 0 0; background: #fff; pointer-events: none; }
-.pictures > .math { display: flex; align-items: center; }
+.pictures > .math { display: flex; align-items: center; contain: strict; }
 .pictures math { flex: none; font-size: calc(1.15 * var(--term-font-size)); transform-origin: 0 50%; }
-
-/* Formulas, as math.js writes them in MathML. */
-math.tex { font-family: "Cambria Math", "STIX Two Math", "Latin Modern Math", math; color: var(--ink-1); }
-/* A cell's text-align takes only -webkit- values in Chromium's MathML. */
-math.tex mtd { padding: .1em .5em; }
-math.tex .matrix > mtr > mtd:first-child { padding-left: .15em; }
-math.tex .matrix > mtr > mtd:last-child { padding-right: .15em; }
-math.tex .align > mtr > mtd { padding: .15em 0; text-align: -webkit-left; }
-math.tex .align > mtr > mtd:nth-child(odd) { padding-left: 2em; text-align: -webkit-right; }
-math.tex .align > mtr > mtd:first-child { padding-left: 0; }
-math.tex .gather > mtr > mtd { padding: .15em 0; }
-math.tex .cases > mtr > mtd { padding: .1em 1em .1em 0; text-align: -webkit-left; }
-math.tex .cases > mtr > mtd:last-child { padding-right: 0; }
-math.tex .small > mtr > mtd { padding: .1em .2em; }
-math.tex .substack > mtr > mtd { padding: .1em 0; }
-math.tex mtr.line > mtd { border-top: .06em solid; }
-math.tex mtr.under > mtd { border-bottom: .06em solid; }
-math.tex .overline { border-top: .06em solid; padding-top: .1em; }
-math.tex .underline { border-bottom: .06em solid; padding-bottom: .1em; }
-math.tex .boxed { border: .06em solid; padding: .25em .35em; }
-math.tex .colorbox { padding: .1em .3em; }
-math.tex :is(.cancel, .bcancel, .xcancel) { padding: 0 .12em; }
-math.tex .cancel { background: linear-gradient(to top right, #0000 calc(50% - .04em), currentColor 0 calc(50% + .04em), #0000 0); }
-math.tex .bcancel { background: linear-gradient(to bottom right, #0000 calc(50% - .04em), currentColor 0 calc(50% + .04em), #0000 0); }
-math.tex .xcancel { background: linear-gradient(to top right, #0000 calc(50% - .04em), currentColor 0 calc(50% + .04em), #0000 0),
-  linear-gradient(to bottom right, #0000 calc(50% - .04em), currentColor 0 calc(50% + .04em), #0000 0); }
-math.tex .sout { background: linear-gradient(#0000 calc(50% - .04em), currentColor 0 calc(50% + .04em), #0000 0); }
-math.tex .xarrow { padding: 0 .5em; }
-math.tex mover > .xarrow, math.tex munderover > .xarrow:last-child { margin-bottom: -.35em; }
-math.tex .unknown { color: var(--ansi-red); }
 
 /* Composer: the card over Claude's prompt. It sits under xterm's helpers, so IME text shows above it at its caret. */
 /* Anchored to the terminal, as tall as the screen and never shifted, so no script sizes the card. */
