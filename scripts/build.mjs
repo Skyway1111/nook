@@ -699,13 +699,11 @@ if (!process.argv.includes('--dist')) {
   if (process.env.CARGO_TARGET_DIR) process.env.CARGO_TARGET_DIR = resolve(process.env.CARGO_TARGET_DIR)
   const release = join(process.env.CARGO_TARGET_DIR ?? join(native, 'target'), 'release')
   const exe = windows ? 'nook.exe' : 'nook'
-  // Any flags the user set, then ~ for the home folder in the paths the exes hold, and on MSVC the C runtime linked
-  // in, so nook.exe needs no vcruntime140.dll. Flags in the environment replace any in cargo's config.
-  const { CARGO_ENCODED_RUSTFLAGS: encoded, RUSTFLAGS: flags } = process.env
+  // ~ for the home folder in the paths the exes hold, and on MSVC the C runtime linked in, so nook.exe needs no
+  // vcruntime140.dll. cargo rustc adds them to the exe's own compile, after any flags the user set.
   const msvc = /^host: .*-msvc$/m.test(spawnSync('rustc', ['-vV'], { cwd: native, encoding: 'utf8' }).stdout)
-  process.env.CARGO_ENCODED_RUSTFLAGS = [...(encoded ? encoded.split('\x1f') : flags?.split(/\s+/).filter(Boolean) ?? []),
-    `--remap-path-prefix=${homedir()}=~`, ...(msvc ? ['-Ctarget-feature=+crt-static'] : [])].join('\x1f')
-  run('cargo', ['build', '--release'], native)
+  const compile = ['rustc', '--release', '--', `--remap-path-prefix=${homedir()}=~`, ...(msvc ? ['-Ctarget-feature=+crt-static'] : [])]
+  run('cargo', compile, native)
   // The stage is a nook that runs where it is: the exe and what ships beside it, and nothing else.
   const stage = join(release, 'stage')
   rmSync(stage, { recursive: true, force: true })
@@ -717,7 +715,7 @@ if (!process.argv.includes('--dist')) {
   const [version, about, home] = ['version', 'description', 'repository'].map(k => new RegExp(`^${k} = "(.+)"`, 'm').exec(cargo)[1])
   const name = NOOK_NAME || 'nook'
   if (pack && windows) {
-    run('cargo', ['build', '--release'], join(native, 'setup'))
+    run('cargo', compile, join(native, 'setup'))
     const out = join(release, `${name}_${version}_x64-setup.exe`)
     run(join(process.env.CARGO_TARGET_DIR ?? join(native, 'setup', 'target'), 'release', 'setup.exe'), ['--pack', stage, out], root)
     console.log(out)
