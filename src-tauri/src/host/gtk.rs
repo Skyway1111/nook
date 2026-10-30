@@ -764,7 +764,7 @@ unsafe extern "C" fn drag_data(_: Ptr, _: Ptr, _: c_int, _: c_int, data: Ptr, _:
     while !(*uris.add(i)).is_null() {
         let path = g_filename_from_uri(*uris.add(i), null_mut(), null_mut());
         if !path.is_null() {
-            paths.push(ipc::quote(&text(path)));
+            paths.push(crate::json::to_string(&text(path)));
             g_free(path.cast());
         }
         i += 1;

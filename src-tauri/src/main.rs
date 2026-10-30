@@ -433,7 +433,7 @@ fn main() {
     let asked = std::env::args().nth(1).as_deref().and_then(dir_arg);
     // A folder asked for opens a new session there instead of reopening the last ones.
     let reopen = asked.is_none() && settings.reopen_sessions;
-    let start = asked.or(Some(settings.last_dir).filter(|d| Path::new(d).is_dir())).unwrap_or_else(|| Settings::default().last_dir);
+    let start = asked.or_else(|| Some(settings.last_dir).filter(|d| Path::new(d).is_dir())).unwrap_or_else(|| Settings::default().last_dir);
     let cfg = host::Config {
         title: NAME,
         size: (1280, 820),
