@@ -169,16 +169,18 @@ class Line {
     if (start < end) this.clear(start, end, bg)
   }
 
-  /** Sets the row's width, emptying cells it gains. */
+  /** Sets the row's width, emptying cells it gains. Room grows in steps of 32 cells, so a dragged window edge
+   * doesn't make every line of scrollback copy itself at each step. */
   resize(cols) {
     if (cols > this.cap) {
       const { d, cap: c, length: n } = this
-      const next = new Uint32Array(cols * 3)
+      const cap = cols + 31 & ~31
+      const next = new Uint32Array(cap * 3)
       next.set(d.subarray(0, n))
-      next.set(d.subarray(c, c + n), cols)
-      next.set(d.subarray(2 * c, 2 * c + n), 2 * cols)
+      next.set(d.subarray(c, c + n), cap)
+      next.set(d.subarray(2 * c, 2 * c + n), 2 * cap)
       this.d = next
-      this.cap = cols
+      this.cap = cap
     }
     if (cols > this.length) this.clear(this.length, cols, 0)
     this.length = cols
@@ -203,9 +205,19 @@ class Line {
     const { d, cap: c } = this
     const s = src.d
     const sc = src.cap
-    d.set(s.subarray(srcCol, srcCol + n), destCol)
-    d.set(s.subarray(sc + srcCol, sc + srcCol + n), c + destCol)
-    d.set(s.subarray(2 * sc + srcCol, 2 * sc + srcCol + n), 2 * c + destCol)
+    if (src === this && destCol > srcCol) {
+      for (let k = n - 1; k >= 0; k--) {
+        d[destCol + k] = d[srcCol + k]
+        d[c + destCol + k] = d[c + srcCol + k]
+        d[2 * c + destCol + k] = d[2 * c + srcCol + k]
+      }
+    } else {
+      for (let k = 0; k < n; k++) {
+        d[destCol + k] = s[srcCol + k]
+        d[c + destCol + k] = s[sc + srcCol + k]
+        d[2 * c + destCol + k] = s[2 * sc + srcCol + k]
+      }
+    }
     if (src.comb) for (const [x, v] of src.comb) if (x >= srcCol && x < srcCol + n) (this.comb ??= new Map()).set(x - srcCol + destCol, v)
     if (src.ext) for (const [x, v] of src.ext) if (x >= srcCol && x < srcCol + n) (this.ext ??= new Map()).set(x - srcCol + destCol, v)
   }
@@ -774,6 +786,7 @@ const GLEVEL = { 0x28: 0, 0x29: 1, 0x2a: 2, 0x2b: 3, 0x2d: 1, 0x2e: 2 } // ( ) *
 const NATIONAL = new Set('AB4C5RQKYE6ZH7='.split('').map(c => c.charCodeAt(0))) // sets xterm knows; all print as ASCII here
 const id = (s, final) => [...s, final].reduce((n, c) => n << 8 | c.charCodeAt(0), 0)
 const MOUSE = { 9: 'x10', 1000: 'vt200', 1002: 'drag', 1003: 'any' }
+const RANK = { none: 0, x10: 1, vt200: 2, drag: 3, any: 4 }
 
 /**
  * The terminal. `h` holds what it calls out to, each optional:
@@ -1332,7 +1345,12 @@ export class Vt {
       case 0x68: case 0x6c: // h SM, l RM
         for (let i = 0; i < this.plen; i++) if (p[i] === 4) this.insert = ident === 0x68
         break
-      case 0x3f68: for (let i = 0; i < this.plen; i++) this.setPrivate(p[i], true); break // ?h DECSET
+      case 0x3f68: // ?h DECSET
+        // Claude sets mouse tracking again after each press, as ?1000h ?1002h ?1003h: a lone mode below the one
+        // in force is ignored, so tracking never passes through 1000, which reports no drags.
+        if (this.plen === 1 && RANK[MOUSE[p0]] < RANK[this.mouse]) break
+        for (let i = 0; i < this.plen; i++) this.setPrivate(p[i], true)
+        break
       case 0x3f6c: for (let i = 0; i < this.plen; i++) this.setPrivate(p[i], false); break // ?l DECRST
       case 0x6d: this.sgr(); break // m SGR
       case 0x6e: // n DSR
