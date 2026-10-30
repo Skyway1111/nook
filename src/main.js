@@ -182,28 +182,31 @@ function welcome() {
 
 let quick
 const openQuick = () => {
-  // The palette lists every wallpaper, so it loads them too.
-  quick ??= Promise.all([import('./quickopen.js'), import('./commands.js'), wallpaper.load()]).then(([{ startQuickOpen }, { appCommands }]) => startQuickOpen({
-    dir: tabFolder,
-    commands: appCommands({
-      tabs, files, git, drawer, wallpaper, home, banner, insertPath,
-      newSession: () => tabs.openClaude(here()),
-      openQuick: prefix => openQuick().then(q => q.open(prefix)),
-      quickPrompts,
-      findInFiles,
-      goToDefinition,
-      goBack,
-      canGoBack: () => backs.length > 0,
-      welcome,
-    }),
-    gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
-    outline: () => tabs.active()?.viewer?.outline?.() ?? null,
-    openPath: () => (tabs.active()?.viewer?.word ? tabs.active().path : null),
-    openFile,
-    insertPath,
-    reveal: path => files.reveal(path),
-    onClose: () => tabs.focus(),
-  }))
+  quick ??= Promise.all([import('./quickopen.js'), import('./commands.js')]).then(([{ startQuickOpen }, { appCommands }]) => {
+    // The palette lists every wallpaper, which load once the box has first shown, before > can be typed in it.
+    requestAnimationFrame(() => setTimeout(wallpaper.load))
+    return startQuickOpen({
+      dir: tabFolder,
+      commands: appCommands({
+        tabs, files, git, drawer, wallpaper, home, banner, insertPath,
+        newSession: () => tabs.openClaude(here()),
+        openQuick: prefix => openQuick().then(q => q.open(prefix)),
+        quickPrompts,
+        findInFiles,
+        goToDefinition,
+        goBack,
+        canGoBack: () => backs.length > 0,
+        welcome,
+      }),
+      gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
+      outline: () => tabs.active()?.viewer?.outline?.() ?? null,
+      openPath: () => (tabs.active()?.viewer?.word ? tabs.active().path : null),
+      openFile,
+      insertPath,
+      reveal: path => files.reveal(path),
+      onClose: () => tabs.focus(),
+    })
+  })
   return quick
 }
 addEventListener('keydown', e => {
@@ -223,7 +226,12 @@ addEventListener('keydown', e => {
     typed += k.key
   }
   addEventListener('keydown', hold, true)
-  openQuick().then(q => q.toggle(commands ? '>' : symbols ? '@' : '', typed)).catch(banner).finally(() => removeEventListener('keydown', hold, true))
+  // F1, or > typed while the box's code loads, opens the palette, which waits for the wallpapers, loaded beside it.
+  if (commands) wallpaper.load()
+  openQuick().then(async q => {
+    if (commands || typed[0] === '>') await wallpaper.load()
+    q.toggle(commands ? '>' : symbols ? '@' : '', typed)
+  }).catch(banner).finally(() => removeEventListener('keydown', hold, true))
 }, true)
 
 // Files dropped from Explorer become paths in the prompt (Claude Code attaches images itself), or, dropped on a
