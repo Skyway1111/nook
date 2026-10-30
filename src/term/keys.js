@@ -1,7 +1,6 @@
 // What a key sends to the program, as xterm sends it on Windows and Linux, from xterm.js's Keyboard.ts
-// (LICENSES.txt). `keyData(e, appCursor)` gives
-// `{ key, cancel, page }`: the sequence ('' for none), whether the browser must not act on the key too, and -1
-// or 1 when Shift+PageUp or Shift+PageDown scrolls the view instead.
+// (LICENSES.txt). `keyData(e, appCursor)` gives `{ key, cancel, page }`: the sequence ('' for none), whether the
+// browser must not act on the key too, and -1 or 1 when Shift+PageUp or Shift+PageDown scrolls the view instead.
 
 // Digits and punctuation by keyCode, unshifted and shifted, for Alt+key.
 const SHIFTS = {

@@ -383,8 +383,9 @@ class Buffer {
     return x >= cols ? cols - 1 : x < 0 ? 0 : x
   }
 
-  /** Rows below the cursor go first, then the top scrolls off; a Linux PTY pulls
-   * scrollback back down as rows grow, ConPTY gets blank rows. The normal buffer reflows wrapped lines. */
+  /** Rows below the cursor go first, then the top scrolls off; a Linux PTY pulls scrollback back down as rows grow,
+   * ConPTY gets blank rows. The normal buffer reflows wrapped lines. This and the reflows below are xterm.js's
+   * Buffer and BufferReflow (LICENSES.txt). */
   resize(cols, rows, oldCols, oldRows) {
     const { lines, vt } = this
     const max = rows + this.scrollback
