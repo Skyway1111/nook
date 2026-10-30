@@ -159,7 +159,15 @@ fn set_up(controller: *mut c_void, cfg: Config) {
             call!(profile.0, 9, 0 => i32);
         }
 
-        on(wv, 7, IID_NAVIGATION_STARTING, |_, _| {
+        // The main frame shows nook's page and nothing else, since whatever it shows hears every reply, event,
+        // and terminal's text: a link that would take it (one in a PDF) goes nowhere.
+        on(wv, 7, IID_NAVIGATION_STARTING, |_, args| {
+            let mut uri = null_mut();
+            call!(args, 3, &mut uri => *mut *mut u16);
+            if !assets::ours(&take_string(uri)) {
+                call!(args, 8, 1 => i32); // put_Cancel
+                return S_OK;
+            }
             web().alive.set(false);
             S_OK
         });

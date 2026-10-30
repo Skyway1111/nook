@@ -229,6 +229,7 @@ extern "C" {
     #[cfg(debug_assertions)]
     fn webkit_web_view_reload(wv: Ptr);
     fn webkit_web_view_get_uri(wv: Ptr) -> *const c_char;
+    fn webkit_web_view_stop_loading(wv: Ptr);
     fn webkit_web_view_evaluate_javascript(
         wv: Ptr,
         script: *const c_char,
@@ -486,7 +487,9 @@ pub fn reload() {
 
 /// Sends JSON `text` to the page.
 pub fn send(text: &str) {
-    eval(&format!("__nook.receive({text})"));
+    if page_is_ours() {
+        eval(&format!("__nook.receive({text})"));
+    }
 }
 
 pub use send as send_reply;
@@ -495,6 +498,9 @@ pub use send as send_reply;
 /// literal: runs of plain text are copied as they are, and only quotes, backslashes, and controls escaped.
 pub fn send_stream(id: u64, seq: u64, bytes: &[u8], end: bool) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
+    if !page_is_ours() {
+        return;
+    }
     let text = String::from_utf8_lossy(bytes);
     let mut script = String::with_capacity(text.len() + text.len() / 8 + 32);
     script += &format!("__nook.text({id},{seq},\"");
@@ -637,8 +643,11 @@ fn focused(on: bool) -> c_int {
 
 // The page
 
-unsafe extern "C" fn load_changed(_: Ptr, event: c_int, _: Ptr) {
+/// The main frame shows nook's page and nothing else, since whatever it shows hears every reply, event, and
+/// terminal's text: a load of anything else (a link dropped on the window) stops as it starts.
+unsafe extern "C" fn load_changed(wv: Ptr, event: c_int, _: Ptr) {
     match event {
+        WEBKIT_LOAD_STARTED if !page_is_ours() => webkit_web_view_stop_loading(wv),
         WEBKIT_LOAD_STARTED => ui().alive.set(false),
         WEBKIT_LOAD_FINISHED => show(),
         _ => {}
@@ -649,9 +658,15 @@ unsafe extern "C" fn page_died(_: Ptr, _: c_int, _: Ptr) {
     ui().alive.set(false);
 }
 
-/// Only nook's own page calls commands, whatever document the main frame shows.
+/// Whether the main frame shows, or is loading, nook's own page: only it hears the app or calls it.
+fn page_is_ours() -> bool {
+    let wv = ui().webview.get();
+    let uri = if wv.is_null() { null() } else { unsafe { webkit_web_view_get_uri(wv) } };
+    !uri.is_null() && unsafe { CStr::from_ptr(uri) }.to_str().is_ok_and(assets::ours)
+}
+
 unsafe extern "C" fn message(_: Ptr, result: Ptr, _: Ptr) {
-    if !assets::ours(&text(webkit_web_view_get_uri(ui().webview.get()))) {
+    if !page_is_ours() {
         return;
     }
     let s = jsc_value_to_string(webkit_javascript_result_get_js_value(result));

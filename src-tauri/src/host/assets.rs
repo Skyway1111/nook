@@ -106,6 +106,10 @@ fn decode(path: &str) -> String {
 pub fn app(path: &str) -> Reply {
     let path = if path.is_empty() { "index.html" } else { path };
     #[cfg(debug_assertions)]
+    if path.split(['/', '\\']).any(|c| c == "..") {
+        return not_found(); // the repository's files, and nothing above it, load as the app
+    }
+    #[cfg(debug_assertions)]
     let found = std::fs::read(format!("{ROOT}/{path}")).ok().map(|b| (mime(path), Body::Owned(b), "\r\nCache-Control: no-store"));
     #[cfg(not(debug_assertions))]
     let found = ASSETS.binary_search_by(|(p, ..)| (*p).cmp(path)).ok().map(|i| (ASSETS[i].1, Body::Static(ASSETS[i].2), ""));
