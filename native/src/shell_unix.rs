@@ -54,28 +54,35 @@ fn launch(uri: &CStr) {
     unsafe { g_app_info_launch_default_for_uri(uri.as_ptr(), null_mut(), null_mut()) };
 }
 
-/// Opens a path or URL with the desktop's default app. Linux has no shared Open with dialog or Properties sheet, so
-/// the file browser offers neither, and any other verb opens too. Finding the app reads the file and the desktop's
-/// list of apps, so that happens on a thread of its own.
+/// Has the file manager show `uri` through its freedesktop interface: `ShowFolders` opens a folder, and `ShowItems`
+/// selects an item in its folder. Err where no file manager answers there.
+fn show(method: &CStr, uri: &CStr) -> Result<(), String> {
+    let items = [uri.as_ptr(), null()];
+    bus_call(c"org.freedesktop.FileManager1", c"/org/freedesktop/FileManager1", method, || unsafe {
+        g_variant_new(c"(^ass)".as_ptr(), items.as_ptr(), c"".as_ptr())
+    }, drop)
+}
+
+/// Opens a path or URL with the desktop's default app, and a folder in the file manager, as the menus say, where the
+/// default app for folders is often an editor. Linux has no shared Open with dialog or Properties sheet, so the file
+/// browser offers neither, and any other verb opens too. It waits on the disk and D-Bus, so it runs on its own thread.
 pub fn open_path(path: String, verb: Option<String>) {
     let _ = verb;
     std::thread::spawn(move || {
-        if let Some(uri) = uri(&path) {
+        let Some(uri) = uri(&path) else { return };
+        let folder = path.starts_with('/') && Path::new(&path).is_dir();
+        if !(folder && show(c"ShowFolders", &uri).is_ok()) {
             launch(&uri);
         }
     });
 }
 
-/// Shows `path` selected in its folder, through the file manager's freedesktop interface, or where no file manager
-/// answers there, opens the folder. The file manager may have to start first, so this waits on a thread of its own.
+/// Shows `path` selected in its folder, or where no file manager answers, opens the folder. On a thread of its own, as
+/// open_path is.
 pub fn reveal(path: String) {
     std::thread::spawn(move || {
         let Some(file) = uri(&path) else { return };
-        let items = [file.as_ptr(), null()];
-        let shown = bus_call(c"org.freedesktop.FileManager1", c"/org/freedesktop/FileManager1", c"ShowItems", || unsafe {
-            g_variant_new(c"(^ass)".as_ptr(), items.as_ptr(), c"".as_ptr())
-        }, drop);
-        if shown.is_err() {
+        if show(c"ShowItems", &file).is_err() {
             let dir = Path::new(&path).parent().unwrap_or(Path::new("/"));
             if let Some(dir) = uri(&dir.to_string_lossy()) {
                 launch(&dir);
