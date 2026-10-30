@@ -1,13 +1,14 @@
 // nook's build: the page into dist/, then the release exe, then the installer. Node's own modules only.
-//   npm run build                  dist/, nook.exe, its payload staged in target/release/stage, and the installer
+//   npm run build                  dist/, nook.exe, its payload staged in target/release/stage, and the installer,
+//                                  or on Linux a .deb
 //   npm run build -- --no-pack     stops once the stage is a runnable nook
 //   npm run build -- --dist        stops after dist/
-// NOOK_ID and NOOK_NAME, the build's identity, reach both cargo builds through the environment. On Linux the
-// build stops after the stage.
+// NOOK_ID and NOOK_NAME, the build's identity, reach both cargo builds through the environment.
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { gzipSync } from 'node:zlib'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const src = join(root, 'src')
@@ -678,7 +679,7 @@ const run = (command, args, cwd) => {
 }
 
 const { NOOK_ID, NOOK_NAME } = process.env
-const pack = windows && !process.argv.includes('--no-pack') && !process.argv.includes('--dist')
+const pack = !process.argv.includes('--no-pack') && !process.argv.includes('--dist')
 // One without the other would name nook's own settings as a test build, or install a test build over nook.
 if (NOOK_NAME ? !NOOK_ID : NOOK_ID && pack) stop('NOOK_ID and NOOK_NAME name a test build together: set both')
 try {
@@ -701,11 +702,68 @@ if (!process.argv.includes('--dist')) {
   copyFileSync(join(release, exe), join(stage, exe))
   for (const [from, to] of PAYLOAD) cpSync(join(root, from), join(stage, to), { recursive: true })
   console.log(`${join(stage, exe)} runs with its payload beside it`)
-  if (pack) {
+  const cargo = readFileSync(join(tauri, 'Cargo.toml'), 'utf8')
+  const [version, about, home] = ['version', 'description', 'repository'].map(k => new RegExp(`^${k} = "(.+)"`, 'm').exec(cargo)[1])
+  const name = NOOK_NAME || 'nook'
+  if (pack && windows) {
     run('cargo', ['build', '--release'], join(tauri, 'setup'))
-    const version = /^version = "(.+)"/m.exec(readFileSync(join(tauri, 'Cargo.toml'), 'utf8'))[1]
-    const out = join(release, `${NOOK_NAME || 'nook'}_${version}_x64-setup.exe`)
+    const out = join(release, `${name}_${version}_x64-setup.exe`)
     run(join(process.env.CARGO_TARGET_DIR ?? join(tauri, 'setup', 'target'), 'release', 'setup.exe'), ['--pack', stage, out], root)
     console.log(out)
+  } else if (pack) {
+    const arch = { x64: 'amd64', arm64: 'arm64' }[process.arch]
+    const out = join(release, `${name}_${version}_${arch}.deb`)
+    writeFileSync(out, deb(stage, { name, version, arch, about, home }))
+    console.log(out)
   }
+}
+
+/** A .deb of the stage: nook and its payload in /usr/lib/<name>, a link in /usr/bin, a menu entry, and its icons. */
+function deb(stage, { name, version, arch, about, home }) {
+  const time = Math.floor(Date.now() / 1000)
+  const files = [] // [path, bytes, or null for a folder, mode, link]
+  const add = (path, data, mode = data ? 0o644 : 0o755, link) => {
+    for (let d = dirname(path); d !== '.' && !files.some(f => f[0] === `${d}/`); d = dirname(d)) files.push([`${d}/`, null, 0o755])
+    files.push([data || link ? path : `${path}/`, data, mode, link])
+  }
+  for (const f of readdirSync(stage, { recursive: true }).map(f => f.replaceAll('\\', '/')).sort()) {
+    const from = join(stage, f)
+    add(`./usr/lib/${name}/${f}`, statSync(from).isFile() ? readFileSync(from) : null, f === 'nook' ? 0o755 : undefined)
+  }
+  add(`./usr/bin/${name}`, null, 0o777, `../lib/${name}/nook`)
+  add(`./usr/share/applications/${name}.desktop`, Buffer.from(`[Desktop Entry]\nType=Application\nName=${name}\nComment=${about}\n` +
+    `Exec=${name} %f\nIcon=${name}\nTerminal=false\nCategories=Development;\nStartupWMClass=${name}\n`))
+  for (const [icon, size] of [['32x32', '32x32'], ['128x128', '128x128'], ['128x128@2x', '256x256'], ['icon', '512x512']])
+    add(`./usr/share/icons/hicolor/${size}/apps/${name}.png`, readFileSync(join(root, 'src-tauri', 'icons', `${icon}.png`)))
+  files.sort((a, b) => (a[0] < b[0] ? -1 : 1))
+  const size = files.reduce((n, f) => n + (f[1]?.length ?? 0), 0)
+  const control = `Package: ${name}\nVersion: ${version}\nArchitecture: ${arch}\nMaintainer: ${name}\n` +
+    `Installed-Size: ${Math.ceil(size / 1024)}\nDepends: libwebkit2gtk-4.1-0, libgtk-3-0, unzip, xdg-utils\nSection: devel\n` +
+    `Priority: optional\nHomepage: ${home}\nDescription: ${about}\n`
+  // A ustar archive, gzipped: a 512-byte header per entry, its bytes padded to 512, and two empty blocks.
+  const tar = entries => gzipSync(Buffer.concat([...entries.flatMap(([path, data, mode, link]) => {
+    const h = Buffer.alloc(512)
+    const octal = (n, at, width) => h.write(n.toString(8).padStart(width - 1, '0'), at)
+    h.write(path, 0)
+    octal(mode, 100, 8)
+    octal(0, 108, 8)
+    octal(0, 116, 8)
+    octal(data?.length ?? 0, 124, 12)
+    octal(time, 136, 12)
+    h.write(link ? '2' : data ? '0' : '5', 156)
+    if (link) h.write(link, 157)
+    h.write('ustar\x0000root', 257)
+    h.write('root', 297)
+    h.write('        ', 148)
+    octal(h.reduce((s, b) => s + b, 0), 148, 7)
+    h[154] = 0
+    return data ? [h, data, Buffer.alloc(-data.length & 511)] : [h]
+  }), Buffer.alloc(1024)]))
+  // An ar archive of debian-binary, control.tar.gz, and data.tar.gz, in that order.
+  return Buffer.concat([Buffer.from('!<arch>\n'), ...[
+    ['debian-binary', Buffer.from('2.0\n')],
+    ['control.tar.gz', tar([['./', null, 0o755], ['./control', Buffer.from(control), 0o644]])],
+    ['data.tar.gz', tar([['./', null, 0o755], ...files])],
+  ].flatMap(([member, data]) => [Buffer.from(`${member.padEnd(16)}${String(time).padEnd(12)}0     0     100644  ${String(data.length).padEnd(10)}\`\n`),
+    data, Buffer.alloc(data.length & 1, '\n')])])
 }
