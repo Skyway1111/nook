@@ -6,7 +6,7 @@
 use std::{
     ffi::{c_char, c_int, c_uint, CStr, CString},
     fs, io,
-    os::unix::ffi::OsStrExt,
+    os::unix::{ffi::OsStrExt, fs::OpenOptionsExt, fs::PermissionsExt},
     path::{Path, PathBuf},
     ptr::{null, null_mut},
     sync::Mutex,
@@ -160,7 +160,8 @@ fn free_name(dir: &Path, name: &str) -> PathBuf {
         .unwrap()
 }
 
-/// Copies a file, a link, or a folder and everything in it.
+/// Copies a file, a link, or a folder and everything in it. Each is made new, so where something was made at `to` since
+/// nook found the name free, the copy fails instead of replacing it.
 fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(from)?;
     if meta.file_type().is_symlink() {
@@ -172,8 +173,15 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
             copy_tree(&entry.path(), &to.join(entry.file_name()))?;
         }
         fs::set_permissions(to, meta.permissions())
+    } else if meta.is_file() {
+        // fs::copy would truncate a file found there. The mode is set again past the umask, as fs::copy sets it.
+        let mut source = fs::File::open(from)?;
+        let mut copy = fs::OpenOptions::new().write(true).create_new(true).mode(meta.permissions().mode()).open(to)?;
+        io::copy(&mut source, &mut copy)?;
+        copy.set_permissions(meta.permissions())
     } else {
-        fs::copy(from, to).map(drop)
+        // A pipe would wait for a writer, and a device could read forever.
+        Err(io::Error::new(io::ErrorKind::InvalidInput, "nook copies only files, folders, and links"))
     }
 }
 
