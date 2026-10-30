@@ -226,15 +226,15 @@ fn resolve(program: &str, path: Option<&OsStr>, pathext: Option<&OsStr>) -> Path
     let keys: Vec<String> = names.iter().map(|n| upper(Path::new(n).file_name().unwrap_or_default().encode_wide())).collect();
     for dir in std::env::split_paths(path.unwrap_or_default()).filter(|d| !d.as_os_str().is_empty()) {
         let files = files(&dir.join(format!("{program}*")));
-        if let Some(i) = keys.iter().position(|k| files.contains(k)) {
-            return dir.join(&names[i]);
+        if let Some((i, (_, name))) = keys.iter().enumerate().find_map(|(i, k)| Some((i, files.iter().find(|(f, _)| f == k)?))) {
+            return dir.join(&names[i]).with_file_name(name);
         }
     }
     program.into()
 }
 
-/// The names, in capitals, of the files (not folders) `pattern` matches.
-fn files(pattern: &Path) -> Vec<String> {
+/// The files (not folders) `pattern` matches: each name in capitals, and as the folder spells it.
+fn files(pattern: &Path) -> Vec<(String, OsString)> {
     let mut found = Vec::new();
     let mut data = WIN32_FIND_DATAW::default();
     // SAFETY: `data` is the struct Windows fills, and the search is closed once.
@@ -246,7 +246,8 @@ fn files(pattern: &Path) -> Vec<String> {
         loop {
             if data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
                 let len = data.cFileName.iter().position(|&c| c == 0).unwrap_or(data.cFileName.len());
-                found.push(upper(data.cFileName[..len].iter().copied()));
+                let name = &data.cFileName[..len];
+                found.push((upper(name.iter().copied()), OsString::from_wide(name)));
             }
             if FindNextFileW(find, &mut data) == 0 {
                 break;
