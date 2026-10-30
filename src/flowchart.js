@@ -475,7 +475,7 @@ function draw(g) {
     const t = ctitles[k], own = g.clusters[k].id
     const style = [...(g.nodeStyle.find(([id]) => id === own)?.[1] ?? [])]
     out += `<rect class="cluster" x="${r(b.x)}" y="${r(b.y)}" width="${r(b.w)}" height="${r(b.h)}" rx="4"${style.length ? ` style="${esc(style.join(';'))}"` : ''}/>`
-    out += text(t, b.x + 8, b.y + 4 + t.h / 2, 'title', '', true)
+    out += text(t, b.tx + 8, b.ty, 'title', '', true)
   })
   // Edges under the nodes, labels over them.
   const markers = new Map()

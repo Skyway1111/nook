@@ -188,7 +188,7 @@ const Ω = [1, 2, 8] // how hard an edge pulls straight: between nodes, a node a
  * - clusters: [{ parent, w, h }]: the subgraph's parent (-1 for none) and its title's size;
  * - edges: [{ v, w, minlen, label }]: a node's index, or ~index for a subgraph; label is { w, h } or null;
  * - dir: TB, BT, LR or RL; nodeSep, rankSep, edgeSep, pad: spacing in px.
- * Returns node centers, subgraph boxes, and each edge's polyline (null for an edge it can't draw) with its
+ * Returns node centers, subgraph boxes with where their titles start (tx, ty), and each edge's polyline (null for an edge it can't draw) with its
  * label's center, all in px from the top left of the drawing, which is width × height. An edge's ends at
  * nodes are their centers, for the caller to clip to its shapes; its ends at subgraphs are on their boxes.
  */
@@ -243,9 +243,12 @@ export function layout(g) {
     const [cx, cy] = res.nodes[p.node], box = { x: cx - p.w / 2, y: cy - p.h / 2, w: p.w, h: p.h }
     const dx = box.x + (p.w - p.res.width) / 2, dy = box.y + g.clusters[p.c].h + g.pad
     const move = ([x, y]) => [x + dx, y + dy]
-    out.clusters[p.c] = box
+    out.clusters[p.c] = { ...box, tx: box.x, ty: box.y + g.clusters[p.c].h / 2 }
     p.nodes.forEach((v, k) => (out.nodes[v] = move(p.res.nodes[k])))
-    p.clusters.forEach((d, k) => (out.clusters[d] = { ...p.res.clusters[k], x: p.res.clusters[k].x + dx, y: p.res.clusters[k].y + dy }))
+    p.clusters.forEach((d, k) => {
+      const b = p.res.clusters[k]
+      out.clusters[d] = { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h, tx: b.tx + dx, ty: b.ty + dy }
+    })
     p.edges.forEach((k, i) => {
       const e = p.res.edges[i]
       if (e) out.edges[k] = { points: e.points.map(move), label: e.label && move(e.label) }
@@ -421,7 +424,8 @@ function place(g) {
       let gr = groups.get(c)
       if (!gr) groups.set(c, (gr = { c, items: [], sum: 0, n: 0, i: list.length })), list.push(gr)
       gr.items.push(v)
-      if (key[v] === key[v]) gr.sum += key[v], gr.n++
+      // A border's key puts it first in its own subgraph, not its subgraph first among others.
+      if (key[v] === key[v] && (key[v] > -Infinity || c === v)) gr.sum += key[v], gr.n++
     })
     const sorted = list.filter(gr => gr.n).sort((a, b) => a.sum / a.n - b.sum / b.n || a.i - b.i)
     const fixed = list.filter(gr => !gr.n)
@@ -451,7 +455,7 @@ function place(g) {
     for (const v of layers[r]) {
       let s = 0
       for (const u of adj[v]) s += pos[u]
-      key[v] = adj[v].length ? s / adj[v].length : NaN
+      key[v] = adj[v].length ? s / adj[v].length : v >= N && v < N + 2 * C ? -Infinity : NaN
     }
   }
   {
@@ -592,9 +596,12 @@ function place(g) {
     return [u, w]
   }
   const nodes = g.nodes.map((_, v) => at(x[v], y[rank[v]]))
-  const clusters = boxes.map(b => {
-    const [p, q] = at(b.x0, b.y0), [r, s] = at(b.x1, b.y1)
-    return { x: Math.min(p, r), y: Math.min(q, s), w: Math.abs(r - p), h: Math.abs(s - q) }
+  // A title sits in its border's slot, which edges pass beside; left to right, in the band atop the box.
+  const clusters = boxes.map((b, c) => {
+    const [p, q] = at(b.x0, b.y0), [r, s] = at(b.x1, b.y1), t = bt ? bottom(c) : top(c)
+    const box = { x: Math.min(p, r), y: Math.min(q, s), w: Math.abs(r - p), h: Math.abs(s - q) }
+    const [tx, ty] = lr ? [box.x, box.y + g.pad / 2 + g.clusters[c].h / 2] : at(x[t] - W[t] / 2, y[rank[t]])
+    return { ...box, tx, ty }
   })
   // Ports: a vertex's edges leave its bottom and reach its top spread out, in the order of where they go.
   const faces = new Map(), port = new Float64Array(2 * chains.length)
