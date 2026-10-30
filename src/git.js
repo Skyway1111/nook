@@ -189,7 +189,7 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
   }
 
   function stashRow(stash, n) {
-    const li = el('li', { className: 'change stash', title: `stash@{${n}} \u00b7 ${stash.message}` })
+    const li = el('li', { className: 'change', title: `stash@{${n}} \u00b7 ${stash.message}` })
     li.dataset.stash = n
     const [where, what] = stashText(stash)
     li.innerHTML = `<i class="st stashed"></i><span class="name"></span><span class="dir"></span><span class="count"></span>`

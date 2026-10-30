@@ -80,9 +80,9 @@ export class Term {
     }, { pull })
 
     const root = this.element = document.createElement('div')
-    root.className = 'terminal xterm'
+    root.className = 'xterm'
     root.innerHTML = '<div class="xterm-screen"><div class="xterm-selection"></div><div class="xterm-rows"></div>'
-      + '<div class="xterm-marks"></div></div><div class="scrollbar vertical"><div class="slider"></div></div>'
+      + '<div class="xterm-marks"></div></div><div class="scrollbar"><div class="slider"></div></div>'
       + '<div class="xterm-helpers"><textarea class="xterm-helper-textarea" aria-label="Terminal input" autocorrect="off"'
       + ' autocapitalize="off" spellcheck="false" tabindex="0"></textarea><div class="composition-view"></div>'
       + '<div class="xterm-width-cache-measure-container"></div></div>'

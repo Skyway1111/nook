@@ -249,7 +249,7 @@ export function startHistory(view, { root, rel, openFile, run }) {
     invoke('git', { dir: root, args: ['-c', 'log.showSignature=false', 'show', '-s', '--format=%b%x1f%cn%x1f%ct', c.oid] }).then(text => {
       const [message, committer, time] = text.replace(/\n$/, '').split('\x1f')
       body.textContent = message.trim()
-      if (committer && committer !== c.author) who.append(el('span', { className: 'committer', textContent: `committed by ${committer}`, title: when(+time) }))
+      if (committer && committer !== c.author) who.append(el('span', { textContent: `committed by ${committer}`, title: when(+time) }))
     }, () => {})
     diff.show({ oid: c.oid, intro: [head] })
   }

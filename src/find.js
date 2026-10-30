@@ -118,7 +118,7 @@ export function startFind(v) {
     search.setAttribute('aria-label', 'Find')
     replace.setAttribute('aria-label', 'Replace')
     const [caseL, cased] = check('case', 'match case'), [reL, regexp] = check('re', 'regexp'), [wordL, word] = check('word', 'by word')
-    panel = el('div', { className: 'cm-search cm-panel' })
+    panel = el('div', { className: 'cm-search' })
     panel.append(search, button('next', 'next', () => step(1)), button('prev', 'previous', () => step(-1)),
       button('select', 'all', selectAll), caseL, reL, wordL, el('br'), replace,
       button('replace', 'replace', replaceNext), button('replaceAll', 'replace all', replaceAll),

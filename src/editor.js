@@ -80,7 +80,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   const dom = el('div', { className: 'cm-editor' })
   const scroller = el('div', { className: 'cm-scroller' })
   const content = el('div', { className: 'cm-content' })
-  const rowsBox = el('div', { className: 'cm-rows' })
+  const rowsBox = el('div')
   const selLayer = el('div', { className: 'cm-selectionLayer' })
   const curLayer = el('div', { className: 'cm-cursorLayer' })
   const probe = el('div', { className: 'cm-probe' })
@@ -991,11 +991,11 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     selectionMatches(sels)
     brackets(sels)
     for (const r of ranges) if (r.anchor !== r.head) rects(from(r), to(r), 'cm-selectionBackground', sels)
-    for (const [k, r] of ranges.entries()) {
+    for (const r of ranges) {
       const i = doc.lineOf(r.head)
       if (!rows.has(i)) continue
       const c = coords(r.head, r.assoc)
-      cur.push([c.x, c.y + (lh - th) / 2, 0, th, k === main ? 'cm-cursor cm-cursor-primary' : 'cm-cursor'])
+      cur.push([c.x, c.y + (lh - th) / 2, 0, th, 'cm-cursor'])
     }
     if (drop_ != null && rows.has(doc.lineOf(drop_))) {
       const c = coords(drop_)
