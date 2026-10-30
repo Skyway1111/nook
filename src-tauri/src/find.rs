@@ -46,7 +46,8 @@ impl Finder {
 
     /// The non-empty matches in `text`, as regex-lite's `captures_iter` finds them.
     pub fn matches<'a>(&'a self, text: &'a str) -> Matches<'a> {
-        Matches { how: &self.0, h: text.as_bytes(), text, at: 0, last: None, c: Cache::default() }
+        let c = Cache { must: None, ..SPARE.take() };
+        Matches { how: &self.0, h: text.as_bytes(), text, at: 0, last: None, c }
     }
 }
 
@@ -92,6 +93,12 @@ impl Iterator for Matches<'_> {
                 }
             },
         }
+    }
+}
+
+impl Drop for Matches<'_> {
+    fn drop(&mut self) {
+        SPARE.set(std::mem::take(&mut self.c));
     }
 }
 
@@ -1544,6 +1551,11 @@ impl Threads {
 enum Frame {
     Explore(u32),
     Restore(u32, usize),
+}
+
+thread_local! {
+    /// The cache a thread's last search used, so the next one doesn't allocate and clear its own.
+    static SPARE: std::cell::Cell<Cache> = std::cell::Cell::default();
 }
 
 /// What a search reuses from one match to the next.
