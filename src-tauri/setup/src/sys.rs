@@ -177,6 +177,28 @@ pub struct TaskDialog {
 #[repr(C, packed(1))]
 pub struct Button(pub i32, pub P);
 
+pub const GENERIC_READ: u32 = 0x8000_0000;
+pub const GENERIC_WRITE: u32 = 0x4000_0000;
+pub const SHARE_READ_DELETE: u32 = 5;
+pub const CREATE_ALWAYS: u32 = 2;
+pub const OPEN_EXISTING: u32 = 3;
+pub const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+pub const STD_OUTPUT: u32 = -11i32 as u32;
+pub const STD_ERROR: u32 = -12i32 as u32;
+pub const UTF8: u32 = 65001;
+pub const KEY_SET_VALUE: u32 = 2;
+pub const RRF_RT_REG_SZ: u32 = 2;
+pub const REG_SZ: u32 = 1;
+pub const REG_DWORD: u32 = 4;
+pub const LZMS: u32 = 5;
+pub const BLOCK_SIZE: u32 = 1;
+pub const ERROR_MORE_DATA: u32 = 234;
+pub const RM_FORCE_SHUTDOWN: u32 = 1;
+pub const FO_DELETE: u32 = 3;
+pub const FOF_NO_UI: u16 = 0x614;
+pub const COINIT_APARTMENTTHREADED: u32 = 2;
+pub const CLSCTX_INPROC_SERVER: u32 = 1;
+pub const VT_LPWSTR: u16 = 31;
 pub const HKCU: H = 0x8000_0001u32 as i32 as H;
 pub const HKLM: H = 0x8000_0002u32 as i32 as H;
 pub const INVALID: H = -1;

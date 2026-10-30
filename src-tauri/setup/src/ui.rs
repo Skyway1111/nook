@@ -25,7 +25,24 @@ pub struct Flow<'a> {
 }
 
 const GO: i32 = 100;
-const CANCEL: usize = 2;
+const IDOK: i32 = 1;
+const IDCANCEL: usize = 2;
+const OK: u32 = 1;
+const CANCEL: u32 = 8;
+const CLOSE: u32 = 0x20;
+const CANCELABLE: u32 = 8;
+const CHECKED: u32 = 0x100;
+const PROGRESS: u32 = 0x200;
+const OVER_PARENT: u32 = 0x1000;
+const NAVIGATED: u32 = 1;
+const CLICKED: u32 = 2;
+const TOGGLED: u32 = 8;
+const NAVIGATE: u32 = 0x465;
+const BAR_POS: u32 = 0x46A;
+const ENABLE: u32 = 0x46F;
+const ERROR_ICON: P = 0xFFFE as P;
+const WARNING_ICON: P = 0xFFFF as P;
+const APP_ICON: P = 32512 as P;
 
 /// The dialog while it shows the progress bar.
 static BAR: AtomicIsize = AtomicIsize::new(0);
@@ -34,7 +51,7 @@ static BAR: AtomicIsize = AtomicIsize::new(0);
 pub fn progress(percent: usize) {
     let h = BAR.load(Relaxed);
     if h != 0 {
-        unsafe { PostMessageW(h, 0x46A, percent, 0) };
+        unsafe { PostMessageW(h, BAR_POS, percent, 0) };
     }
 }
 
@@ -58,13 +75,13 @@ pub fn run(flow: &Flow) -> (u32, bool) {
         busy: AtomicBool::new(false),
         code: AtomicU32::new(1),
         pages: UnsafeCell::new([
-            page(flow, flow.busy, w!(""), None, 0x200, 8),
-            page(flow, flow.done, w!(""), flow.done_check, 0x108, 0x20),
-            page(flow, flow.failed, w!(""), None, 8, 0x20),
+            page(flow, flow.busy, w!(""), None, PROGRESS, CANCEL),
+            page(flow, flow.done, w!(""), flow.done_check, CANCELABLE | CHECKED, CLOSE),
+            page(flow, flow.failed, w!(""), None, CANCELABLE, CLOSE),
         ]),
         text: UnsafeCell::new(crate::W::new()),
     };
-    let mut first = page(flow, flow.heading, flow.content, Some(flow.check), if flow.checked { 0x108 } else { 8 }, 8);
+    let mut first = page(flow, flow.heading, flow.content, Some(flow.check), CANCELABLE | if flow.checked { CHECKED } else { 0 }, CANCEL);
     first.buttons = 1;
     first.button = go.as_ptr();
     first.default = GO;
@@ -87,7 +104,7 @@ fn page(flow: &Flow, heading: &[u16], content: &[u16], check: Option<&[u16]>, fl
         flags,
         common,
         title: flow.title.as_ptr(),
-        icon: 32512 as P,
+        icon: APP_ICON,
         heading: heading.as_ptr(),
         content: content.as_ptr(),
         buttons: 0,
@@ -113,22 +130,22 @@ unsafe extern "system" fn callback(h: H, msg: u32, wp: usize, _: isize, data: is
     s.hwnd.store(h, Relaxed);
     match msg {
         // Navigated: the progress page can't be cancelled.
-        1 if s.busy.load(Relaxed) => {
-            SendMessageW(h, 0x46F, CANCEL, 0);
+        NAVIGATED if s.busy.load(Relaxed) => {
+            SendMessageW(h, ENABLE, IDCANCEL, 0);
             0
         }
-        2 if s.busy.load(Relaxed) => 1,
-        2 if wp == GO as usize => {
+        CLICKED if s.busy.load(Relaxed) => 1,
+        CLICKED if wp == GO as usize => {
             if (s.flow.running)() && !ask(s.flow, h) {
                 return 1;
             }
             s.busy.store(true, Relaxed);
-            SendMessageW(h, 0x465, 0, &(*s.pages.get())[0] as *const TaskDialog as isize);
+            SendMessageW(h, NAVIGATE, 0, &(*s.pages.get())[0] as *const TaskDialog as isize);
             BAR.store(h, Relaxed);
             CloseHandle(CreateThread(null_mut(), 0, worker, data as V, 0, null_mut()));
             1
         }
-        8 => {
+        TOGGLED => {
             s.checked.store(wp != 0, Relaxed);
             0
         }
@@ -150,22 +167,22 @@ unsafe extern "system" fn worker(data: V) -> u32 {
             s.code.store(2, Relaxed);
             *s.text.get() = f.text();
             pages[2].content = (*s.text.get()).as_ptr();
-            pages[2].icon = 0xFFFE as P;
+            pages[2].icon = ERROR_ICON;
             &pages[2]
         }
     };
     s.busy.store(false, Relaxed);
-    SendMessageW(s.hwnd.load(Relaxed), 0x465, 0, next as *const TaskDialog as isize);
+    SendMessageW(s.hwnd.load(Relaxed), NAVIGATE, 0, next as *const TaskDialog as isize);
     0
 }
 
 /// Asks to close the running nook; true to go on.
 unsafe fn ask(flow: &Flow, parent: H) -> bool {
-    let mut p = page(flow, w!(concat!(name!(), " is running")), w!("Close it to continue?"), None, 0x1000, 9);
+    let mut p = page(flow, w!(concat!(name!(), " is running")), w!("Close it to continue?"), None, OVER_PARENT, OK | CANCEL);
     p.parent = parent;
-    p.icon = 0xFFFF as P;
+    p.icon = WARNING_ICON;
     p.callback = None;
     let mut button = 0;
     TaskDialogIndirect(&p, &mut button, null_mut(), null_mut());
-    button == 1
+    button == IDOK
 }

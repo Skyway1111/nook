@@ -53,7 +53,14 @@ mod ui;
 /// A NUL-terminated UTF-16 string.
 type W = Vec<u16>;
 
-const EXE: &[u16] = w!("\\nook.exe");
+/// The payload's main binary.
+macro_rules! exe {
+    () => {
+        "nook.exe"
+    };
+}
+
+const EXE: &[u16] = w!(concat!("\\", exe!()));
 const UNINSTALLER: &[u16] = w!("\\uninstall.exe");
 const DIR_KEY: &[u16] = w!(concat!("Software\\", name!(), "\\", name!()));
 const VENDOR_KEY: &[u16] = w!(concat!("Software\\", name!()));
@@ -132,9 +139,9 @@ fn exit(r: Result<(), Fail>) -> u32 {
     let text = f.text();
     let mut out = [0u8; 2048];
     unsafe {
-        let n = WideCharToMultiByte(65001, 0, text.as_ptr(), text.len() as i32 - 1, out.as_mut_ptr(), 2047, null(), null_mut()) as usize;
+        let n = WideCharToMultiByte(UTF8, 0, text.as_ptr(), text.len() as i32 - 1, out.as_mut_ptr(), 2047, null(), null_mut()) as usize;
         out[n] = b'\n';
-        WriteFile(GetStdHandle(-12i32 as u32), out.as_ptr(), n as u32 + 1, &mut 0, null_mut());
+        WriteFile(GetStdHandle(STD_ERROR), out.as_ptr(), n as u32 + 1, &mut 0, null_mut());
     }
     2
 }
@@ -165,8 +172,8 @@ fn main() -> u32 {
         (Some(LIST), Some(dir)) => uninstall(&index(p.index), &trim(dir), silent, update),
         (Some(LIST), None) => relaunch(&path, &exe, silent, update),
         (Some(DATA), _) => {
-            let fresh = reg(HKCU, UNINSTALL_KEY, w!("UninstallString")).is_none();
-            Install { dir: install_dir(), p, update, ns: at(w!("/NS")).is_some(), fresh }.run(silent)
+            let previous = reg(HKCU, UNINSTALL_KEY, w!("UninstallString"));
+            Install { dir: install_dir(), p, update, ns: at(w!("/NS")).is_some(), previous }.run(silent)
         }
         _ => 2,
     }
@@ -177,13 +184,14 @@ struct Install<'a> {
     p: Packed<'a>,
     update: bool,
     ns: bool,
-    fresh: bool,
+    /// The registered uninstaller of an earlier install.
+    previous: Option<W>,
 }
 
 impl Install<'_> {
     fn run(&self, silent: bool) -> u32 {
         if silent {
-            return exit(self.install(self.fresh && !self.ns && !self.update));
+            return exit(self.install(self.previous.is_none() && !self.ns && !self.update));
         }
         let files = within(&self.dir, &index(self.p.index));
         let flow = ui::Flow {
@@ -203,7 +211,7 @@ impl Install<'_> {
         let (code, run) = ui::run(&flow);
         if code == 0 && run {
             let exe = cat(&[&self.dir, EXE]);
-            spawn(&exe, &cat(&[w!("\""), &exe, w!("\"")]), &self.dir);
+            spawn(&exe, &quote(&exe), &self.dir);
         }
         code
     }
@@ -215,7 +223,7 @@ impl Install<'_> {
         let mut data = Vec::with_capacity(self.p.raw);
         let (mut h, mut n) = (0, 0);
         let unpacked = unsafe {
-            CreateDecompressor(5, null_mut(), &mut h) != 0
+            CreateDecompressor(LZMS, null_mut(), &mut h) != 0
                 && Decompress(h, self.p.data.as_ptr(), self.p.data.len(), data.as_mut_ptr(), self.p.raw, &mut n) != 0
                 && n == self.p.raw
         };
@@ -229,12 +237,13 @@ impl Install<'_> {
         let old = cat(&[&self.dir, UNINSTALLER]);
         let before = read(&old).map_or(Vec::new(), |exe| match parts(&exe) {
             Packed { kind: Some(LIST), index: i, .. } => index(i),
-            _ => {
-                // An NSIS install: its own uninstaller removes what it put there and keeps the shortcuts.
-                let cmd = cat(&[w!("\""), &old, w!("\" /S /UPDATE _?="), &self.dir]);
+            // The NSIS install registered here: its own uninstaller removes what it put there and keeps the shortcuts.
+            _ if self.previous.as_ref().is_some_and(|u| eq(u, &quote(&old))) => {
+                let cmd = cat(&[&quote(&old), w!(" /S /UPDATE _?="), &self.dir]);
                 spawn(&old, &cmd, &self.dir).map(wait);
                 Vec::new()
             }
+            _ => Vec::new(),
         });
         dirs(&cat(&[&self.dir, w!("\\")]), 3);
         let mut at = 0;
@@ -247,7 +256,7 @@ impl Install<'_> {
             at += size;
             ui::progress(20 + 70 * at / n.max(1));
         }
-        let gone: Vec<W> = before.into_iter().map(|(p, _)| p).filter(|p| !files.iter().any(|(q, _)| eq(p, q))).collect();
+        let gone: Vec<_> = before.into_iter().filter(|(p, _)| !files.iter().any(|(q, _)| eq(p, q))).collect();
         remove(&self.dir, &gone);
         let (stub, list) = (self.p.stub, self.p.index);
         if !write(&old, &[stub, list, &tail(stub.len(), list.len(), 0, LIST)]) {
@@ -268,18 +277,17 @@ impl Install<'_> {
     /// The keys an NSIS install wrote: the install dir, the Apps entry, and "Open with nook" on folders.
     fn register(&self, kb: usize) -> Result<(), Fail> {
         let exe = cat(&[&self.dir, EXE]);
-        let quoted = |s: &[u16]| cat(&[w!("\""), s, w!("\"")]);
         let ok = set(DIR_KEY, &[(w!(""), Val::Str(&self.dir))])
             && set(
                 UNINSTALL_KEY,
                 &[
-                    (w!("MainBinaryName"), Val::Str(w!("nook.exe"))),
+                    (w!("MainBinaryName"), Val::Str(w!(exe!()))),
                     (w!("DisplayName"), Val::Str(w!(name!()))),
-                    (w!("DisplayIcon"), Val::Str(&quoted(&exe))),
+                    (w!("DisplayIcon"), Val::Str(&quote(&exe))),
                     (w!("DisplayVersion"), Val::Str(w!(version!()))),
                     (w!("Publisher"), Val::Str(w!(name!()))),
-                    (w!("InstallLocation"), Val::Str(&quoted(&self.dir))),
-                    (w!("UninstallString"), Val::Str(&quoted(&cat(&[&self.dir, UNINSTALLER])))),
+                    (w!("InstallLocation"), Val::Str(&quote(&self.dir))),
+                    (w!("UninstallString"), Val::Str(&quote(&cat(&[&self.dir, UNINSTALLER])))),
                     (w!("NoModify"), Val::Dword(1)),
                     (w!("NoRepair"), Val::Dword(1)),
                     (w!("EstimatedSize"), Val::Dword(kb as u32)),
@@ -287,7 +295,7 @@ impl Install<'_> {
             )
             && MENU_KEYS.iter().all(|k| {
                 set(k, &[(w!(""), Val::Str(w!(concat!("Open with ", name!())))), (w!("Icon"), Val::Str(&exe))])
-                    && set(&cat(&[k, w!("\\command")]), &[(w!(""), Val::Str(&cat(&[&quoted(&exe), w!(" \"%V\"")])))])
+                    && set(&cat(&[k, w!("\\command")]), &[(w!(""), Val::Str(&cat(&[&quote(&exe), w!(" \"%V\"")])))])
             });
         if ok {
             Ok(())
@@ -317,7 +325,7 @@ fn webview2() -> Result<(), Fail> {
     if unsafe { URLDownloadToFileW(null_mut(), url.as_ptr(), file.as_ptr(), 0, null_mut()) } != 0 {
         return fail(&[w!("Couldn't download WebView2.")]);
     }
-    let code = spawn(&file, &cat(&[w!("\""), &file, w!("\" /silent /install")]), &temp()).map(wait);
+    let code = spawn(&file, &cat(&[&quote(&file), w!(" /silent /install")]), &temp()).map(wait);
     unsafe { DeleteFileW(file.as_ptr()) };
     if code == Some(0) {
         Ok(())
@@ -337,7 +345,7 @@ fn relaunch(path: &[u16], exe: &[u8], silent: bool, update: bool) -> u32 {
         (false, true) => w!(" /UPDATE"),
         _ => w!(""),
     };
-    let cmd = cat(&[w!("\""), &copy, w!("\" --uninstall \""), dir, w!("\""), flags]);
+    let cmd = cat(&[&quote(&copy), w!(" --uninstall "), &quote(dir), flags]);
     if write(&copy, &[exe]) && spawn(&copy, &cmd, &temp()).is_some() {
         0
     } else {
@@ -349,8 +357,7 @@ fn uninstall(files: &[(W, usize)], dir: &W, silent: bool, update: bool) -> u32 {
     let full = within(dir, files);
     let work = |data: bool| -> Result<(), Fail> {
         close(&full)?;
-        let paths: Vec<W> = files.iter().map(|(p, _)| p.clone()).collect();
-        remove(dir, &paths);
+        remove(dir, files);
         ui::progress(50);
         // The uninstall.exe that started this copy may still be exiting.
         let me = cat(&[dir, UNINSTALLER]);
@@ -384,7 +391,7 @@ fn uninstall(files: &[(W, usize)], dir: &W, silent: bool, update: bool) -> u32 {
                     let mut d = cat(&[&known(at), w!(concat!("\\", id!()))]);
                     d.push(0);
                     for _ in 0..50 {
-                        let mut op = FileOp { hwnd: 0, func: 3, from: d.as_ptr(), to: null(), flags: 0x614, aborted: 0, mappings: null_mut(), title: null() };
+                        let mut op = FileOp { hwnd: 0, func: FO_DELETE, from: d.as_ptr(), to: null(), flags: FOF_NO_UI, aborted: 0, mappings: null_mut(), title: null() };
                         SHFileOperationW(&mut op);
                         if GetFileAttributesW(d.as_ptr()) == u32::MAX {
                             break;
@@ -422,9 +429,9 @@ fn within(dir: &[u16], files: &[(W, usize)]) -> Vec<W> {
 }
 
 /// Deletes the files, then each folder they leave empty, deepest first.
-fn remove(dir: &[u16], paths: &[W]) {
+fn remove(dir: &[u16], files: &[(W, usize)]) {
     let mut dirs: Vec<W> = Vec::new();
-    for p in paths {
+    for (p, _) in files {
         unsafe { DeleteFileW(cat(&[dir, w!("\\"), p]).as_ptr()) };
         for (i, _) in p.iter().enumerate().filter(|(_, &c)| c == b'\\' as u16) {
             let d = cat(&[dir, w!("\\"), &p[..i]]);
@@ -460,8 +467,8 @@ fn pack(stub: &[u8], dir: &[u16], out: &[u16]) -> u32 {
     let (mut h, mut n) = (0, 0);
     let block = raw.len().max(1 << 20) as u32;
     let ok = unsafe {
-        CreateCompressor(5, null_mut(), &mut h) != 0
-            && SetCompressorInformation(h, 1, &block as *const u32 as V, 4) != 0
+        CreateCompressor(LZMS, null_mut(), &mut h) != 0
+            && SetCompressorInformation(h, BLOCK_SIZE, &block as *const u32 as V, 4) != 0
             && Compress(h, raw.as_ptr(), raw.len(), packed.as_mut_ptr(), packed.capacity(), &mut n) != 0
     };
     if !ok {
@@ -477,7 +484,7 @@ fn pack(stub: &[u8], dir: &[u16], out: &[u16]) -> u32 {
         line.extend(dec(v));
     }
     line.push(b'\n');
-    unsafe { WriteFile(GetStdHandle(-11i32 as u32), line.as_ptr(), line.len() as u32, &mut 0, null_mut()) };
+    unsafe { WriteFile(GetStdHandle(STD_OUTPUT), line.as_ptr(), line.len() as u32, &mut 0, null_mut()) };
     0
 }
 
@@ -492,7 +499,7 @@ fn walk(root: &[u16], rel: &[u16], out: &mut Vec<W>) {
         let name = &d.name[..len(d.name.as_ptr())];
         if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
             let p = cat(&[rel, name]);
-            if d.attributes & 0x10 != 0 {
+            if d.attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
                 walk(root, &cat(&[&p, w!("\\")]), out);
             } else {
                 out.push(p);
@@ -522,7 +529,7 @@ impl Rm {
     /// Whether some process has one of the files open.
     fn busy(&self) -> bool {
         let (mut need, mut n, mut why) = (0, 0, 0);
-        unsafe { RmGetList(self.0, &mut need, &mut n, null_mut(), &mut why) == 234 }
+        unsafe { RmGetList(self.0, &mut need, &mut n, null_mut(), &mut why) == ERROR_MORE_DATA }
     }
 }
 
@@ -535,7 +542,7 @@ fn running(files: &[W]) -> bool {
 /// fresh sessions: one that has shut processes down goes on listing them.
 fn close(files: &[W]) -> Result<(), Fail> {
     let Some(rm) = Rm::over(files).filter(Rm::busy) else { return Ok(()) };
-    let code = unsafe { RmShutdown(rm.0, 1, null_mut()) };
+    let code = unsafe { RmShutdown(rm.0, RM_FORCE_SHUTDOWN, null_mut()) };
     for _ in 0..50 {
         if !running(files) {
             return Ok(());
@@ -578,8 +585,8 @@ struct PropVariant(u16, [u16; 3], P, usize);
 fn create(clsid: &Guid, iid: &Guid) -> Option<Com> {
     let mut o = null_mut();
     unsafe {
-        CoInitializeEx(null_mut(), 2);
-        (CoCreateInstance(clsid, null_mut(), 1, iid, &mut o) >= 0).then_some(o)
+        CoInitializeEx(null_mut(), COINIT_APARTMENTTHREADED);
+        (CoCreateInstance(clsid, null_mut(), CLSCTX_INPROC_SERVER, iid, &mut o) >= 0).then_some(o)
     }
 }
 
@@ -593,7 +600,7 @@ fn lnk(path: &[u16], target: &[u16], dir: &[u16]) -> bool {
         let (mut ps, mut pf) = (null_mut(), null_mut());
         let mut ok = com!(sl, 0, &IPROPERTY_STORE => *const Guid, &mut ps => *mut Com) >= 0;
         if ok {
-            let id = PropVariant(31, [0; 3], w!(id!()).as_ptr(), 0);
+            let id = PropVariant(VT_LPWSTR, [0; 3], w!(id!()).as_ptr(), 0);
             ok = com!(ps, 6, &AUMID => *const PropKey, &id => *const PropVariant) >= 0 && com!(ps, 7) >= 0;
             com!(ps, 2);
         }
@@ -643,13 +650,13 @@ enum Val<'a> {
 /// Writes values under an HKCU key, creating it.
 fn set(key: &[u16], values: &[(&[u16], Val)]) -> bool {
     let mut h = 0;
-    if unsafe { RegCreateKeyExW(HKCU, key.as_ptr(), 0, null(), 0, 0x2, null_mut(), &mut h, null_mut()) } != 0 {
+    if unsafe { RegCreateKeyExW(HKCU, key.as_ptr(), 0, null(), 0, KEY_SET_VALUE, null_mut(), &mut h, null_mut()) } != 0 {
         return false;
     }
     let ok = values.iter().all(|(name, v)| {
         let (kind, data, n) = match v {
-            Val::Str(s) => (1, s.as_ptr() as *const u8, 2 * (len(s.as_ptr()) + 1)),
-            Val::Dword(d) => (4, d as *const u32 as *const u8, 4),
+            Val::Str(s) => (REG_SZ, s.as_ptr() as *const u8, 2 * (len(s.as_ptr()) + 1)),
+            Val::Dword(d) => (REG_DWORD, d as *const u32 as *const u8, 4),
         };
         unsafe { RegSetValueExW(h, name.as_ptr(), 0, kind, data, n as u32) == 0 }
     });
@@ -661,7 +668,7 @@ fn set(key: &[u16], values: &[(&[u16], Val)]) -> bool {
 fn reg(root: H, key: &[u16], name: &[u16]) -> Option<W> {
     let mut buf = [0u16; 1024];
     let mut n = 2048;
-    (unsafe { RegGetValueW(root, key.as_ptr(), name.as_ptr(), 0x2, null_mut(), buf.as_mut_ptr() as V, &mut n) } == 0).then(|| cat(&[&buf]))
+    (unsafe { RegGetValueW(root, key.as_ptr(), name.as_ptr(), RRF_RT_REG_SZ, null_mut(), buf.as_mut_ptr() as V, &mut n) } == 0).then(|| cat(&[&buf]))
 }
 
 fn known(id: &Guid) -> W {
@@ -700,7 +707,7 @@ fn args() -> Vec<W> {
 
 fn read(path: &[u16]) -> Option<Vec<u8>> {
     unsafe {
-        let h = CreateFileW(path.as_ptr(), 0x8000_0000, 5, null_mut(), 3, 0, 0);
+        let h = CreateFileW(path.as_ptr(), GENERIC_READ, SHARE_READ_DELETE, null_mut(), OPEN_EXISTING, 0, 0);
         if h == INVALID {
             return None;
         }
@@ -719,7 +726,7 @@ fn read(path: &[u16]) -> Option<Vec<u8>> {
 
 fn write(path: &[u16], parts: &[&[u8]]) -> bool {
     unsafe {
-        let h = CreateFileW(path.as_ptr(), 0x4000_0000, 0, null_mut(), 2, 0x80, 0);
+        let h = CreateFileW(path.as_ptr(), GENERIC_WRITE, 0, null_mut(), CREATE_ALWAYS, 0, 0);
         if h == INVALID {
             return false;
         }
@@ -765,6 +772,10 @@ fn cat(parts: &[&[u16]]) -> W {
     }
     v.push(0);
     v
+}
+
+fn quote(s: &[u16]) -> W {
+    cat(&[w!("\""), s, w!("\"")])
 }
 
 /// A path without trailing slashes or spaces.
