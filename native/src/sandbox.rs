@@ -359,12 +359,13 @@ mod os {
 }
 
 /// Linux: nook's program again, with no environment, every inherited descriptor but its pipes closed, and no way to
-/// gain privileges. On x86-64 a seccomp filter also refuses sockets, starting programs or processes, opening files
-/// to write, changing the file system, and signalling or tracing any other process.
+/// gain privileges. Where the kernel has Landlock (5.13 on, if enabled), it reads only the system's folders, not the
+/// user's files. On x86-64 a seccomp filter also refuses sockets, starting programs or processes, opening files to
+/// write, changing the file system, and signalling or tracing any other process.
 #[cfg(not(windows))]
 mod os {
     use std::{
-        ffi::{c_int, c_long, c_ulong},
+        ffi::{c_char, c_int, c_long, c_ulong},
         fs::File,
         io,
         os::fd::{FromRawFd, OwnedFd},
@@ -376,7 +377,45 @@ mod os {
         fn syscall(number: c_long, ...) -> c_long;
         fn getpid() -> c_int;
         fn getppid() -> c_int;
+        fn open(path: *const c_char, flags: c_int, ...) -> c_int;
         fn close(fd: c_int) -> c_int;
+    }
+
+    /// Where libraries, fonts, and their settings live. With no HOME, fontconfig looks nowhere else.
+    const READABLE: [&std::ffi::CStr; 8] = [c"/usr", c"/etc", c"/lib", c"/lib64", c"/opt", c"/var/cache/fontconfig", c"/nix/store", c"/gnu/store"];
+
+    /// Landlock's `landlock_path_beneath_attr`.
+    #[repr(C, packed)]
+    struct Beneath {
+        allowed: u64,
+        fd: c_int,
+    }
+    const _: () = assert!(size_of::<Beneath>() == 12);
+
+    /// Lets this thread, and those it starts, read only beneath `READABLE`. A kernel without Landlock, or a rule it
+    /// refuses, changes nothing: no rule would refuse every read.
+    fn confine() {
+        const READ: u64 = 4 | 8; // LANDLOCK_ACCESS_FS_READ_FILE, _READ_DIR
+        unsafe {
+            // landlock_create_ruleset, given only the attribute's first field, handled_access_fs, which every version reads
+            let rules = syscall(444, &READ as *const u64, 8 as c_ulong, 0 as c_ulong);
+            if rules < 0 {
+                return;
+            }
+            let added = READABLE.iter().all(|dir| {
+                let fd = open(dir.as_ptr(), 0o10000000 | 0o2000000); // O_PATH | O_CLOEXEC; a folder that isn't there is skipped
+                fd < 0 || {
+                    let rule = Beneath { allowed: READ, fd };
+                    let added = syscall(445, rules, 1 as c_ulong, &rule as *const Beneath, 0 as c_ulong) == 0; // landlock_add_rule, PATH_BENEATH
+                    close(fd);
+                    added
+                }
+            });
+            if added {
+                syscall(446, rules, 0 as c_ulong); // landlock_restrict_self
+            }
+            close(rules as c_int);
+        }
     }
 
     pub struct Process(Child);
@@ -428,6 +467,7 @@ mod os {
             if prctl(PR_SET_NO_NEW_PRIVS, 1 as c_ulong, 0 as c_ulong, 0 as c_ulong, 0 as c_ulong) != 0 {
                 std::process::exit(1);
             }
+            confine();
             #[cfg(target_arch = "x86_64")]
             {
                 let filter = filter(getpid() as u32);
