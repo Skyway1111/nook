@@ -122,7 +122,7 @@ export function startPictures(term, screen, reply = () => {}) {
         // A diagram or formula the mod saved: drawn at the box's left, since its size there is the mod's guess.
         const [columns, rows] = [Number(k.c), Number(k.r)]
         const made = /\.tex$/i.test(path) ? import('./math.js').then(m => m.mathUrl(path, boxSize(columns, rows)))
-          : import('./diagrams.js').then(d => d.diagramUrl(path))
+          : import('./diagrams.js').then(d => d.diagramUrl(path, boxSize(columns, rows)))
         made.then(url => {
           keep(id, { url, columns, rows, blob: true, left: true })
           answer('OK')
