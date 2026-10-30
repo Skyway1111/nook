@@ -462,8 +462,25 @@ fn main() {
         browser_args: format!("{BROWSER_ARGS}{}", if settings.gpu { "" } else { " --disable-gpu" }),
         init_script: format!("window.NOOK_CWD = {}; window.NOOK_REOPEN = {reopen}; window.NOOK_BENCH = {bench};", json::to_string(&start)),
         on_webview: if bench { || self::bench("mark:window".into(), None) } else { || {} },
+        // icon.ico's 32 px picture, a PNG, copied out at compile time: a slice of it would keep the whole .ico.
         #[cfg(target_os = "linux")]
-        icon: include_bytes!("../icons/32x32.png"),
+        icon: {
+            const ICO: &[u8] = include_bytes!("../icons/icon.ico");
+            // Its 16-byte directory entries follow a 6-byte header: width first, then its length and offset last.
+            const AT: (usize, usize) = {
+                let mut e = 6;
+                while ICO[e] != 32 {
+                    e += 16;
+                    assert!(e < 6 + 16 * ICO[4] as usize, "icon.ico has no 32 px picture");
+                }
+                let [.., l0, l1, l2, l3, a0, a1, a2, a3] = *ICO.split_at(e).1.first_chunk::<16>().unwrap();
+                let at = u32::from_le_bytes([a0, a1, a2, a3]) as usize;
+                assert!(ICO[at + 1] == b'P', "icon.ico's 32 px picture isn't a PNG");
+                (at, u32::from_le_bytes([l0, l1, l2, l3]) as usize)
+            };
+            static PNG: [u8; AT.1] = *ICO.split_at(AT.0).1.first_chunk().unwrap();
+            &PNG
+        },
         #[cfg(debug_assertions)]
         watch: &["src", "index.html", "mod/themes"],
     };

@@ -1,6 +1,6 @@
 //! A desktop notification when a Claude session in the background needs the user, without a plugin: on
-//! Windows the notification area's balloon, which Windows 10 and 11 show as a toast, and elsewhere the
-//! desktop's own `notify-send`, or `gdbus` where that isn't installed. Nothing runs until there is one to show.
+//! Windows the notification area's balloon, which Windows 10 and 11 show as a toast, and on Linux the desktop's
+//! freedesktop notification service, over D-Bus.
 
 pub fn notify(title: String, body: String) -> Result<(), String> {
     show(&title, &body)
@@ -50,49 +50,16 @@ fn show(title: &str, body: &str) -> Result<(), String> {
 
 #[cfg(not(windows))]
 fn show(title: &str, body: &str) -> Result<(), String> {
-    use std::process::{Command, Stdio};
-    let quiet = |mut c: Command| c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
-    let mut send = Command::new("notify-send");
-    send.args(["--app-name=nook", "--", title, body]);
-    let sent = quiet(send).or_else(|_| {
-        let mut call = Command::new("gdbus");
-        call
-            .args(["call", "--session", "--dest", "org.freedesktop.Notifications"])
-            .args(["--object-path", "/org/freedesktop/Notifications"])
-            .args(["--method", "org.freedesktop.Notifications.Notify", "--"])
-            // Typed, so the call is right even where gdbus can't look up the method's signature.
-            .args(["'nook'".into(), "uint32 0".into(), "''".into(), gvariant(title), gvariant(body)])
-            .args(["@as []", "@a{sv} {}", "int32 -1"]);
-        quiet(call)
-    });
-    let mut child = sent.map_err(|_| "No notification service: install notify-send (libnotify)".to_string())?;
-    child.wait().map_err(|e| e.to_string())?; // reaped here, on the command's worker
-    Ok(())
-}
-
-/// `text` as a GVariant string literal, as gdbus reads its arguments.
-#[cfg(not(windows))]
-fn gvariant(text: &str) -> String {
-    let mut out = String::from("'");
-    for c in text.chars() {
-        match c {
-            '\'' | '\\' => {
-                out.push('\\');
-                out.push(c);
-            }
-            '\n' => out.push_str("\\n"),
-            _ => out.push(c),
-        }
-    }
-    out.push('\'');
-    out
-}
-
-#[cfg(all(test, not(windows)))]
-mod tests {
-    #[test]
-    fn quotes_text_for_gdbus() {
-        assert_eq!(super::gvariant(r"it's a\b"), r"'it\'s a\\b'");
-        assert_eq!(super::gvariant("two\nlines"), r"'two\nlines'");
-    }
+    use crate::host::gtk::{bus_call, cstring, g_variant_new, lists};
+    use std::ptr::{null, null_mut};
+    let (service, path) = (c"org.freedesktop.Notifications", c"/org/freedesktop/Notifications");
+    // A server that reads the body as markup would take a `<` or `&` in Claude's answer for a tag.
+    let markup = bus_call(service, path, c"GetCapabilities", null_mut, |caps| unsafe { lists(caps, c"body-markup") })?;
+    let body = if markup { body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;") } else { body.into() };
+    let (title, body) = (cstring(title), cstring(&body));
+    // Notify(app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout); a null array is empty.
+    bus_call(service, path, c"Notify", || unsafe {
+        let none = null::<u8>();
+        g_variant_new(c"(susssasa{sv}i)".as_ptr(), c"nook".as_ptr(), 0u32, c"".as_ptr(), title.as_ptr(), body.as_ptr(), none, none, -1i32)
+    }, drop)
 }

@@ -1,15 +1,29 @@
-//! The file actions shell.rs gives Windows, on Linux: opening with the desktop's default app, the
-//! freedesktop trash through `gio`, renames that never overwrite, and a cut, copy, and paste of files
-//! within nook. Desktops share no one file clipboard the way Explorer's apps do, so nook keeps its own.
+//! The file actions shell.rs gives Windows, on Linux, through GIO and the desktop's D-Bus services: opening with the
+//! desktop's default app, showing a file in the file manager, the freedesktop trash, renames that never overwrite,
+//! and a cut, copy, and paste of files within nook. Desktops share no one file clipboard the way Explorer's apps do,
+//! so nook keeps its own.
 
 use std::{
+    ffi::{c_char, c_int, c_uint, CStr, CString},
     fs, io,
+    os::unix::{ffi::OsStrExt, fs::OpenOptionsExt, fs::PermissionsExt},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    ptr::{null, null_mut},
     sync::Mutex,
 };
 
 use crate::err;
+use crate::host::gtk::{
+    bus_call, error_text, g_app_info_launch_default_for_uri, g_file_new_for_path, g_file_trash, g_filename_to_uri, g_free,
+    g_object_unref, g_variant_new,
+};
+
+extern "C" {
+    fn renameat2(from_dir: c_int, from: *const c_char, to_dir: c_int, to: *const c_char, flags: c_uint) -> c_int;
+}
+const AT_FDCWD: c_int = -100;
+const RENAME_NOREPLACE: c_uint = 1;
+const EINVAL: i32 = 22;
 
 /// The files Cut or Copy put on nook's clipboard, and whether they were cut.
 static CLIPBOARD: Mutex<Option<(Vec<String>, bool)>> = Mutex::new(None);
@@ -18,46 +32,106 @@ fn in_dir(path: &str, dir: &str) -> bool {
     Path::new(path).parent().is_some_and(|p| p == Path::new(dir))
 }
 
-/// Starts `program` on `args` without waiting for it, and with nothing of nook's on its stdio.
-fn launch(program: &str, args: &[&str]) -> Result<(), String> {
-    Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(drop)
-        .map_err(|e| format!("can't run {program}: {e}"))
+/// `path` as a URI: file:// for an absolute path, and a URL as it is.
+fn uri(path: &str) -> Option<CString> {
+    let path = CString::new(path).ok()?;
+    if !path.as_bytes().starts_with(b"/") {
+        return Some(path);
+    }
+    unsafe {
+        let uri = g_filename_to_uri(path.as_ptr(), null(), null_mut());
+        if uri.is_null() {
+            return None;
+        }
+        let owned = CStr::from_ptr(uri).to_owned();
+        g_free(uri.cast());
+        Some(owned)
+    }
 }
 
-/// Opens a path or URL with the desktop's default app. Linux has no shared Open with dialog or
-/// Properties sheet, so the file browser offers neither, and any other verb opens too.
+/// Opens `uri` with the desktop's default app for it.
+fn launch(uri: &CStr) {
+    unsafe { g_app_info_launch_default_for_uri(uri.as_ptr(), null_mut(), null_mut()) };
+}
+
+/// Has the file manager show `uri` through its freedesktop interface: `ShowFolders` opens a folder, and `ShowItems`
+/// selects an item in its folder. Err where no file manager answers there.
+fn show(method: &CStr, uri: &CStr) -> Result<(), String> {
+    let items = [uri.as_ptr(), null()];
+    bus_call(c"org.freedesktop.FileManager1", c"/org/freedesktop/FileManager1", method, || unsafe {
+        g_variant_new(c"(^ass)".as_ptr(), items.as_ptr(), c"".as_ptr())
+    }, drop)
+}
+
+/// Opens a path or URL with the desktop's default app, and a folder in the file manager, as the menus say, where the
+/// default app for folders is often an editor. Linux has no shared Open with dialog or Properties sheet, so the file
+/// browser offers neither, and any other verb opens too. It waits on the disk and D-Bus, so it runs on its own thread.
 pub fn open_path(path: String, verb: Option<String>) {
     let _ = verb;
-    let _ = launch("xdg-open", &[&path]);
+    std::thread::spawn(move || {
+        let Some(uri) = uri(&path) else { return };
+        let folder = path.starts_with('/') && Path::new(&path).is_dir();
+        if !(folder && show(c"ShowFolders", &uri).is_ok()) {
+            launch(&uri);
+        }
+    });
 }
 
-/// Shows the folder that holds `path` in the file manager.
+/// Shows `path` selected in its folder, or where no file manager answers, opens the folder. On a thread of its own, as
+/// open_path is.
 pub fn reveal(path: String) {
-    let dir = Path::new(&path).parent().unwrap_or(Path::new("/"));
-    let _ = launch("xdg-open", &[&dir.to_string_lossy()]);
+    std::thread::spawn(move || {
+        let Some(file) = uri(&path) else { return };
+        if show(c"ShowItems", &file).is_err() {
+            let dir = Path::new(&path).parent().unwrap_or(Path::new("/"));
+            if let Some(dir) = uri(&dir.to_string_lossy()) {
+                launch(&dir);
+            }
+        }
+    });
 }
 
-/// Moves a file or folder to the trash, where the file manager can restore it. Never deletes outright:
-/// without `gio`, it fails and says so.
+/// Moves a file or folder to the trash, where the file manager can restore it. Never deletes outright: where there's
+/// no trash, as on a system mount, it fails and says so.
 pub fn recycle(path: String) -> Result<bool, String> {
-    let mut cmd = Command::new("gio");
-    cmd.args(["trash", "--"]).arg(&path);
-    crate::run(&mut cmd, None).map(|_| true).map_err(|e| format!("nook can't move it to the trash: {e}"))
+    let path = CString::new(path).map_err(err)?;
+    unsafe {
+        let file = g_file_new_for_path(path.as_ptr());
+        let mut error = null_mut();
+        let trashed = g_file_trash(file, null_mut(), &mut error) != 0;
+        g_object_unref(file);
+        if trashed {
+            Ok(true)
+        } else {
+            Err(format!("nook can't move it to the trash: {}", error_text(error)))
+        }
+    }
+}
+
+/// Renames `from` to `to` unless `to` is taken: the kernel checks as it renames, or on a file system that can't
+/// (EINVAL, which glibc also says for a kernel without renameat2), nook checks first.
+fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    let c = |p: &Path| CString::new(p.as_os_str().as_bytes()).map_err(io::Error::from);
+    let (a, b) = (c(from)?, c(to)?);
+    if unsafe { renameat2(AT_FDCWD, a.as_ptr(), AT_FDCWD, b.as_ptr(), RENAME_NOREPLACE) } == 0 {
+        return Ok(());
+    }
+    match io::Error::last_os_error() {
+        e if e.raw_os_error() != Some(EINVAL) => Err(e),
+        _ if fs::symlink_metadata(to).is_ok() => Err(io::ErrorKind::AlreadyExists.into()),
+        _ => fs::rename(from, to),
+    }
 }
 
 /// Renames a file or folder. A name that's taken fails instead of replacing what has it.
 pub fn rename_path(from: String, to: String) -> Result<bool, String> {
-    if fs::symlink_metadata(&to).is_ok() {
-        let name = Path::new(&to).file_name().unwrap_or_default().to_string_lossy();
-        return Err(format!("“{name}” is already there"));
+    match rename_new(Path::new(&from), Path::new(&to)) {
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            let name = Path::new(&to).file_name().unwrap_or_default().to_string_lossy();
+            Err(format!("“{name}” is already there"))
+        }
+        renamed => renamed.map(|()| true).map_err(err),
     }
-    fs::rename(&from, &to).map(|()| true).map_err(err)
 }
 
 /// Puts files on nook's clipboard, as Copy does, or as Cut, whose paste moves them.
@@ -93,7 +167,8 @@ fn free_name(dir: &Path, name: &str) -> PathBuf {
         .unwrap()
 }
 
-/// Copies a file, a link, or a folder and everything in it.
+/// Copies a file, a link, or a folder and everything in it. Each is made new, so where something was made at `to` since
+/// nook found the name free, the copy fails instead of replacing it.
 fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(from)?;
     if meta.file_type().is_symlink() {
@@ -105,14 +180,22 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
             copy_tree(&entry.path(), &to.join(entry.file_name()))?;
         }
         fs::set_permissions(to, meta.permissions())
+    } else if meta.is_file() {
+        // fs::copy would truncate a file found there. The mode is set again past the umask, as fs::copy sets it.
+        let mut source = fs::File::open(from)?;
+        let mut copy = fs::OpenOptions::new().write(true).create_new(true).mode(meta.permissions().mode()).open(to)?;
+        io::copy(&mut source, &mut copy)?;
+        copy.set_permissions(meta.permissions())
     } else {
-        fs::copy(from, to).map(drop)
+        // A pipe would wait for a writer, and a device could read forever.
+        Err(io::Error::new(io::ErrorKind::InvalidInput, "nook copies only files, folders, and links"))
     }
 }
 
-/// Moves `from` to `to`: a rename, or across file systems, a copy and then a delete of the original.
+/// Moves `from` to a free name `to`: a rename, which fails rather than replace a file made there since, or across file
+/// systems, a copy and then a delete of the original.
 fn move_path(from: &Path, to: &Path) -> io::Result<()> {
-    match fs::rename(from, to) {
+    match rename_new(from, to) {
         Err(e) if e.raw_os_error() == Some(18) => {
             // EXDEV: another file system
             copy_tree(from, to)?;
