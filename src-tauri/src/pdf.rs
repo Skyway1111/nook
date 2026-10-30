@@ -1,5 +1,5 @@
 //! A PDF's first page as a PNG, for its picture in Claude's transcript. The OS draws it: Windows.Data.Pdf on a
-//! software Direct3D device, encoded by WIC, or on Linux poppler-glib and cairo, loaded with `dlopen`, so a
+//! software Direct3D device, encoded by WIC, or on Linux poppler-glib, loaded with `dlopen`, and cairo, so a
 //! system without poppler draws nothing. Neither runs the file's scripts. Both draw its annotations and form
 //! fields, as a viewer does.
 use crate::host::Bytes;
@@ -205,6 +205,7 @@ mod os {
 
 #[cfg(not(windows))]
 mod os {
+    use crate::host::gtk::{g_filename_to_uri, g_free, g_object_unref};
     use std::{
         ffi::{c_char, c_int, c_uint, c_void, CStr, CString},
         ptr::{null, null_mut},
@@ -212,29 +213,31 @@ mod os {
     };
 
     type P = *mut c_void;
+    type Write = unsafe extern "C" fn(P, *const u8, c_uint) -> c_int;
 
     extern "C" {
         fn dlopen(file: *const c_char, mode: c_int) -> P;
         fn dlsym(lib: P, name: *const c_char) -> P;
     }
 
-    /// What this uses of poppler-glib, and of glib, gobject, and cairo, found through its dependencies.
+    #[link(name = "cairo")]
+    extern "C" {
+        fn cairo_image_surface_create(format: c_int, width: c_int, height: c_int) -> P;
+        fn cairo_create(surface: P) -> P;
+        fn cairo_set_source_rgb(cr: P, r: f64, g: f64, b: f64);
+        fn cairo_paint(cr: P);
+        fn cairo_scale(cr: P, x: f64, y: f64);
+        fn cairo_destroy(cr: P);
+        fn cairo_surface_write_to_png_stream(surface: P, write: Write, closure: P) -> c_int;
+        fn cairo_surface_destroy(surface: P);
+    }
+
+    /// What this uses of poppler-glib.
     struct Fns {
-        filename_to_uri: unsafe extern "C" fn(*const c_char, *const c_char, P) -> *mut c_char,
-        free: unsafe extern "C" fn(P),
-        object_unref: unsafe extern "C" fn(P),
         new_from_file: unsafe extern "C" fn(*const c_char, *const c_char, P) -> P,
         get_page: unsafe extern "C" fn(P, c_int) -> P,
         get_size: unsafe extern "C" fn(P, *mut f64, *mut f64),
         page_render: unsafe extern "C" fn(P, P),
-        image_surface_create: unsafe extern "C" fn(c_int, c_int, c_int) -> P,
-        create: unsafe extern "C" fn(P) -> P,
-        set_source_rgb: unsafe extern "C" fn(P, f64, f64, f64),
-        paint: unsafe extern "C" fn(P),
-        scale: unsafe extern "C" fn(P, f64, f64),
-        destroy: unsafe extern "C" fn(P),
-        write_to_png_stream: unsafe extern "C" fn(P, unsafe extern "C" fn(P, *const u8, c_uint) -> c_int, P) -> c_int,
-        surface_destroy: unsafe extern "C" fn(P),
     }
 
     /// Locked for a whole render: every poppler document draws its fonts through one FreeType library, which
@@ -253,21 +256,10 @@ mod os {
                 return None;
             }
             Some(Mutex::new(Fns {
-                filename_to_uri: sym(lib, c"g_filename_to_uri")?,
-                free: sym(lib, c"g_free")?,
-                object_unref: sym(lib, c"g_object_unref")?,
                 new_from_file: sym(lib, c"poppler_document_new_from_file")?,
                 get_page: sym(lib, c"poppler_document_get_page")?,
                 get_size: sym(lib, c"poppler_page_get_size")?,
                 page_render: sym(lib, c"poppler_page_render")?,
-                image_surface_create: sym(lib, c"cairo_image_surface_create")?,
-                create: sym(lib, c"cairo_create")?,
-                set_source_rgb: sym(lib, c"cairo_set_source_rgb")?,
-                paint: sym(lib, c"cairo_paint")?,
-                scale: sym(lib, c"cairo_scale")?,
-                destroy: sym(lib, c"cairo_destroy")?,
-                write_to_png_stream: sym(lib, c"cairo_surface_write_to_png_stream")?,
-                surface_destroy: sym(lib, c"cairo_surface_destroy")?,
             }))
         }
     }
@@ -283,12 +275,12 @@ mod os {
         let path = CString::new(path).map_err(|e| e.to_string())?;
         let mut png = Vec::new();
         unsafe {
-            let uri = (f.filename_to_uri)(path.as_ptr(), null(), null_mut());
+            let uri = g_filename_to_uri(path.as_ptr(), null(), null_mut());
             if uri.is_null() {
                 return Err("not an absolute path".into());
             }
             let doc = (f.new_from_file)(uri, null(), null_mut());
-            (f.free)(uri.cast());
+            g_free(uri.cast());
             if doc.is_null() {
                 return Err("poppler can't open the PDF".into());
             }
@@ -297,20 +289,20 @@ mod os {
                 let (mut w, mut h) = (0., 0.);
                 (f.get_size)(page, &mut w, &mut h); // rotation applied
                 let (pw, ph) = fit(w, h);
-                let surface = (f.image_surface_create)(1, pw as c_int, ph as c_int); // CAIRO_FORMAT_RGB24
-                let cr = (f.create)(surface);
-                (f.set_source_rgb)(cr, 1., 1., 1.);
-                (f.paint)(cr);
-                (f.scale)(cr, pw as f64 / w, ph as f64 / h);
+                let surface = cairo_image_surface_create(1, pw as c_int, ph as c_int); // CAIRO_FORMAT_RGB24
+                let cr = cairo_create(surface);
+                cairo_set_source_rgb(cr, 1., 1., 1.);
+                cairo_paint(cr);
+                cairo_scale(cr, pw as f64 / w, ph as f64 / h);
                 (f.page_render)(page, cr);
-                (f.destroy)(cr);
-                if (f.write_to_png_stream)(surface, append, (&mut png as *mut Vec<u8>).cast()) != 0 {
+                cairo_destroy(cr);
+                if cairo_surface_write_to_png_stream(surface, append, (&mut png as *mut Vec<u8>).cast()) != 0 {
                     png.clear();
                 }
-                (f.surface_destroy)(surface);
-                (f.object_unref)(page);
+                cairo_surface_destroy(surface);
+                g_object_unref(page);
             }
-            (f.object_unref)(doc);
+            g_object_unref(doc);
         }
         if png.is_empty() { Err("poppler can't draw the PDF".into()) } else { Ok(png) }
     }

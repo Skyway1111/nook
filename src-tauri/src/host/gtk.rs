@@ -136,7 +136,7 @@ extern "C" {
     fn g_object_new(kind: usize, first: *const c_char, ...) -> Ptr;
     fn g_object_set(obj: Ptr, first: *const c_char, ...);
     fn g_object_ref(obj: Ptr) -> Ptr;
-    fn g_object_unref(obj: Ptr);
+    pub(crate) fn g_object_unref(obj: Ptr);
     fn g_signal_connect_data(obj: Ptr, signal: *const c_char, f: Callback, data: Ptr, notify: Ptr, flags: c_int)
         -> u64;
     fn g_type_name_from_instance(instance: Ptr) -> *const c_char;
@@ -146,9 +146,10 @@ extern "C" {
 extern "C" {
     fn g_idle_add_full(priority: c_int, f: SourceFn, data: Ptr, notify: Notify) -> c_uint;
     fn g_timeout_add(ms: c_uint, f: SourceFn, data: Ptr) -> c_uint;
-    fn g_free(p: Ptr);
+    pub(crate) fn g_free(p: Ptr);
     fn g_strfreev(v: *mut *mut c_char);
     fn g_filename_from_uri(uri: *const c_char, host: *mut *mut c_char, error: *mut Ptr) -> *mut c_char;
+    pub(crate) fn g_filename_to_uri(path: *const c_char, host: *const c_char, error: *mut Ptr) -> *mut c_char;
     fn g_bytes_new_with_free_func(data: *const u8, size: usize, free: Notify, user: Ptr) -> Ptr;
     fn g_bytes_unref(b: Ptr);
     fn g_variant_new(format: *const c_char, ...) -> Ptr;

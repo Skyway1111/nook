@@ -8,7 +8,7 @@ pub mod ipc;
 mod mime;
 
 #[cfg(target_os = "linux")]
-mod gtk;
+pub(crate) mod gtk;
 #[cfg(target_os = "linux")]
 use gtk as plat;
 #[cfg(windows)]
