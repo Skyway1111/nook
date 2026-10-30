@@ -127,8 +127,8 @@ export function summary(marks) {
 
 /** Polls the reports of the tabs `tabs()` lists that have a session (`tab.terminal.id`): those `visible(tab)` every
  * 500 ms, so a composer's menus follow a pick, and the rest each second. `onChange(tab, view, report)` hears each tab
- * whose view or report changed. Costs one IPC call each 500 ms while any Claude tab is open, and nothing else while
- * their reports stay the same. */
+ * whose view or report changed. Costs one IPC call each 500 ms while a Claude tab shows, each second while they're all
+ * hidden, and nothing else while their reports stay the same. */
 export function watchSessions({ invoke, tabs, visible, watched, onChange }) {
   const seen = new WeakMap() // tab -> { view, text }
   let ticks = 0
