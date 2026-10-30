@@ -7,6 +7,7 @@ mod git;
 mod history;
 mod ide;
 mod index;
+mod json;
 mod notify;
 mod pdf;
 #[cfg_attr(not(windows), path = "priority_unix.rs")]
@@ -15,14 +16,16 @@ mod pty;
 mod replace;
 mod defs;
 mod search;
+mod settings;
 #[cfg_attr(not(windows), path = "shell_unix.rs")]
 mod shell;
 #[cfg(windows)]
 mod sys;
 mod theme;
 
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use json::obj;
+use serde::Serialize;
+use settings::Settings;
 use std::{
     fs,
     io::Write,
@@ -32,6 +35,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{
+    ipc::Response,
     webview::{PageLoadEvent, PermissionKind, PermissionResponse},
     AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
@@ -70,103 +74,6 @@ pub fn run(cmd: &mut Command, input: Option<&str>) -> Result<String, String> {
     Err(String::from_utf8_lossy(said).trim().to_string())
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct Settings {
-    /// What each Claude tab runs in its terminal.
-    command: Vec<String>,
-    /// Off: the UI renders on the CPU, so a saturated GPU can't delay typing.
-    gpu: bool,
-    pinned: Vec<String>,
-    last_dir: String,
-    /// The file browser's and git panel's dragged widths. None: the theme's `--sidebar-width`.
-    files_width: Option<u32>,
-    git_width: Option<u32>,
-    /// The installed theme in use, a folder in `themes`. None: nook's defaults.
-    theme: Option<String>,
-    /// Whether picking a theme also sets Claude's own theme to nook's.
-    claude_follows: bool,
-    /// Claude's theme before nook set it, for when Claude stops following.
-    claude_theme: Option<String>,
-    /// Whether the theme follows the system's light and dark: `day_theme` while it's light, `night_theme`
-    /// while it's dark. Each is a folder in `themes`, "" for nook's defaults, or None until one is picked.
-    light_dark: bool,
-    day_theme: Option<String>,
-    night_theme: Option<String>,
-    /// Quick prompts, which Ctrl+Shift+P pastes into Claude's prompt. `{file}` is the file open last,
-    /// `{folder}` the file browser's folder.
-    prompts: Vec<Prompt>,
-    /// Whether nook reopens the Claude sessions that were open when it closed.
-    reopen_sessions: bool,
-    /// Whether a Claude session that needs the user or finishes while nook's window is in the background
-    /// shows a desktop notification.
-    notifications: bool,
-    /// The Claude sessions open now, in tab order, for the next start to resume.
-    sessions: Vec<OpenSession>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct OpenSession {
-    /// Where the tab started Claude.
-    dir: String,
-    /// Claude Code's session id, for `claude --resume`.
-    id: String,
-    /// Its first prompt, for the tab's tooltip until it starts.
-    #[serde(default)]
-    prompt: String,
-    /// Whether its tab was the one showing.
-    #[serde(default)]
-    active: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-struct Prompt {
-    name: String,
-    text: String,
-}
-
-/// The quick prompts nook starts with.
-const PROMPTS: [(&str, &str); 6] = [
-    ("Review my changes", "Review my uncommitted changes for bugs, and for anything I'd regret shipping."),
-    ("Explain this file", "Explain {file}: what it does, how it fits in, and anything surprising."),
-    ("Write tests", "Write tests for {file} that cover its edge cases, then run them."),
-    ("Fix the failing tests", "Run the tests, find why the failing ones fail, and fix the cause rather than the test."),
-    ("Plan first", "Before changing anything, write a short plan and wait for my go-ahead: "),
-    ("Commit", "Commit the staged changes with a message that says why, not just what."),
-];
-
-impl Default for Settings {
-    fn default() -> Self {
-        let home = home_dir();
-        let under = |d: &str| Path::new(&home).join(d).to_string_lossy().into_owned();
-        Self {
-            command: DEFAULT_COMMAND.map(String::from).into(),
-            gpu: false,
-            pinned: vec![under("Desktop"), under("Downloads"), under("Documents"), home.clone()],
-            last_dir: home,
-            files_width: None,
-            git_width: None,
-            theme: None,
-            claude_follows: true,
-            claude_theme: None,
-            light_dark: false,
-            day_theme: None,
-            night_theme: None,
-            reopen_sessions: true,
-            notifications: true,
-            sessions: Vec::new(),
-            prompts: PROMPTS.iter().map(|(name, text)| Prompt { name: name.to_string(), text: text.to_string() }).collect(),
-        }
-    }
-}
-
-/// What a Claude tab runs until settings.json says otherwise: Claude, then the shell it ran in.
-#[cfg(windows)]
-const DEFAULT_COMMAND: [&str; 5] = ["powershell", "-NoLogo", "-NoExit", "-Command", "claude"];
-#[cfg(not(windows))]
-const DEFAULT_COMMAND: [&str; 3] = ["bash", "-lc", "claude; exec bash -l"];
-
 const HOME_VAR: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
 
 fn home_dir() -> String {
@@ -179,30 +86,14 @@ fn config_dir(app: &AppHandle) -> PathBuf {
 
 fn read_settings(app: &AppHandle) -> Result<Settings, String> {
     match fs::read_to_string(config_dir(app).join("settings.json")) {
-        Ok(s) => serde_json::from_str(&s).map_err(|e| format!("settings.json: {e}")),
+        Ok(s) => Settings::parse(&s).map_err(|e| format!("settings.json: {e}")),
         Err(_) => Ok(Settings::default()),
     }
 }
 
-/// `settings` with `patch`'s keys replaced. Fails on a value of the wrong type.
-fn merge(settings: Settings, patch: Map<String, Value>) -> Result<Settings, String> {
-    let mut json = serde_json::to_value(settings).map_err(err)?;
-    json.as_object_mut().expect("settings serialize to an object").extend(patch);
-    serde_json::from_value(json).map_err(err)
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Boot {
-    settings: Settings,
-    error: Option<String>,
-    config_dir: PathBuf,
-    home: String,
-}
-
 /// A (re)loaded page starts with no tabs, so sessions from before a reload end here.
 #[tauri::command(async)]
-fn boot(app: AppHandle) -> Boot {
+fn boot(app: AppHandle) -> Response {
     app.state::<pty::Sessions>().close_all();
     let (mut settings, error) = match read_settings(&app) {
         Ok(s) => (s, None),
@@ -210,27 +101,34 @@ fn boot(app: AppHandle) -> Boot {
     };
     settings.sessions.retain(|s| Path::new(&s.dir).is_dir()); // a folder since moved or deleted reopens nothing
     let home = std::env::var(HOME_VAR).unwrap_or_default();
-    Boot { settings, error, config_dir: config_dir(&app), home }
+    Response::new(json::to_string(&obj! { "settings": settings, "error": error, "configDir": config_dir(&app), "home": home }))
 }
 
 /// settings.json as it is now, for the settings drawer.
 #[tauri::command(async)]
-fn settings(app: AppHandle) -> Result<Settings, String> {
-    read_settings(&app)
+fn settings(app: AppHandle) -> Result<Response, String> {
+    read_settings(&app).map(|s| Response::new(json::to_string(&s)))
 }
 
 /// Held across each read-check-write of a file, so two commands on workers can't interleave one.
 static WRITING: Mutex<()> = Mutex::new(());
 
-/// Sets `patch`'s keys in settings.json. Read-modify-write, so windows never clobber each other's
-/// changes. Fails rather than overwrite a file that was hand-edited into invalid JSON.
+/// Sets `patch`'s keys in settings.json. Fails on a value of the wrong type.
 #[tauri::command(async)]
-fn update_settings(app: AppHandle, patch: Map<String, Value>) -> Result<(), String> {
+fn update_settings(app: AppHandle, patch: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let patch = serde_json::Value::Object(patch).to_string(); // the IPC hands over serde's map
+    edit_settings(&app, |s| s.merge(&patch))
+}
+
+/// Rewrites settings.json with `edit` made. Read-modify-write, so windows never clobber each other's
+/// changes. Fails rather than overwrite a file that was hand-edited into invalid JSON.
+pub fn edit_settings(app: &AppHandle, edit: impl FnOnce(&mut Settings) -> Result<(), String>) -> Result<(), String> {
     let _writing = WRITING.lock().unwrap();
-    let settings = merge(read_settings(&app)?, patch)?;
-    let dir = config_dir(&app);
+    let mut settings = read_settings(app)?;
+    edit(&mut settings)?;
+    let dir = config_dir(app);
     fs::create_dir_all(&dir).map_err(err)?;
-    fs::write(dir.join("settings.json"), serde_json::to_string_pretty(&settings).map_err(err)?).map_err(err)
+    fs::write(dir.join("settings.json"), json::pretty(&settings)).map_err(err)
 }
 
 #[derive(Serialize)]
@@ -409,8 +307,7 @@ fn render_on_the_cpu_unless_gpu() {
         .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".config")));
     let gpu = config
         .and_then(|dir| fs::read_to_string(dir.join("dev.nook.app").join("settings.json")).ok())
-        .and_then(|text| serde_json::from_str::<Settings>(&text).ok())
-        .is_some_and(|s| s.gpu);
+        .is_some_and(|text| Settings::parse(&text).is_ok_and(|s| s.gpu));
     if gpu {
         return;
     }
@@ -479,7 +376,7 @@ fn main() {
                 .additional_browser_args(&format!("{WRY_ARGS}{gpu}"))
                 .initialization_script(format!(
                     "window.NOOK_CWD = {}; window.NOOK_REOPEN = {}; window.NOOK_BENCH = {};",
-                    serde_json::to_string(&start)?,
+                    json::to_string(&start),
                     reopen,
                     bench
                 ))
@@ -569,26 +466,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{dir_arg, merge, peek_lines, read_text, write_text, Settings};
-    use serde_json::json;
+    use super::{dir_arg, peek_lines, read_text, write_text};
     use std::fs;
-
-    #[test]
-    fn merges_a_patch_and_refuses_a_wrong_type() {
-        let patch = |v: serde_json::Value| v.as_object().unwrap().clone();
-        let s = merge(Settings::default(), patch(json!({ "gpu": true, "gitWidth": 300 }))).unwrap();
-        assert!(s.gpu);
-        assert_eq!((s.git_width, s.files_width), (Some(300), None));
-        assert!(merge(Settings::default(), patch(json!({ "command": "claude" }))).is_err());
-    }
-
-    #[test]
-    fn keeps_the_open_sessions() {
-        let patch = json!({ "sessions": [{ "dir": "/work", "id": "abc", "active": true }] });
-        let s = merge(Settings::default(), patch.as_object().unwrap().clone()).unwrap();
-        assert_eq!(s.sessions, [super::OpenSession { dir: "/work".into(), id: "abc".into(), prompt: String::new(), active: true }]);
-        assert!(s.reopen_sessions && s.notifications);
-    }
 
     #[test]
     fn opens_a_folder_explorer_passes() {

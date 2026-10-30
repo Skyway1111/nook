@@ -1,8 +1,7 @@
 //! Claude Code's saved sessions for a folder, which the new-session menu offers to resume. Claude keeps each
 //! session as a JSON-lines transcript in `~/.claude/projects/<slug>/<id>.jsonl`; nook reads only a file's
 //! start, for its first prompt, and its end, for a title the session was given.
-use serde::Serialize;
-use serde_json::Value;
+use crate::json::{self, obj, Out, J, W};
 use std::{
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
@@ -15,13 +14,19 @@ const TAIL: u64 = 64 << 10; // where its newest title is
 const MOST: usize = 40; // the most sessions the menu lists
 const PROMPT_CHARS: usize = 160;
 
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Saved {
     id: String,
     /// When the session last changed, in ms since the epoch.
     modified: u64,
     prompt: String,
     title: Option<String>,
+}
+
+impl W for Saved {
+    fn w(&self, o: &mut Out) {
+        obj! { "id": self.id, "modified": self.modified, "prompt": self.prompt, "title": self.title }.w(o);
+    }
 }
 
 /// Claude Code's folder for its own data: `CLAUDE_CONFIG_DIR`, or `.claude` in the home folder.
@@ -40,15 +45,15 @@ fn slug(dir: &str) -> String {
 
 /// The text of a transcript line that is a prompt the user typed, if it is one.
 fn prompt(line: &str) -> Option<String> {
-    let v: Value = serde_json::from_str(line).ok()?;
-    if v["type"] != "user" || v["isMeta"] == true || v["isSidechain"] == true {
+    let [kind, meta, sidechain] = json::fields(line, ["type", "isMeta", "isSidechain"]).ok()?;
+    if kind != "user" || meta == true || sidechain == true {
         return None;
     }
-    let content = &v["message"]["content"];
+    let [message] = json::fields(line, ["message"]).ok()?;
+    let content = &message["content"];
     let text = match content {
-        Value::String(s) => s.clone(),
-        Value::Array(parts) => parts.iter().find(|p| p["type"] == "text")?["text"].as_str()?.to_string(),
-        _ => return None,
+        J::Arr(parts) => parts.iter().find(|p| p["type"] == "text")?["text"].as_str()?,
+        _ => content.as_str()?,
     };
     let text = text.trim();
     // Claude writes slash commands, their output, and interruptions as tagged rows in the user's name.
@@ -62,10 +67,10 @@ fn prompt(line: &str) -> Option<String> {
 /// The newest title in a transcript's last lines: one set with /rename, or Claude's own summary.
 fn title(tail: &str) -> Option<String> {
     tail.lines().rev().find_map(|line| {
-        let v: Value = serde_json::from_str(line).ok()?;
-        match v["type"].as_str()? {
-            "custom-title" => v["customTitle"].as_str().map(str::to_string),
-            "summary" => v["summary"].as_str().map(str::to_string),
+        let [kind, custom, summary] = json::fields(line, ["type", "customTitle", "summary"]).ok()?;
+        match kind.as_str()? {
+            "custom-title" => custom.as_str().map(str::to_string),
+            "summary" => summary.as_str().map(str::to_string),
             _ => None,
         }
     })
@@ -76,7 +81,7 @@ fn read_range(file: &mut File, from: u64, len: u64) -> String {
     if file.seek(SeekFrom::Start(from)).is_ok() {
         let _ = file.take(len).read_to_end(&mut buf);
     }
-    String::from_utf8_lossy(&buf).into_owned()
+    String::from_utf8(buf).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 fn saved(path: &Path, modified: u64) -> Option<Saved> {
@@ -90,8 +95,12 @@ fn saved(path: &Path, modified: u64) -> Option<Saved> {
 
 /// The sessions Claude Code saved for `dir`, newest first.
 #[tauri::command(async)]
-pub fn claude_sessions(dir: String) -> Vec<Saved> {
-    let Ok(entries) = fs::read_dir(claude_dir().join("projects").join(slug(&dir))) else { return Vec::new() };
+pub fn claude_sessions(dir: String) -> tauri::ipc::Response {
+    tauri::ipc::Response::new(json::to_string(&sessions(&dir)))
+}
+
+fn sessions(dir: &str) -> Vec<Saved> {
+    let Ok(entries) = fs::read_dir(claude_dir().join("projects").join(slug(dir))) else { return Vec::new() };
     let mut files: Vec<(PathBuf, u64)> = entries
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
@@ -100,7 +109,7 @@ pub fn claude_sessions(dir: String) -> Vec<Saved> {
             Some((e.path(), at))
         })
         .collect();
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|f| std::cmp::Reverse(f.1));
     files.iter().filter_map(|(path, at)| saved(path, *at)).take(MOST).collect()
 }
 
@@ -151,7 +160,7 @@ mod tests {
         fs::write(dir.join("new.jsonl"), user("second")).unwrap();
         fs::write(dir.join("empty.jsonl"), r#"{"type":"summary","summary":"x"}"#).unwrap();
         std::env::set_var("CLAUDE_CONFIG_DIR", &root);
-        let ids: Vec<String> = claude_sessions("/work/app".into()).into_iter().map(|s| s.id).collect();
+        let ids: Vec<String> = sessions("/work/app").into_iter().map(|s| s.id).collect();
         std::env::remove_var("CLAUDE_CONFIG_DIR");
         fs::remove_dir_all(&root).unwrap();
         assert_eq!(ids, ["new", "old"]);
