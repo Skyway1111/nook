@@ -433,6 +433,10 @@ impl State {
                 if let Some(i) = self.procs.iter().position(|p| p.id == d.process) {
                     unsafe { CloseHandle(self.procs.remove(i).handle) };
                 }
+                // A line being read goes with its read, so the next program's read starts its own where it is.
+                if self.waits.iter().any(|w| w.process == d.process && matches!(w.kind, WaitKind::Read { .. })) {
+                    self.cooked = None;
+                }
                 self.waits.retain(|w| w.process != d.process);
                 Reply::new(&d)
             }
