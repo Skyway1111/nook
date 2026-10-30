@@ -90,8 +90,8 @@ mod os {
         if hr < 0 { Err(hr) } else { Ok(()) }
     }
 
-    /// An interface pointer this code owns, released on drop. Each method names its vtable slot, as
-    /// windows-0.62.2's bindings order them: IUnknown's three, then IInspectable's three, from 0.
+    /// An interface pointer this code owns, released on drop. Calls name their vtable slot as windows-0.62.2's
+    /// bindings number them: IUnknown's three from 0, then IInspectable's three for a WinRT interface.
     struct Com(P);
 
     impl Com {
