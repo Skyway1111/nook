@@ -116,8 +116,14 @@ function tokenize(js, file) {
   return out
 }
 
-/** Tokens back to JS without comments or indentation. Every line break between two lines of code stays, for ASI;
- * a space stays only where the tokens on either side would run together. A token of type x is left out. */
+// A line break stays only where ASI could need it: not after punctuation that leaves the expression open, nor before
+// punctuation that continues it, unless a return or the like ends the line before.
+const OPEN = new Set('{([,;:?=<>+-*/%&|^!~.')
+const GOES_ON = new Set('})],.?:=<>+-*%&|^')
+const RESTRICTED = new Set(['return', 'throw', 'break', 'continue', 'yield', 'async'])
+
+/** Tokens back to JS without comments, indentation, or the spaces and line breaks nothing needs. A token of type x is
+ * left out. */
 function squeeze(tokens) {
   let out = ''
   let last = null
@@ -130,8 +136,8 @@ function squeeze(tokens) {
     if (type === 'n' || (type === 'c' && /[\n\r\u2028\u2029]/.test(text))) { line = true; continue }
     if (type === 'c') { gap = true; continue }
     if (!text) continue
-    if (last && line) out += '\n'
-    else if (last && gap) {
+    if (line && last && !(last[0] === 'p' && OPEN.has(last[1])) && !(type === 'p' && GOES_ON.has(text) && !RESTRICTED.has(last[1]))) out += '\n'
+    else if ((gap || line) && last) {
       const a = last[1].at(-1)
       const b = text[0]
       if (((WORD.test(a) || last[0] === 'r') && WORD.test(b)) || ((a === '+' || a === '-') && a === b) ||
