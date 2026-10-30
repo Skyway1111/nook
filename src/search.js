@@ -191,8 +191,7 @@ export function startSearch(term, host, send) {
     }
     if (fullscreen() && step) return paged(!forward)
     search()
-    if (fullscreen()) return land(near({ line: Infinity, x: 0 }, true, true))
-    if (!current) return land(near({ line: Infinity, x: 0 }, true, true))
+    if (fullscreen() || !current) return land(near({ line: Infinity, x: 0 }, true, true))
     land(step ? near(current, !forward, false) : near(current, true, true))
   }
 
