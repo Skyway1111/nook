@@ -25,8 +25,8 @@ mod os;
 
 struct Session {
     pty: os::Pty,
-    /// Its own lock, so a write a busy console holds up blocks only its tab.
-    input: Arc<Mutex<File>>,
+    /// Written outside the map's lock, so a blocked write never holds up another tab's spawn or exit.
+    input: Arc<File>,
 }
 
 /// Dropping the pseudoconsole closes it, which ends every process attached to it, and can block meanwhile.
@@ -105,6 +105,7 @@ pub fn pty_spawn(
     on_data: Channel<InvokeResponseBody>,
 ) -> Result<u64, String> {
     let (program, args) = command.split_first().ok_or("settings.json: command is empty")?;
+    let console = os::open(cols, rows).map_err(err)?; // it starts up while the rest is built
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let nook_mod = app.path().resource_dir().map_err(err)?.join("mod");
     let inherited = std::env::var_os("CLAUDE_CODE_PLUGIN_DIRS").unwrap_or_default();
@@ -121,7 +122,7 @@ pub fn pty_spawn(
     if let Some(port) = crate::ide::open(&app, id) {
         vars.push(("CLAUDE_CODE_SSE_PORT", port.to_string().into())); // Claude connects to nook as its editor
     }
-    let (pty, input, mut output, exit) = os::spawn(program, args, &cwd, &vars, cols, rows).map_err(|e| {
+    let (pty, input, mut output, exit) = console.spawn(program, args, &cwd, &vars).map_err(|e| {
         forget(id);
         e.to_string()
     })?;
@@ -134,7 +135,7 @@ pub fn pty_spawn(
             let _ = on_data.send(InvokeResponseBody::Raw(buf[..n].to_vec()));
         }
     });
-    sessions.0.lock().unwrap().insert(id, Session { pty, input: Arc::new(Mutex::new(input)) });
+    sessions.0.lock().unwrap().insert(id, Session { pty, input: Arc::new(input) });
     // The shell exited: an empty chunk tells its tab to close.
     let handle = app.clone();
     thread::spawn(move || {
@@ -152,10 +153,8 @@ pub fn pty_spawn(
 
 #[tauri::command]
 pub fn pty_write(sessions: State<Sessions>, id: u64, data: String) -> Result<(), String> {
-    let input = sessions.0.lock().unwrap().get(&id).map(|s| s.input.clone());
-    let Some(input) = input else { return Ok(()) };
-    let result = input.lock().unwrap().write_all(data.as_bytes());
-    result.map_err(err)
+    let Some(input) = sessions.0.lock().unwrap().get(&id).map(|s| s.input.clone()) else { return Ok(()) };
+    (&*input).write_all(data.as_bytes()).map_err(err)
 }
 
 #[tauri::command]

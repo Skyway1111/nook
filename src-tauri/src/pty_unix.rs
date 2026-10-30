@@ -123,38 +123,51 @@ fn login_shell() -> OsString {
     "/bin/sh".into()
 }
 
-/// Starts `program` with `args` on a new pseudoterminal of `cols` by `rows`, as the leader of its own session: the
-/// terminal, its input, its output, and the process. The process gets nook's environment with `vars` over it.
-pub fn spawn(program: &str, args: &[String], cwd: &str, vars: &[(&str, OsString)], cols: u16, rows: u16) -> io::Result<(Pty, File, File, Exit)> {
+/// A pseudoterminal yet to run its process: both sides.
+pub struct Console {
+    master: File,
+    slave: File,
+}
+
+/// Opens a pseudoterminal of `cols` by `rows`.
+pub fn open(cols: u16, rows: u16) -> io::Result<Console> {
     let master = OpenOptions::new().read(true).write(true).custom_flags(O_NOCTTY).open("/dev/ptmx")?;
     let m = master.as_raw_fd();
     check(unsafe { ioctl(m, TIOCSPTLCK, &0 as *const c_int) })?;
     let slave = unsafe { File::from_raw_fd(check(ioctl(m, TIOCGPTPEER, O_RDWR | O_NOCTTY | O_CLOEXEC))?) };
     set_size(m, cols, rows)?;
+    Ok(Console { master, slave })
+}
 
-    let mut cmd = Command::new(program);
-    cmd.args(args).envs(vars.iter().map(|(k, v)| (k, v)));
-    if std::env::var_os("SHELL").is_none() {
-        cmd.env("SHELL", login_shell());
+impl Console {
+    /// Starts `program` with `args` on the terminal, as the leader of its own session: the terminal, its input,
+    /// its output, and the process. The process gets nook's environment with `vars` over it.
+    pub fn spawn(self, program: &str, args: &[String], cwd: &str, vars: &[(&str, OsString)]) -> io::Result<(Pty, File, File, Exit)> {
+        let Console { master, slave } = self;
+        let mut cmd = Command::new(program);
+        cmd.args(args).envs(vars.iter().map(|(k, v)| (k, v)));
+        if std::env::var_os("SHELL").is_none() {
+            cmd.env("SHELL", login_shell());
+        }
+        let home = std::env::var_os("HOME").unwrap_or_else(|| "/".into());
+        cmd.current_dir(if Path::new(cwd).is_dir() { OsStr::new(cwd) } else { &home });
+        cmd.stdin(slave.try_clone()?).stdout(slave.try_clone()?).stderr(slave);
+        // SAFETY: only async-signal-safe calls, between fork and exec. stdin is the terminal by now.
+        unsafe {
+            cmd.pre_exec(|| {
+                for s in RESET {
+                    signal(s, SIG_DFL);
+                }
+                check(setsid())?;
+                check(ioctl(0, TIOCSCTTY, 0 as c_ulong))?;
+                // nook's descriptors close at exec; std's own error pipe already does.
+                syscall(SYS_CLOSE_RANGE, 3 as c_ulong, c_ulong::from(u32::MAX), CLOSE_RANGE_CLOEXEC);
+                Ok(())
+            });
+        }
+        let child = cmd.spawn().map_err(|e| io::Error::other(format!("can't run {program}: {e}")))?;
+        drop(cmd); // its copies of the terminal side, so the output ends when the session's processes do
+        let pid = child.id() as c_int;
+        Ok((Pty { master: master.try_clone()?, pid }, master.try_clone()?, master, Exit(child)))
     }
-    let home = std::env::var_os("HOME").unwrap_or_else(|| "/".into());
-    cmd.current_dir(if Path::new(cwd).is_dir() { OsStr::new(cwd) } else { &home });
-    cmd.stdin(slave.try_clone()?).stdout(slave.try_clone()?).stderr(slave);
-    // SAFETY: only async-signal-safe calls, between fork and exec. stdin is the terminal by now.
-    unsafe {
-        cmd.pre_exec(|| {
-            for s in RESET {
-                signal(s, SIG_DFL);
-            }
-            check(setsid())?;
-            check(ioctl(0, TIOCSCTTY, 0 as c_ulong))?;
-            // nook's descriptors close at exec; std's own error pipe already does.
-            syscall(SYS_CLOSE_RANGE, 3 as c_ulong, c_ulong::from(u32::MAX), CLOSE_RANGE_CLOEXEC);
-            Ok(())
-        });
-    }
-    let child = cmd.spawn().map_err(|e| io::Error::other(format!("can't run {program}: {e}")))?;
-    drop(cmd); // its copies of the terminal side, so the output ends when the session's processes do
-    let pid = child.id() as c_int;
-    Ok((Pty { master: master.try_clone()?, pid }, master.try_clone()?, master, Exit(child)))
 }

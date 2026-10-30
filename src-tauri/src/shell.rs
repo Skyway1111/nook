@@ -6,10 +6,6 @@ use tauri::async_runtime::spawn_blocking;
 
 use crate::{err, sys::*};
 
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain([0]).collect()
-}
-
 /// Paths as the shell takes a list of them: each ends in a null, and the list in one more.
 fn wide_list(paths: &[String]) -> Vec<u16> {
     paths.iter().flat_map(|p| p.encode_utf16().chain([0])).chain([0]).collect()

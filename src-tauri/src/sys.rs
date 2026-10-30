@@ -1,8 +1,9 @@
 //! Every Win32 function, struct, and constant nook calls, imported straight from the system DLLs.
-#![allow(non_snake_case, non_camel_case_types, clippy::upper_case_acronyms)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::upper_case_acronyms)]
 
-use std::ffi::c_void;
+use std::ffi::{c_void, OsStr};
 use std::mem::size_of;
+use std::os::windows::ffi::OsStrExt;
 
 pub type BOOL = i32;
 pub type HANDLE = *mut c_void;
@@ -27,6 +28,9 @@ pub const PSEUDOCONSOLE_RESIZE_QUIRK: u32 = 0x2;
 pub const PSEUDOCONSOLE_WIN32_INPUT_MODE: u32 = 0x4;
 pub const LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR: u32 = 0x100;
 pub const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x800;
+pub const FindExInfoBasic: i32 = 1;
+pub const FindExSearchNameMatch: i32 = 0;
+pub const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 
 // The registry's environment
 pub const HKEY_CURRENT_USER: HKEY = 0x8000_0001u32 as i32 as isize as HKEY;
@@ -71,7 +75,6 @@ pub const DROPEFFECT_MOVE: u32 = 2;
 pub const DROPEFFECT_LINK: u32 = 4;
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub struct COORD {
     pub X: i16,
     pub Y: i16,
@@ -106,6 +109,14 @@ pub struct PROCESS_INFORMATION {
     pub hThread: HANDLE,
     pub dwProcessId: u32,
     pub dwThreadId: u32,
+}
+
+#[repr(C)]
+pub struct WIN32_FIND_DATAW {
+    pub dwFileAttributes: u32,
+    pub times_and_size: [u32; 10], // three FILETIMEs, the size, two reserved
+    pub cFileName: [u16; 260],
+    pub cAlternateFileName: [u16; 14],
 }
 
 #[repr(C)]
@@ -175,6 +186,7 @@ pub struct SHFILEOPSTRUCTW {
 // The sizes Windows checks, on x64 and arm64.
 const _: () = assert!(size_of::<STARTUPINFOEXW>() == 112);
 const _: () = assert!(size_of::<PROCESS_INFORMATION>() == 24);
+const _: () = assert!(size_of::<WIN32_FIND_DATAW>() == 592);
 const _: () = assert!(size_of::<PROCESSENTRY32W>() == 568);
 const _: () = assert!(size_of::<NOTIFYICONDATAW>() == 976);
 const _: () = assert!(size_of::<SHELLEXECUTEINFOW>() == 112);
@@ -191,7 +203,12 @@ macro_rules! zeroed {
         }
     )*};
 }
-zeroed!(STARTUPINFOEXW, PROCESS_INFORMATION, PROCESSENTRY32W, NOTIFYICONDATAW, SHELLEXECUTEINFOW, SHFILEOPSTRUCTW);
+zeroed!(STARTUPINFOEXW, PROCESS_INFORMATION, WIN32_FIND_DATAW, PROCESSENTRY32W, NOTIFYICONDATAW, SHELLEXECUTEINFOW, SHFILEOPSTRUCTW);
+
+/// `s` as Windows takes a string: UTF-16, ending in a NUL.
+pub fn wide(s: impl AsRef<OsStr>) -> Vec<u16> {
+    s.as_ref().encode_wide().chain([0]).collect()
+}
 
 #[link(name = "kernel32.dll", kind = "raw-dylib", modifiers = "+verbatim")]
 extern "system" {
@@ -237,6 +254,14 @@ extern "system" {
     pub fn LoadLibraryExW(file: PCWSTR, reserved: HANDLE, flags: u32) -> HANDLE;
     pub fn GetProcAddress(module: HANDLE, name: *const u8) -> *const c_void;
     pub fn ExpandEnvironmentStringsW(source: PCWSTR, out: PWSTR, size: u32) -> u32;
+    pub fn FindFirstFileExW(name: PCWSTR, level: i32, data: *mut WIN32_FIND_DATAW, op: i32, filter: *const c_void, flags: u32) -> HANDLE;
+    pub fn FindNextFileW(find: HANDLE, data: *mut WIN32_FIND_DATAW) -> BOOL;
+    pub fn FindClose(find: HANDLE) -> BOOL;
+}
+
+#[link(name = "ntdll.dll", kind = "raw-dylib", modifiers = "+verbatim")]
+extern "system" {
+    pub fn RtlUpcaseUnicodeChar(c: u16) -> u16;
 }
 
 #[link(name = "advapi32.dll", kind = "raw-dylib", modifiers = "+verbatim")]
