@@ -2,7 +2,7 @@
 //! It reads the files quick open lists, on every core, and stops at a few hundred lines, after a few
 //! seconds, or as soon as a newer search starts.
 use crate::index::index_files;
-use serde::Serialize;
+use crate::json::object;
 use std::{
     fs,
     path::Path,
@@ -30,7 +30,7 @@ static LATEST: AtomicU64 = AtomicU64::new(0);
 type List = (String, Instant, String, Arc<Vec<String>>);
 static LIST: Mutex<Option<List>> = Mutex::new(None);
 
-#[derive(Serialize, Debug)]
+#[derive(Debug)]
 pub struct Hit {
     /// Relative to the root, with `/` between folders.
     file: String,
@@ -44,7 +44,8 @@ pub struct Hit {
     pub(crate) len: u32,
 }
 
-#[derive(Serialize)]
+object!(Hit { file, line, col, text, at, len });
+
 pub struct Found {
     root: String,
     hits: Vec<Hit>,
@@ -56,9 +57,10 @@ pub struct Found {
     stale: bool,
 }
 
+object!(Found { root, hits, searched, partial, stale });
+
 /// The lines under `dir`'s repository, or `dir` outside one, that hold `query`. A query with a capital letter
 /// matches case exactly; one without ignores the case of ASCII letters.
-#[tauri::command(async)]
 pub fn search_text(dir: String, query: String) -> Result<Found, String> {
     let id = LATEST.fetch_add(1, Ordering::SeqCst) + 1;
     let (root, files, list_partial) = list(&dir)?;

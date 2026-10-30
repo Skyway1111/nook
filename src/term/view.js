@@ -78,7 +78,6 @@ export class Term {
         return [rgb('--term-fg'), [0, 0, 0], rgb('--cursor')] // the background is transparent: dark
       },
     }, { pull })
-    this.decoder = new TextDecoder()
 
     const root = this.element = document.createElement('div')
     root.className = 'terminal xterm'
@@ -329,9 +328,8 @@ export class Term {
 
   // ---- writing
 
-  /** Queues output, a string or UTF-8 bytes, parsed in slices; `cb` runs once its chunk is parsed. */
+  /** Queues output text, parsed in slices; `cb` runs once its chunk is parsed. */
   write(data, cb) {
-    if (typeof data !== 'string') data = this.decoder.decode(data, { stream: true })
     this.queue.push(data, cb)
     if (this.queue.length !== 2) return
     if (this.typed) {

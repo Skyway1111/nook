@@ -1,4 +1,4 @@
-// Finding paths in a row of terminal text, with no DOM or Tauri, so `npm test` checks it without a window.
+// Finding paths in a row of terminal text, with no DOM or host, so `npm test` checks it without a window.
 import { path as paths } from './paths.js'
 
 const NAME = String.raw`[\p{L}\p{N}_.@+~-]`

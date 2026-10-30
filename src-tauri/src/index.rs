@@ -1,6 +1,6 @@
 //! Quick open's list of files: every file under a folder, built only when quick open asks for it.
 use crate::run;
-use serde::Serialize;
+use crate::json::object;
 use std::{
     fs,
     path::Path,
@@ -16,7 +16,6 @@ const BUDGET: Duration = Duration::from_secs(4);
 /// `.gitignore` would hide anyway.
 const SKIP: &[&str] = &["node_modules", "target", "__pycache__", "bower_components", "venv"];
 
-#[derive(Serialize)]
 pub struct Index {
     /// The folder the paths are relative to: the repository's top folder, or the folder asked about.
     pub(crate) root: String,
@@ -26,9 +25,10 @@ pub struct Index {
     pub(crate) partial: bool,
 }
 
+object!(Index { root, files, partial });
+
 /// Every file under `dir`'s repository, as git sees it: tracked files and untracked ones that aren't
 /// ignored. Outside a repository, every file under `dir` that the file browser would show.
-#[tauri::command(async)]
 pub fn index_files(dir: String) -> Result<Index, String> {
     if !Path::new(&dir).is_dir() {
         return Err(format!("{dir} is not a folder"));

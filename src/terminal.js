@@ -18,43 +18,21 @@ const MIN_COLS = 20 // the smallest size Claude gets: narrower, its layout falls
 const MIN_ROWS = 6
 
 /** Whether output holds ESC [ 2 J, which starts each of Claude's full redraws. */
-function clears(bytes) {
-  for (let i = bytes.indexOf(0x1b); i !== -1; i = bytes.indexOf(0x1b, i + 1)) {
-    if (bytes[i + 1] === 0x5b && bytes[i + 2] === 0x32 && bytes[i + 3] === 0x4a) return true
-  }
-  return false
-}
-
-const SHOW = [0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68] // ESC [ ? 2 5 h
+const clears = text => text.includes('\x1b[2J')
 /** Whether output ends by showing the cursor, as each of ConPTY's frames does while Claude's prompt has it. */
-const ends = bytes => bytes.length >= 6 && SHOW.every((b, i) => bytes[bytes.length - 6 + i] === b)
+const ends = text => text.endsWith('\x1b[?25h')
 
 export async function startTerminal(host, { cwd, home, command, openPath, onTitle, onExit }) {
-  // IPC calls can complete out of order, so keys and sizes go to the PTY one at a time, in order: keys
-  // typed meanwhile batch up, and only the latest size waiting its turn goes. What comes before the PTY
-  // exists, such as the terminal's answers to ConPTY's first questions, waits for it.
+  // Keys and sizes go to the PTY as they come: the host takes calls in the order they're posted, and the PTY's
+  // writer writes the keys and applies the sizes in that order. What comes before the PTY exists, such as the
+  // terminal's answers to ConPTY's first questions, waits for it.
   let id
-  const queue = []
-  let posting = false
-  function send(message) {
-    const i = queue.length - 1
-    if (i >= 0 && typeof queue[i] === typeof message) queue[i] = typeof message === 'string' ? queue[i] + message : message
-    else queue.push(message)
-    post()
-  }
-  async function post() {
-    if (posting || id === undefined) return
-    posting = true
-    while (queue.length) {
-      const m = queue.shift()
-      try {
-        await (typeof m === 'string' ? invoke('pty_write', { id, data: m }) : invoke('pty_resize', { id, ...m }))
-      } catch (e) {
-        reportError(e) // and go on: what waits behind it, such as the last size, must not wait for a keystroke
-      }
-      if (typeof m !== 'string') sized()
-    }
-    posting = false
+  let early = []
+  function send(m) {
+    if (id === undefined) return void early.push(m)
+    if (typeof m === 'string') return void invoke('pty_write', { id, data: m }).catch(reportError)
+    invoke('pty_resize', { id, ...m }).catch(reportError)
+    sized()
   }
 
   let pictures // kitty pictures, which Claude draws
@@ -104,56 +82,51 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   // Sixel and iTerm2 pictures load their module the first time output holds one. Output that arrives meanwhile
   // waits behind it, in order.
   let loading = false
-  let waiting = null // chunks that arrived while it loads; null for the shell's exit
+  let waiting = null // text that arrived while it loads; empty for the shell's exit
   let closed = false
-  let carry = null // the end of the last chunk, where it may start a picture
-  // An empty chunk means the shell exited.
-  output.onmessage = buf => {
-    let bytes = buf.byteLength ? new Uint8Array(buf) : null
-    if (waiting) return void waiting.push(bytes)
-    if (!bytes) return onExit()
+  let carry = '' // the end of the last text, where it may start a picture
+  // Empty text means the shell exited.
+  output.onmessage = text => {
+    if (waiting) return void waiting.push(text)
+    if (!text) return onExit()
     if (!loading) {
-      if (carry) {
-        const joined = new Uint8Array(carry.length + bytes.length)
-        joined.set(carry)
-        joined.set(bytes, carry.length)
-        bytes = joined
-      }
-      carry = null
-      const at = imageStart(bytes)
+      text = carry + text
+      carry = ''
+      const at = imageStart(text)
       if (at === FOUND) {
         loading = true
-        waiting = [bytes]
+        waiting = [text]
         import('./term/images.js')
           .then(m => { if (!closed) images = m.startImages(term) })
           .catch(reportError)
           .finally(() => {
-            const chunks = waiting
+            const texts = waiting
             waiting = null
-            for (const b of chunks) if (!closed) (b ? take(b) : onExit())
+            for (const t of texts) if (!closed) (t ? take(t) : onExit())
           })
         return
       }
       if (at !== NONE) {
-        carry = bytes.slice(at)
-        bytes = bytes.subarray(0, at)
-        if (!bytes.length) return
+        carry = text.slice(at)
+        text = text.slice(0, at)
+        if (!text) return
       }
     }
-    take(bytes)
+    take(text)
   }
-  function take(bytes) {
-    term.write(bytes)
-    if (!hold?.sent || !(hold.redrawn ||= clears(bytes))) return
+  function take(text) {
+    term.write(text)
+    if (!hold?.sent || !(hold.redrawn ||= clears(text))) return
     clearTimeout(hold.timer)
-    if (ends(bytes)) release()
+    if (ends(text)) release()
     else hold.timer = setTimeout(release, Math.min(QUIET_MS, hold.until - performance.now()))
   }
   term.onData(send)
   term.onResize(({ cols, rows }) => send({ cols, rows }))
   term.onTitleChange(onTitle)
   id = await invoke('pty_spawn', { command, cwd, cols: term.cols, rows: term.rows, onData: output })
-  post()
+  for (const m of early) send(m)
+  early = null
   const composer = startComposer(term, host, id)
 
   function refit() {

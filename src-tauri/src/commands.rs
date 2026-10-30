@@ -2,7 +2,7 @@
 //! own, in `~/.claude`, and a project's, in `.claude` in the folder or any folder above it up to its git root.
 //! nook reads only each file's frontmatter, for a description.
 use crate::history::claude_dir;
-use serde::Serialize;
+use crate::json::object;
 use std::{
     fs,
     io::Read,
@@ -13,12 +13,14 @@ const HEAD: u64 = 4 << 10; // where a command's frontmatter is
 const MOST: usize = 200;
 const DESCRIPTION_CHARS: usize = 120;
 
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Command {
     /// What follows the slash: `review`, or `frontend:test` for commands/frontend/test.md.
     name: String,
     description: String,
 }
+
+object!(Command { name, description });
 
 /// A frontmatter field's value, or the first line of prose when `field` is absent.
 fn describe(head: &str, field: &str) -> Option<String> {
@@ -103,7 +105,6 @@ fn list(dir: &Path) -> Vec<Command> {
 }
 
 /// The slash commands and skills Claude Code offers a session in `dir`.
-#[tauri::command(async)]
 pub fn claude_commands(dir: String) -> Vec<Command> {
     list(Path::new(&dir))
 }

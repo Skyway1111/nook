@@ -25,13 +25,12 @@ struct Fns {
     close: Close,
 }
 
-/// The pseudoconsole functions: conpty.dll's when it loads from nook's own folder, else kernel32's.
+/// The pseudoconsole functions: conpty.dll's when it loads from where nook ships it, else kernel32's.
 fn conpty() -> &'static Fns {
     static FNS: OnceLock<Fns> = OnceLock::new();
     FNS.get_or_init(|| {
         let system = Fns { create: CreatePseudoConsole, resize: ResizePseudoConsole, close: ClosePseudoConsole };
-        let Ok(exe) = std::env::current_exe() else { return system };
-        let dll = wide(exe.with_file_name("conpty.dll"));
+        let dll = wide(crate::resource("conpty.dll"));
         // SAFETY: a full path, so no other folder is searched, and these three exports have these signatures.
         unsafe {
             let module = LoadLibraryExW(dll.as_ptr(), null_mut(), LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);

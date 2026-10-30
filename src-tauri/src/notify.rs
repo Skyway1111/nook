@@ -1,15 +1,13 @@
 //! A desktop notification when a Claude session in the background needs the user, without a plugin: on
 //! Windows the notification area's balloon, which Windows 10 and 11 show as a toast, and elsewhere the
 //! desktop's own `notify-send`, or `gdbus` where that isn't installed. Nothing runs until there is one to show.
-use tauri::WebviewWindow;
 
-#[tauri::command(async)]
-pub fn notify(window: WebviewWindow, title: String, body: String) -> Result<(), String> {
-    show(&window, &title, &body)
+pub fn notify(title: String, body: String) -> Result<(), String> {
+    show(&title, &body)
 }
 
 #[cfg(windows)]
-fn show(window: &WebviewWindow, title: &str, body: &str) -> Result<(), String> {
+fn show(title: &str, body: &str) -> Result<(), String> {
     use crate::sys::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -21,7 +19,7 @@ fn show(window: &WebviewWindow, title: &str, body: &str) -> Result<(), String> {
 
     // The icon stays a few seconds after its balloon shows; a newer notification keeps it for its own.
     static SHOWN: AtomicU64 = AtomicU64::new(0);
-    let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as _;
+    let hwnd = crate::host::hwnd();
     let icon = |hwnd| NOTIFYICONDATAW { cbSize: size_of::<NOTIFYICONDATAW>() as u32, hWnd: hwnd, uID: 1, ..Default::default() };
     // SAFETY: plain Win32 calls on nook's own window.
     unsafe {
@@ -51,7 +49,7 @@ fn show(window: &WebviewWindow, title: &str, body: &str) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn show(_window: &WebviewWindow, title: &str, body: &str) -> Result<(), String> {
+fn show(title: &str, body: &str) -> Result<(), String> {
     use std::process::{Command, Stdio};
     let quiet = |mut c: Command| c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     let mut send = Command::new("notify-send");
@@ -68,7 +66,7 @@ fn show(_window: &WebviewWindow, title: &str, body: &str) -> Result<(), String> 
         quiet(call)
     });
     let mut child = sent.map_err(|_| "No notification service: install notify-send (libnotify)".to_string())?;
-    child.wait().map_err(|e| e.to_string())?; // reaped here, on the command's own thread
+    child.wait().map_err(|e| e.to_string())?; // reaped here, on the command's worker
     Ok(())
 }
 

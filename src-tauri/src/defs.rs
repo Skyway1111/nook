@@ -4,7 +4,7 @@
 //! and nests them by braces or indentation. For `#` it reads quick open's file list, keeping each file's
 //! definitions with its change time and size, so a second search rereads only the files that changed.
 use crate::search::list;
-use serde::Serialize;
+use crate::json::object;
 use std::{
     collections::HashMap,
     fs,
@@ -63,7 +63,6 @@ struct Def {
 type Cache = HashMap<String, (String, Arc<Vec<Def>>)>;
 static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 
-#[derive(Serialize)]
 pub struct Symbols {
     root: String,
     /// Files, relative to the root with `/` between folders, that `defs` point into.
@@ -75,6 +74,8 @@ pub struct Symbols {
     /// Stopped early: at MAX_DEFS, at the time budget, or with the file list cut short.
     partial: bool,
 }
+
+object!(Symbols { root, files, defs, kinds, partial });
 
 /// The language family a file's extension names, or None for one with nothing to scan.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -1081,7 +1082,6 @@ fn stamp(path: &Path) -> Option<(String, u64)> {
 }
 
 /// One line of a file's outline.
-#[derive(Serialize)]
 pub struct Item {
     name: String,
     kind: &'static str,
@@ -1093,15 +1093,17 @@ pub struct Item {
     container: String,
 }
 
-#[derive(Serialize)]
+object!(Item { name, kind, line, col, depth, container });
+
 pub struct Outline {
     items: Vec<Item>,
     /// Stopped at MAX_ITEMS.
     partial: bool,
 }
 
+object!(Outline { items, partial });
+
 /// Quick open's `@`: the definitions in `text`, the unsaved text of a file named `name`, in order and nested.
-#[tauri::command(async)]
 pub fn outline(name: String, text: String) -> Outline {
     let ext = ext(&name);
     let lang = lang(&ext).or(match ext.as_str() {
@@ -1127,7 +1129,6 @@ pub fn outline(name: String, text: String) -> Outline {
 }
 
 /// Every definition under `dir`'s repository, or `dir` outside one, in quick open's file order.
-#[tauri::command(async)]
 pub fn workspace_symbols(dir: String) -> Result<Symbols, String> {
     let (root, files, list_partial) = list(&dir)?;
     let started = Instant::now();

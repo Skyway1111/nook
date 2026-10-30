@@ -1,5 +1,5 @@
 //! What settings.json holds, its defaults, and its JSON: read over the defaults, and written in field order.
-use crate::json::{self, obj, Error, Out, Reader, W};
+use crate::json::{self, obj, Error, Out, Reader, Take, W};
 use std::path::Path;
 
 /// Declares `Settings` with each field's key in settings.json, where the fields keep this order, and the
@@ -22,7 +22,7 @@ macro_rules! settings {
             const SET: &[fn(&mut Settings, &mut Reader) -> Result<(), Error>] = &[$(|s, p| Take::take(p).map(|v| s.$field = v)),*];
         }
 
-        const _: () = assert!(Settings::KEYS.len() <= 64, "`fields` keeps one bit per key");
+        const _: () = assert!(Settings::KEYS.len() <= 64, "`known` keeps one bit per key");
     };
 }
 
@@ -123,14 +123,14 @@ impl Settings {
     pub fn parse(text: &str) -> Result<Settings, String> {
         let mut s = Settings::default();
         let mut p = Reader::new(text);
-        fields(&mut p, "struct Settings", Self::KEYS, |p, i| Self::SET[i](&mut s, p)).and_then(|()| p.end()).map_err(|e| e.to_string())?;
+        p.known("struct Settings", Self::KEYS, |p, i| Self::SET[i](&mut s, p)).and_then(|()| p.end()).map_err(|e| e.to_string())?;
         Ok(s)
     }
 
     /// Sets the keys of `patch`, a JSON object. Fails, saying what but not where, on a value of the wrong type.
     pub fn merge(&mut self, patch: &str) -> Result<(), String> {
         let mut p = Reader::new(patch);
-        fields(&mut p, "struct Settings", Self::KEYS, |p, i| Self::SET[i](self, p)).and_then(|()| p.end()).map_err(|e| e.what().into())
+        p.known("struct Settings", Self::KEYS, |p, i| Self::SET[i](self, p)).and_then(|()| p.end()).map_err(|e| e.what().into())
     }
 }
 
@@ -146,75 +146,19 @@ impl W for Prompt {
     }
 }
 
-/// Reads the object ahead as `what`, handing `set` the index in `keys` of each key it holds, with the reader at
-/// its value. Any other key's value is skipped, and a key twice is refused, placed on its colon.
-fn fields<'a>(p: &mut Reader<'a>, what: &str, keys: &[&str], mut set: impl FnMut(&mut Reader<'a>, usize) -> Result<(), Error>) -> Result<(), Error> {
-    let mut seen = 0u64;
-    p.map(what, |p, key| match keys.iter().position(|k| *k == key) {
-        Some(i) if seen & 1 << i != 0 => Err(p.at_key(format!("duplicate field `{key}`"))),
-        Some(i) => {
-            seen |= 1 << i;
-            set(p, i)
-        }
-        None => p.skip(),
-    })
-}
-
-/// A value settings.json holds.
-trait Take: Sized {
-    fn take(p: &mut Reader) -> Result<Self, Error>;
-}
-
-impl Take for bool {
-    fn take(p: &mut Reader) -> Result<Self, Error> {
-        p.bool()
-    }
-}
-
-impl Take for String {
-    fn take(p: &mut Reader) -> Result<Self, Error> {
-        p.str().map(String::from)
-    }
-}
-
-impl Take for u32 {
-    fn take(p: &mut Reader) -> Result<Self, Error> {
-        p.u32()
-    }
-}
-
-impl<T: Take> Take for Option<T> {
-    fn take(p: &mut Reader) -> Result<Self, Error> {
-        if p.null()? { Ok(None) } else { T::take(p).map(Some) }
-    }
-}
-
-impl<T: Take> Take for Vec<T> {
-    fn take(p: &mut Reader) -> Result<Self, Error> {
-        let mut items = Vec::new();
-        p.list(|p| T::take(p).map(|v| items.push(v)))?;
-        Ok(items)
-    }
-}
-
-/// `field` of `value`, or the error for its absence, placed past the object.
-fn needs<T>(p: &Reader, value: Option<T>, field: &str) -> Result<T, Error> {
-    value.ok_or_else(|| p.here(format!("missing field `{field}`")))
-}
-
 impl Take for Prompt {
     fn take(p: &mut Reader) -> Result<Self, Error> {
         let mut v = [None, None];
-        fields(p, "struct Prompt", &["name", "text"], |p, i| String::take(p).map(|s| v[i] = Some(s)))?;
+        p.known("struct Prompt", &["name", "text"], |p, i| String::take(p).map(|s| v[i] = Some(s)))?;
         let [name, text] = v;
-        Ok(Prompt { name: needs(p, name, "name")?, text: needs(p, text, "text")? })
+        Ok(Prompt { name: p.needs(name, "name")?, text: p.needs(text, "text")? })
     }
 }
 
 impl Take for OpenSession {
     fn take(p: &mut Reader) -> Result<Self, Error> {
         let (mut dir, mut id, mut prompt, mut active) = (None, None, String::new(), false);
-        fields(p, "struct OpenSession", &["dir", "id", "prompt", "active"], |p, i| {
+        p.known("struct OpenSession", &["dir", "id", "prompt", "active"], |p, i| {
             match i {
                 0 => dir = Some(String::take(p)?),
                 1 => id = Some(String::take(p)?),
@@ -223,7 +167,7 @@ impl Take for OpenSession {
             }
             Ok(())
         })?;
-        Ok(OpenSession { dir: needs(p, dir, "dir")?, id: needs(p, id, "id")?, prompt, active })
+        Ok(OpenSession { dir: p.needs(dir, "dir")?, id: p.needs(id, "id")?, prompt, active })
     }
 }
 

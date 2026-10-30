@@ -8,7 +8,6 @@ use std::{
     process::{Command, Stdio},
     sync::Mutex,
 };
-use tauri::async_runtime::spawn_blocking;
 
 use crate::err;
 
@@ -33,14 +32,12 @@ fn launch(program: &str, args: &[&str]) -> Result<(), String> {
 
 /// Opens a path or URL with the desktop's default app. Linux has no shared Open with dialog or
 /// Properties sheet, so the file browser offers neither, and any other verb opens too.
-#[tauri::command]
 pub fn open_path(path: String, verb: Option<String>) {
     let _ = verb;
     let _ = launch("xdg-open", &[&path]);
 }
 
 /// Shows the folder that holds `path` in the file manager.
-#[tauri::command]
 pub fn reveal(path: String) {
     let dir = Path::new(&path).parent().unwrap_or(Path::new("/"));
     let _ = launch("xdg-open", &[&dir.to_string_lossy()]);
@@ -48,45 +45,32 @@ pub fn reveal(path: String) {
 
 /// Moves a file or folder to the trash, where the file manager can restore it. Never deletes outright:
 /// without `gio`, it fails and says so.
-#[tauri::command]
-pub async fn recycle(path: String) -> Result<bool, String> {
-    spawn_blocking(move || {
-        let mut cmd = Command::new("gio");
-        cmd.args(["trash", "--"]).arg(&path);
-        crate::run(&mut cmd, None).map(|_| true).map_err(|e| format!("nook can't move it to the trash: {e}"))
-    })
-    .await
-    .map_err(err)?
+pub fn recycle(path: String) -> Result<bool, String> {
+    let mut cmd = Command::new("gio");
+    cmd.args(["trash", "--"]).arg(&path);
+    crate::run(&mut cmd, None).map(|_| true).map_err(|e| format!("nook can't move it to the trash: {e}"))
 }
 
 /// Renames a file or folder. A name that's taken fails instead of replacing what has it.
-#[tauri::command]
-pub async fn rename_path(from: String, to: String) -> Result<bool, String> {
-    spawn_blocking(move || {
-        if fs::symlink_metadata(&to).is_ok() {
-            let name = Path::new(&to).file_name().unwrap_or_default().to_string_lossy();
-            return Err(format!("“{name}” is already there"));
-        }
-        fs::rename(&from, &to).map(|()| true).map_err(err)
-    })
-    .await
-    .map_err(err)?
+pub fn rename_path(from: String, to: String) -> Result<bool, String> {
+    if fs::symlink_metadata(&to).is_ok() {
+        let name = Path::new(&to).file_name().unwrap_or_default().to_string_lossy();
+        return Err(format!("“{name}” is already there"));
+    }
+    fs::rename(&from, &to).map(|()| true).map_err(err)
 }
 
 /// Puts files on nook's clipboard, as Copy does, or as Cut, whose paste moves them.
-#[tauri::command]
 pub fn copy_files(paths: Vec<String>, cut: bool) -> Result<(), String> {
     *CLIPBOARD.lock().unwrap() = Some((paths, cut));
     Ok(())
 }
 
-#[tauri::command]
 pub fn can_paste() -> bool {
     CLIPBOARD.lock().unwrap().as_ref().is_some_and(|(paths, _)| !paths.is_empty())
 }
 
 /// The files on nook's clipboard, for a paste into a Claude tab.
-#[tauri::command]
 pub fn copied_paths() -> Vec<String> {
     CLIPBOARD.lock().unwrap().as_ref().map(|(paths, _)| paths.clone()).unwrap_or_default()
 }
@@ -155,10 +139,9 @@ fn paste(paths: &[String], cut: bool, dir: &str) -> Result<bool, String> {
 }
 
 /// Pastes nook's clipboard into `dir`: copies, or after a cut, moves the files. True when it pasted any.
-#[tauri::command]
-pub async fn paste_files(dir: String) -> Result<bool, String> {
+pub fn paste_files(dir: String) -> Result<bool, String> {
     let Some((paths, cut)) = CLIPBOARD.lock().unwrap().clone() else { return Ok(false) };
-    let done = spawn_blocking(move || paste(&paths, cut, &dir)).await.map_err(err)??;
+    let done = paste(&paths, cut, &dir)?;
     if done && cut {
         *CLIPBOARD.lock().unwrap() = None; // a cut pastes once
     }
@@ -167,9 +150,8 @@ pub async fn paste_files(dir: String) -> Result<bool, String> {
 
 /// Moves or copies files dropped on a folder in nook's file browser into `dir`. A taken name gets a free one
 /// beside it, as a paste does, and a move of a file already there does nothing.
-#[tauri::command]
-pub async fn drop_files(paths: Vec<String>, dir: String, copy: bool) -> Result<bool, String> {
-    spawn_blocking(move || paste(&paths, !copy, &dir)).await.map_err(err)?
+pub fn drop_files(paths: Vec<String>, dir: String, copy: bool) -> Result<bool, String> {
+    paste(&paths, !copy, &dir)
 }
 
 #[cfg(test)]

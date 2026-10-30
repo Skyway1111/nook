@@ -1,21 +1,22 @@
-// Finding escape sequences in raw terminal output, with no DOM, so `npm test` checks it without a window.
+// Finding escape sequences in terminal output, with no DOM, so `npm test` checks it without a window.
 
 const FILE = '1337;File='
 
-/** Where output starts a sixel picture (ESC P <digits> q) or an iTerm2 one (ESC ] 1337 ; File=): FOUND if it
+/** Where output text starts a sixel picture (ESC P <digits> q) or an iTerm2 one (ESC ] 1337 ; File=): FOUND if it
  * does, NONE if it doesn't, or the index of an ESC at the end that may start one once more output comes. */
-export function imageStart(bytes) {
-  for (let i = bytes.indexOf(0x1b); i !== -1; i = bytes.indexOf(0x1b, i + 1)) {
-    if (i === bytes.length - 1) return i
-    if (bytes[i + 1] === 0x50) { // P
+export function imageStart(text) {
+  for (let i = text.indexOf('\x1b'); i !== -1; i = text.indexOf('\x1b', i + 1)) {
+    if (i === text.length - 1) return i
+    const c = text.charCodeAt(i + 1)
+    if (c === 0x50) { // P
       let j = i + 2
-      while (j < bytes.length && ((bytes[j] >= 0x30 && bytes[j] <= 0x39) || bytes[j] === 0x3b)) j++
-      if (j === bytes.length) return i
-      if (bytes[j] === 0x71) return FOUND // q
-    } else if (bytes[i + 1] === 0x5d) { // ]
-      const head = String.fromCharCode(...bytes.subarray(i + 2, i + 2 + FILE.length))
+      for (let d = text.charCodeAt(j); (d >= 0x30 && d <= 0x39) || d === 0x3b; d = text.charCodeAt(++j));
+      if (j === text.length) return i
+      if (text.charCodeAt(j) === 0x71) return FOUND // q
+    } else if (c === 0x5d) { // ]
+      const head = text.slice(i + 2, i + 2 + FILE.length)
       if (head === FILE) return FOUND
-      if (i + 2 + head.length === bytes.length && FILE.startsWith(head)) return i
+      if (i + 2 + head.length === text.length && FILE.startsWith(head)) return i
     }
   }
   return NONE
