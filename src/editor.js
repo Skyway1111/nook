@@ -1442,10 +1442,12 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   const find = (view.find = startFind(view))
   const complete = (view.complete = startComplete(view))
 
+  // NaN passes every bounds check and hangs the next draw, so an offset from outside must be an integer.
+  const offsets = (...ns) => { if (!ns.every(Number.isInteger)) throw new RangeError('offsets must be integers') }
+
   function setSel(s, { center, scroll = true } = {}) {
     const sel = typeof s === 'number' ? { ranges: [sel1(s)], main: 0 } : s
-    // NaN would pass every bounds check and hang the next draw
-    if (!sel.ranges.every(r => Number.isInteger(r.anchor) && Number.isInteger(r.head))) throw new RangeError('select: offsets must be integers')
+    offsets(...sel.ranges.flatMap(r => [r.anchor, r.head]))
     dispatch({ sel, kind: 'select', scroll: false })
     if (center || scroll) { want = { pos: ranges[main].head, center }; dirty() }
   }
@@ -1476,6 +1478,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     /** Replaces offsets `from` to `to` with `insert` as one undoable change. With `clean`, the result is the text as
      * saved, before anyone hears of the change. */
     replace(a, b, insert, { clean: c } = {}) {
+      offsets(a, b)
       insert = split(insert).join('\n')
       if (c) hist.sealed = true
       dispatch({ changes: a !== b || insert ? [{ from: a, to: b, insert }] : null, kind: 'other', scroll: false, clean: c, done: c })
