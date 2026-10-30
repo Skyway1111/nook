@@ -129,12 +129,14 @@ pub fn run() {
     }
 }
 
-/// Runs `f` on the UI thread. Dropped if the window is gone.
-pub fn post(f: impl FnOnce() + Send + 'static) {
+/// Runs `f` on the UI thread, and says whether it will: it's dropped if the window is gone or its queue is full.
+pub fn post(f: impl FnOnce() + Send + 'static) -> bool {
     let f: *mut Box<dyn FnOnce()> = Box::into_raw(Box::new(Box::new(f)));
-    if unsafe { PostMessageW(hwnd(), WM_RUN, 0, f as isize) } == 0 {
+    let posted = unsafe { PostMessageW(hwnd(), WM_RUN, 0, f as isize) } != 0;
+    if !posted {
         drop(unsafe { Box::from_raw(f) });
     }
+    posted
 }
 
 /// Shows the window, once.

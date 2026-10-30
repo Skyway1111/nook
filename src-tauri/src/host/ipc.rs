@@ -254,7 +254,9 @@ impl Stream {
 
     fn wake(self: &Arc<Self>) {
         let s = self.clone();
-        plat::post(move || s.flush());
+        if !plat::post(move || s.flush()) {
+            self.pending.lock().unwrap().woken = false; // the next push tries again
+        }
     }
 
     /// Posts what's pending as whole characters, in pieces so the page takes in one while the next is copied,

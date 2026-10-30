@@ -55,7 +55,7 @@ fn later(args: *mut c_void, f: impl FnOnce() -> Reply + Send + 'static) {
         super::post(move || {
             send(args.ptr(), reply);
             unsafe { call!(deferral.ptr(), 3) };
-        })
+        });
     });
 }
 

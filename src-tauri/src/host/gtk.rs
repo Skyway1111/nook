@@ -447,14 +447,15 @@ pub fn run(cfg: Config) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs `f` on the main thread.
-pub fn post(f: impl FnOnce() + Send + 'static) {
+/// Runs `f` on the main thread; always will.
+pub fn post(f: impl FnOnce() + Send + 'static) -> bool {
     unsafe extern "C" fn run_once(p: Ptr) -> c_int {
         Box::from_raw(p as *mut Box<dyn FnOnce()>)();
         0
     }
     let f: Box<Box<dyn FnOnce()>> = Box::new(Box::new(f));
     unsafe { g_idle_add_full(0, run_once, Box::into_raw(f).cast(), None) };
+    true
 }
 
 /// Runs `script` in the page.
@@ -867,7 +868,7 @@ fn later(req: Ptr, f: impl FnOnce() -> Reply + Send + 'static) {
         post(move || unsafe {
             respond(req.ptr(), reply);
             g_object_unref(req.ptr());
-        })
+        });
     });
 }
 
