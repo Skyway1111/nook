@@ -33,8 +33,7 @@ struct Worker {
 }
 
 impl Worker {
-    fn ask(&mut self, parts: &[&[u8]]) -> Result<Vec<u8>, String> {
-        write(&mut self.input, parts).map_err(|e| e.to_string())?;
+    fn reply(&mut self) -> Result<Vec<u8>, String> {
         match self.replies.recv_timeout(TIMEOUT) {
             Ok(r) => r.map_err(|e| if e.kind() == io::ErrorKind::UnexpectedEof { "the sandbox ended".into() } else { e.to_string() }),
             Err(_) => Err(format!("the sandbox answered nothing in {} s", TIMEOUT.as_secs())),
@@ -57,18 +56,25 @@ fn lock() -> MutexGuard<'static, Pool> {
     POOL.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// A worker's answer to the message `parts` make.
+/// A worker's answer to the message `parts` make. A worker that ended while idle can still look alive for a moment;
+/// a request that couldn't reach it, so can't have ended it, goes to another.
 pub fn ask(parts: &[&[u8]]) -> Result<Vec<u8>, String> {
-    let mut w = take()?;
-    let reply = w.ask(parts);
-    let mut pool = lock();
-    pool.busy -= 1;
-    if reply.is_ok() {
-        w.last = Instant::now();
-        pool.idle.push(w);
+    let mut retry = true;
+    loop {
+        let mut w = take()?;
+        let sent = write(&mut w.input, parts).map_err(|e| e.to_string());
+        let reply = sent.clone().and_then(|()| w.reply());
+        let mut pool = lock();
+        pool.busy -= 1;
+        if reply.is_ok() {
+            w.last = Instant::now();
+            pool.idle.push(w);
+        }
+        FREED.notify_one();
+        if sent.is_ok() || !std::mem::take(&mut retry) {
+            return reply;
+        }
     }
-    FREED.notify_one();
-    reply
 }
 
 /// The idle worker used last, or a new one while fewer than `MAX` run; otherwise waits for one.
