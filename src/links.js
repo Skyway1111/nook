@@ -15,7 +15,7 @@ const hidePeek = () => peeks?.then(m => m.hidePeek())
 
 /** The text of `line` as one string, and the cell each of its UTF-16 units starts in, so a match in the
  * string maps to cells when wide characters take two. */
-function cells(line, cols, cell) {
+export function cells(line, cols, cell) {
   let text = ''
   const xs = []
   for (let x = 0; x < cols; x++) {

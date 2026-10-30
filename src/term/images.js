@@ -17,14 +17,11 @@ const VT340 = [0, 0, 0, 20, 20, 80, 80, 13, 13, 20, 80, 20, 80, 20, 80, 20, 80, 
   26, 26, 26, 33, 33, 60, 60, 26, 26, 33, 60, 33, 60, 33, 60, 33, 60, 60, 60, 60, 33, 80, 80, 80]
 const pack = (r, g, b) => (r | g << 8 | b << 16 | 0xff000000) >>> 0 // RGBA bytes as one little-endian word
 const pct = v => Math.round((Math.min(v, 100) / 100) * 255)
-function defaults() {
-  const p = new Uint32Array(256)
-  for (let i = 0; i < 16; i++) p[i] = pack(pct(VT340[i * 3]), pct(VT340[i * 3 + 1]), pct(VT340[i * 3 + 2]))
-  const cube = [0, 0x5f, 0x87, 0xaf, 0xd7, 0xff]
-  for (let i = 16; i < 232; i++) p[i] = pack(cube[(i - 16) / 36 | 0], cube[(i - 16) / 6 % 6 | 0], cube[(i - 16) % 6])
-  for (let i = 232; i < 256; i++) p[i] = pack(8 + 10 * (i - 232), 8 + 10 * (i - 232), 8 + 10 * (i - 232))
-  return p
-}
+const DEFAULTS = new Uint32Array(256)
+for (let i = 0; i < 16; i++) DEFAULTS[i] = pack(pct(VT340[i * 3]), pct(VT340[i * 3 + 1]), pct(VT340[i * 3 + 2]))
+const CUBE = [0, 0x5f, 0x87, 0xaf, 0xd7, 0xff]
+for (let i = 16; i < 232; i++) DEFAULTS[i] = pack(CUBE[(i - 16) / 36 | 0], CUBE[(i - 16) / 6 % 6 | 0], CUBE[(i - 16) % 6])
+for (let i = 232; i < 256; i++) DEFAULTS[i] = pack(8 + 10 * (i - 232), 8 + 10 * (i - 232), 8 + 10 * (i - 232))
 
 /** DEC's HLS (blue at 0°), in degrees and percent, as a packed color. */
 function hls(h, l, s) {
@@ -193,10 +190,10 @@ const SIZE = /^(auto|\d+(px|%)?)$/
  * `iterm(data)` for an OSC 1337, and `dispose()`. */
 export function startImages(term) {
   term.vt.images = true // DA1 now says sixel, and CSI 18 t answers
-  const layer = term.screen.appendChild(document.createElement('div'))
-  layer.className = 'pictures'
+  const layer = term.layer('pictures')
   const pics = new Map() // id -> { el, url, w, h, cw, ch, cols, buffer, end, css }, oldest first
-  const palette = defaults()
+  const palette = DEFAULTS.slice()
+  let resets = term.vt.resets // a reset since sets the palette back
   const cell = term.vt.buffer.getNullCell()
   let next = 1
   let pixels = 0
@@ -217,6 +214,7 @@ export function startImages(term) {
   }
 
   function sixel(params) {
+    if (resets !== term.vt.resets) palette.set(DEFAULTS), (resets = term.vt.resets)
     const dec = new Sixel(palette, background(params))
     return {
       put: s => dec.put(s),
@@ -307,12 +305,12 @@ export function startImages(term) {
     pics.delete(id)
   }
 
-  /** Each picture over its cells on screen; one whose cells are gone for good goes. */
+  /** Each picture over its cells on screen; one whose cells are gone for good, or whose buffer a reset replaced, goes. */
   function draw() {
     if (!pics.size) return
     const vt = term.vt
     const b = vt.buffer
-    for (const [id, p] of pics) if (p.buffer === vt.alt ? b !== vt.alt : p.end < p.buffer.trimmed) drop(id)
+    for (const [id, p] of pics) if (p.buffer === vt.alt ? b !== vt.alt : p.buffer !== vt.normal || p.end < p.buffer.trimmed) drop(id)
     const { cols, rows } = term
     const boxes = new Map() // id -> its first cell, and its cells on screen
     for (let y = 0; y < rows; y++) {

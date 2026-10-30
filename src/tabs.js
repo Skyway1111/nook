@@ -4,7 +4,7 @@ import { startTerminal } from './terminal.js'
 import { startViewer } from './viewer.js'
 import { path as paths } from './paths.js'
 import { ICON, kind, same, basename } from './files.js'
-import { $, el, openMenu } from './ui.js'
+import { $, el, letter, openMenu } from './ui.js'
 import { claudeWith } from './launch.js'
 import { watchSessions, wanting, notice, due, ANSWERS } from './sessions.js'
 
@@ -301,7 +301,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     } else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'Backslash') {
       e.preventDefault()
       split(beside ? null : other())
-    } else if (e.ctrlKey && e.key.toLowerCase() === 'w' && active?.viewer) {
+    } else if (e.ctrlKey && letter(e) === 'w' && active?.viewer) {
       e.preventDefault() // in a Claude tab, Ctrl+W is Claude's
       close(active)
     }

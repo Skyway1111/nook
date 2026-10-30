@@ -793,6 +793,7 @@ export class Vt {
     this.h = h
     this.pull = pull
     this.images = false // the image module's answers: DA1 with sixel, and CSI 18 t
+    this.resets = 0 // RIS and DECSTR so far, so the image module can set its sixel colors back
     this.normal = new Buffer(this, scrollback)
     this.normal.fillViewportRows()
     this.alt = new Buffer(this, 0)
@@ -1289,6 +1290,7 @@ export class Vt {
     this.buffer = this.normal
     this.userScrolling = false
     this.reset()
+    this.resets++
   }
 
   csi(ident) {
@@ -1541,6 +1543,7 @@ export class Vt {
 
   softReset() {
     const b = this.buffer
+    this.resets++
     this.cursorHidden = false
     b.scrollTop = 0
     b.scrollBottom = this.rows - 1

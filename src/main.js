@@ -9,7 +9,7 @@ import { startWallpaper } from './wallpaper.js'
 import { startDashboard } from './dashboard.js'
 import { opened } from './recent.js'
 import { path as paths } from './paths.js'
-import { $, openMenu, openPicker } from './ui.js'
+import { $, letter, openMenu, openPicker } from './ui.js'
 import { SAFE, worktreeName, fanNames, since } from './launch.js'
 import { expand, offer, saved } from './prompts.js'
 import { stat as worktreeStat, keep, discard } from './keep.js'
@@ -163,7 +163,7 @@ addEventListener('keydown', e => {
   const plain = !e.ctrlKey && !e.altKey && !e.shiftKey
   const run = e.key === 'F12' && plain ? goToDefinition
     : e.key === 'ArrowLeft' && e.altKey && !e.ctrlKey && !e.shiftKey && backs.length ? goBack
-    : e.code === 'KeyT' && e.ctrlKey && !e.altKey && !e.shiftKey ? () => openQuick().then(q => q.toggle('#')).catch(banner)
+    : letter(e) === 't' && e.ctrlKey && !e.altKey && !e.shiftKey ? () => openQuick().then(q => q.toggle('#')).catch(banner)
     : null
   if (!run) return
   e.preventDefault()
@@ -207,10 +207,10 @@ const openQuick = () => {
   return quick
 }
 addEventListener('keydown', e => {
-  const files = e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'p'
+  const files = e.ctrlKey && !e.shiftKey && letter(e) === 'p'
   const commands = e.key === 'F1' && !e.ctrlKey && !e.shiftKey
   // Ctrl+Shift+O is a file tab's; in a Claude tab, Claude gets it.
-  const symbols = e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'o' && !!tabs.active()?.viewer?.outline
+  const symbols = e.ctrlKey && e.shiftKey && letter(e) === 'o' && !!tabs.active()?.viewer?.outline
   if (!(files || commands || symbols) || e.altKey || e.metaKey || e.repeat) return
   e.preventDefault()
   e.stopPropagation()
@@ -371,17 +371,18 @@ async function quickPrompts() {
     offer(current.prompts ?? [], commands, query).map(r => [label(r), icons[r.kind], pick(r)]))
 }
 addEventListener('keydown', e => {
-  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyP') {
+  const k = e.ctrlKey && e.shiftKey && !e.altKey && letter(e)
+  if (k === 'p') {
     e.preventDefault()
     quickPrompts()
   }
-  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyE') {
+  if (k === 'e') {
     e.preventDefault()
     files.focus()
   }
-  if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'KeyH' || (e.code === 'KeyF' && !tabs.active()?.terminal))) {
+  if (k === 'h' || (k === 'f' && !tabs.active()?.terminal)) {
     e.preventDefault()
-    findInFiles(e.code === 'KeyH')
+    findInFiles(k === 'h')
   }
 })
 // The file browser's git colors come from the panel's status, which isn't read while the panel is hidden.
@@ -410,8 +411,8 @@ win.onFocus(focused => {
 
 // This is an app, not a page: no browser reload, find, print, new window, or context menu. Ctrl+N does what + does.
 addEventListener('keydown', e => {
-  if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === 'n') newSession()
-  if (e.key === 'F5' || (e.ctrlKey && !e.altKey && /^[nrpfguoshj]$/i.test(e.key))) e.preventDefault()
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.repeat && letter(e) === 'n') newSession()
+  if (e.key === 'F5' || (e.ctrlKey && !e.altKey && /^[nrpfguoshj]$/.test(letter(e)))) e.preventDefault()
 })
 addEventListener('contextmenu', e => e.preventDefault())
 

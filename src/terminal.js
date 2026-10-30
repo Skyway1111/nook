@@ -1,11 +1,11 @@
 import { Term } from './term/view.js'
 import { urlLinks } from './term/urls.js'
 import { invoke, Channel } from './host.js'
-import { showPreview, hidePreview } from './ui.js'
+import { showPreview, hidePreview, letter } from './ui.js'
 import { startComposer } from './composer.js'
 import { startPictures } from './pictures.js'
 import { imageStart, FOUND, NONE, clipboardText } from './sequences.js'
-import { startLinks } from './links.js'
+import { startLinks, cells } from './links.js'
 import { startTurns } from './turns.js'
 import { fileUrl } from './linkify.js'
 import { WINDOWS } from './paths.js'
@@ -171,7 +171,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   const turns = startTurns(term, send)
   /** Each key before the program has it: false keeps it from the program. */
   function keys(e) {
-    if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyF') {
+    if (e.ctrlKey && e.shiftKey && !e.altKey && letter(e) === 'f') {
       find()
       e.preventDefault()
       return false
@@ -183,10 +183,10 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     }
     if (e.altKey && e.key === 'F4') return false // the system closes the window
     if (e.ctrlKey && e.key === 'Tab') return false // the tab strip cycles
-    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[PSE]$/.test(e.code)) return false // quick prompts, sessions, file list
+    if (e.ctrlKey && e.shiftKey && !e.altKey && /^[pse]$/.test(letter(e))) return false // quick prompts, sessions, file list
     if (e.ctrlKey && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) return false // the tab strip shows that tab
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'Backslash') return false // the pane splits
-    const ctrl = e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() // with Caps Lock on, Ctrl+C is 'C'
+    const ctrl = e.ctrlKey && !e.shiftKey && !e.altKey && letter(e)
     if (ctrl === 'n') return false // the window opens a Claude tab
     // Let the browser paste, so the paste listener below sees the clipboard.
     if (ctrl === 'v') return false
@@ -224,15 +224,18 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   }, true)
 
   // [Image #N] → hover to preview, click to open. Images live where Claude Code saved them.
+  const cell = term.vt.buffer.getNullCell()
   term.registerLinkProvider({
     provideLinks(y, callback) {
-      const text = term.vt.buffer.getLine(y - 1)?.translateToString(true) ?? ''
+      const line = term.vt.buffer.getLine(y - 1)
+      if (!line?.translateToString(true).includes('[Image #')) return callback([])
+      const { text, xs } = cells(line, term.cols, cell)
       callback([...text.matchAll(/\[Image #(\d+)\]/g)].map(m => {
         const image = () => invoke('session_image', { id, n: Number(m[1]) })
         let hovering = false
         return {
           text: m[0],
-          range: { start: { x: m.index + 1, y }, end: { x: m.index + m[0].length, y } },
+          range: { start: { x: xs[m.index] + 1, y }, end: { x: xs[m.index + m[0].length - 1] + 1, y } },
           hover: async e => {
             hovering = true
             const p = await image()

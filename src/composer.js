@@ -49,7 +49,9 @@ export function startComposer(term, host, id) {
   const frame = card.firstChild
   // Each part repaints only when its own HTML changes, so a keystroke leaves the menus and thumbnails be.
   const parts = Object.fromEntries(['thumbs', 'draft', 'hints', 'chips'].map(k => [k, frame.querySelector(`.${k}`)]))
-  const { screen, rowsEl: rows, marks } = term // marks over the rows, such as search hits, move and clip with them
+  const screen = term.screen
+  // The rows, the selection, marks such as search hits, and pictures move and clip as one.
+  const style = (k, v) => { for (const l of term.layers) l.style[k] = v }
   // The terminal's input textarea and IME text sit beside the screen, which moves and is a layer of its own, so
   // they stay above the card. `follow` lines them up with the card's caret, so composing text shows there.
   const helpers = term.helpers
@@ -238,15 +240,15 @@ export function startComposer(term, host, id) {
     const h = geo.height / term.rows
     const snap = px => Math.round(px * devicePixelRatio) / devicePixelRatio
     const hold = held == null ? 0 : snap((term.rows - held) * h)
-    rows.style.transform = marks.style.transform = hold ? `translateY(${hold}px)` : ''
+    style('transform', hold ? `translateY(${hold}px)` : '')
     if (card.hidden) {
-      rows.style.clipPath = marks.style.clipPath = ''
+      style('clipPath', '')
       screen.style.transform = helpers.style.transform = ''
       term.raise(null)
       return
     }
     const below = shown.block * h
-    rows.style.clipPath = marks.style.clipPath = `inset(0 0 ${below + hold}px 0)`
+    style('clipPath', `inset(0 0 ${below + hold}px 0)`)
     const shift = snap(tall - below)
     taller = shift > 0
     if (held == null) gap = taller ? blanks(term.rows - shown.block) : null // a held frame keeps its rows

@@ -3,7 +3,7 @@
 // `:` goes to a line in the open file, `@` to a symbol in it, `#` to where a name is defined anywhere in the
 // repository, and `%` finds text inside the files. Nothing is indexed until the box first opens, and each later open shows the last index at once while a fresh one builds behind it.
 import { invoke } from './host.js'
-import { $, el } from './ui.js'
+import { $, el, letter } from './ui.js'
 import { rank } from './fuzzy.js'
 import { kind, ICON } from './files.js'
 import { path as paths } from './paths.js'
@@ -360,8 +360,8 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openPath, ope
 
   input.onkeydown = e => {
     const move = d => { e.preventDefault(); at = Math.max(0, Math.min(list.children.length - 1, at + d)); highlight(true) }
-    if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) move(1)
-    else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p' && !e.shiftKey)) move(-1)
+    if (e.key === 'ArrowDown' || (e.ctrlKey && letter(e) === 'n')) move(1)
+    else if (e.key === 'ArrowUp' || (e.ctrlKey && letter(e) === 'p' && !e.shiftKey)) move(-1)
     else if (e.key === 'PageDown') move(10)
     else if (e.key === 'PageUp') move(-10)
     else if (e.key === 'Escape') { e.preventDefault(); close() }
