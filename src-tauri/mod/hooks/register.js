@@ -19,8 +19,9 @@ const TOUCHED = 200 // the most files a report lists
 const sizes = new Map() // a pasted image's path -> its size, as a promise
 const MADE = 3 // the most pictures shown under a command that wrote them
 const made = new Map() // a Bash call's tool_use_id -> the pictures it wrote, as a promise of [path, size]
-const MERMAID = /^```mermaid[^\n]*\n([\s\S]*?)\n```[ \t]*$/gm // a reply's mermaid blocks, each closed
-const SVG = /^```(?:svg|xml|html)?[ \t]*\n((?:<\?xml[^\n]*\n)?<svg\b[\s\S]*?<\/svg>)[ \t]*\n```[ \t]*$/gm // a reply's SVG blocks, whole
+// A reply's mermaid blocks, each closed, and its SVG blocks, whole: at any indent, as in a list item
+const MERMAID = /^([ \t]*)```mermaid[^\n]*\n([\s\S]*?)\n[ \t]*```[ \t]*$/gm
+const SVG = /^([ \t]*)```(?:svg|xml|html)?[ \t]*\n((?:[ \t]*<\?xml[^\n]*\n)?[ \t]*<svg\b[\s\S]*?<\/svg>)[ \t]*\n[ \t]*```[ \t]*$/gm
 const SVG_ROWS = 8 // the fewest rows a reply's SVG takes: it scales, and an icon's own size is a few cells
 const MATH = /^[ \t]*(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])[ \t]*$/gm // a reply's display formulas, $$ … $$ or \[ … \], on lines of their own
 const MATH_ROWS = 20 // the tallest formula, in rows
@@ -748,18 +749,23 @@ export function plainInline(text) {
     .map((part, i) => (i % 2 ? part : part.replace(INLINE, (m, tex) => plainMath(tex) ?? m))).join('')
 }
 
+/** A fenced block's lines with its fence's indent, `n` columns, taken off, as far as each line has it. */
+const dedent = (code, n) => (n ? code.split('\n').map(l => l.slice(Math.min(n, l.length - l.trimStart().length))).join('\n') : code)
+
 /** A reply's text cut at its mermaid blocks, display formulas, and SVG blocks: [text, [kind, source], text, …],
- * where kind is `mermaid`, `math`, or `svg`. A formula inside another code block stays in the text, and an SVG
- * block stays at the end of the text before its picture, so its source still shows. */
+ * where kind is `mermaid`, `math`, or `svg`. One inside another code block stays in the text, and an SVG block
+ * stays at the end of the text before its picture, so its source still shows. */
 export function splitBlocks(text) {
   const code = []
   for (const m of text.matchAll(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*\1[ \t]*$|(?![\s\S]))/gm)) code.push([m.index, m.index + m[0].length])
+  const fenced = kind => m => [m.index, m[0].length, kind, dedent(m[2], m[1].length)]
   const found = [
-    ...Array.from(text.matchAll(MERMAID), m => [m.index, m[0].length, 'mermaid', m[1]]),
-    ...Array.from(text.matchAll(SVG), m => [m.index, m[0].length, 'svg', m[1]]),
-    ...Array.from(text.matchAll(MATH), m => [m.index, m[0].length, 'math', (m[1] ?? m[2]).trim()])
-      .filter(([at, , , source]) => source && !code.some(([a, b]) => at >= a && at < b)),
-  ].sort((a, b) => a[0] - b[0])
+    ...Array.from(text.matchAll(MERMAID), fenced('mermaid')),
+    ...Array.from(text.matchAll(SVG), fenced('svg')),
+  ].filter(([at]) => !code.some(([a, b]) => at > a && at < b)) // a block's own fence starts its code
+  found.push(...Array.from(text.matchAll(MATH), m => [m.index, m[0].length, 'math', (m[1] ?? m[2]).trim()])
+    .filter(([at, , , source]) => source && !code.some(([a, b]) => at >= a && at < b)))
+  found.sort((a, b) => a[0] - b[0])
   const pieces = []
   let at = 0
   for (const [index, length, kind, source] of found) {
@@ -779,8 +785,7 @@ export function splitCode(text) {
   const pieces = []
   let at = 0
   for (const m of text.matchAll(/^([ \t]*)(`{3,}|~{3,})([^\n]*)\n([\s\S]*?)\n?^[ \t]*\2[ \t]*$/gm)) {
-    const indent = m[1].length
-    const code = m[4].split('\n').map(l => l.slice(Math.min(indent, l.length - l.trimStart().length))).join('\n')
+    const code = dedent(m[4], m[1].length)
     if (!code.trim()) continue
     pieces.push(text.slice(at, m.index + m[0].length).trim(), { code, lang: m[3].trim().split(/\s/)[0].toLowerCase() })
     at = m.index + m[0].length
