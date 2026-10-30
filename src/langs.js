@@ -20,42 +20,153 @@
 //   indents the next one; `dedent` a line that dedents as it's typed; `fold` 'brace', 'indent' or 'heading';
 //   `prose` wraps and doesn't close brackets.
 
-const C_KW = 'auto break case const continue default do else enum extern for goto if inline register restrict return sizeof static struct switch typedef union volatile while _Complex _Atomic _Alignas _Alignof _Noreturn _Static_assert _Thread_local'
-const CPP_KW = 'alignas alignof and asm catch class co_await co_return co_yield concept consteval constexpr constinit const_cast decltype delete dynamic_cast explicit export friend mutable namespace new noexcept not operator or private protected public reinterpret_cast requires static_assert static_cast template this thread_local throw try typeid typename using virtual override final nullptr'
-const C_TYPES = 'char double float int long short signed unsigned void _Bool size_t ssize_t ptrdiff_t intptr_t uintptr_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t wchar_t FILE bool'
-const JS_KW = 'break case catch class const continue debugger default delete do else export extends finally for function if import in instanceof let new return super switch this throw try typeof var void while with yield await of null async static get set from as'
-const TS_KW = JS_KW + ' type interface enum namespace module declare abstract implements private protected public readonly override keyof infer is satisfies unique asserts accessor'
+const C_KW = `
+  auto break case const continue default do else enum extern for goto if inline register restrict return sizeof static
+  struct switch typedef union volatile while _Complex _Atomic _Alignas _Alignof _Noreturn _Static_assert _Thread_local
+`
+const CPP_KW = `
+  alignas alignof and asm catch class co_await co_return co_yield concept consteval constexpr constinit const_cast
+  decltype delete dynamic_cast explicit export friend mutable namespace new noexcept not operator or private protected
+  public reinterpret_cast requires static_assert static_cast template this thread_local throw try typeid typename using
+  virtual override final nullptr
+`
+const C_TYPES = `
+  char double float int long short signed unsigned void _Bool size_t ssize_t ptrdiff_t intptr_t uintptr_t int8_t int16_t
+  int32_t int64_t uint8_t uint16_t uint32_t uint64_t wchar_t FILE bool
+`
+const JS_KW = `
+  break case catch class const continue debugger default delete do else export extends finally for function if import in
+  instanceof let new return super switch this throw try typeof var void while with yield await of null async static get
+  set from as
+`
+const TS_KW = JS_KW + `
+  type interface enum namespace module declare abstract implements private protected public readonly override keyof
+  infer is satisfies unique asserts accessor
+`
 const JS_DEFS = 'function=d class=c const=d let=d var=d'
 const TS_DEFS = JS_DEFS + ' interface=t type=t enum=t namespace=n module=n'
 const TS_TYPES = 'string number boolean any unknown never void object bigint symbol undefined'
-const JAVA_KW = 'abstract assert break case catch class const continue default do else enum extends final finally for goto if implements import instanceof interface native new package private protected public return static strictfp super switch synchronized this throw throws transient try volatile while var record sealed permits yield null void'
+const JAVA_KW = `
+  abstract assert break case catch class const continue default do else enum extends final finally for goto if
+  implements import instanceof interface native new package private protected public return static strictfp super switch
+  synchronized this throw throws transient try volatile while var record sealed permits yield null void
+`
 const JAVA_TYPES = 'boolean byte char double float int long short'
-const CS_KW = 'abstract as base break case catch checked class const continue default delegate do else enum event explicit extern finally fixed for foreach goto if implicit in interface internal is lock namespace new null operator out override params private protected public readonly ref return sealed sizeof stackalloc static struct switch this throw try typeof unchecked unsafe using virtual void volatile while async await var dynamic get set init value when where yield record required nameof global partial'
+const CS_KW = `
+  abstract as base break case catch checked class const continue default delegate do else enum event explicit extern
+  finally fixed for foreach goto if implicit in interface internal is lock namespace new null operator out override
+  params private protected public readonly ref return sealed sizeof stackalloc static struct switch this throw try
+  typeof unchecked unsafe using virtual void volatile while async await var dynamic get set init value when where yield
+  record required nameof global partial
+`
 const CS_TYPES = 'bool byte char decimal double float int long object sbyte short string uint ulong ushort nint nuint'
-const KT_KW = 'as break class continue do else for fun if in interface is object package return super this throw try typealias typeof val var when while by catch constructor delegate dynamic field file finally get import init param property receiver set setparam where actual abstract annotation companion const crossinline data enum expect external final infix inline inner internal lateinit noinline open operator out override private protected public reified sealed suspend tailrec vararg null'
-const KT_TYPES = 'Any Boolean Byte Char Double Float Int Long Nothing Short String Unit Array List Map Set MutableList MutableMap Exception'
-const SWIFT_KW = 'associatedtype class deinit enum extension fileprivate func import init inout internal let open operator private precedencegroup protocol public rethrows static struct subscript typealias var break case catch continue default defer do else fallthrough for guard if in repeat return throw throws switch where while as await async is super self Self try nil final lazy mutating nonmutating override required weak unowned convenience dynamic indirect optional willSet didSet get set actor nonisolated isolated consume borrowing consuming'
-const SWIFT_TYPES = 'Int Int8 Int16 Int32 Int64 UInt UInt8 UInt16 UInt32 UInt64 Float Double Bool String Character Void Array Dictionary Set Optional Any AnyObject Error'
-const DART_KW = 'abstract as assert async await base break case catch class const continue covariant default deferred do else enum export extends extension external factory final finally for get hide if implements import in interface is late library mixin new null on operator part required rethrow return sealed set show static super switch sync this throw try typedef when while with yield'
-const SCALA_KW = 'abstract case catch class def do else extends final finally for forSome if implicit import lazy match new null object override package private protected return sealed super this throw trait try type val var while with yield given using enum export then end derives extension inline opaque transparent'
-const PY_KW = 'and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield None'
-const RUBY_KW = 'BEGIN END alias and begin break case class def defined? do else elsif end ensure for if in module next nil not or redo rescue retry return self super then undef unless until when while yield __FILE__ __LINE__ __method__ raise require require_relative'
-const PHP_KW = 'abstract and array as break callable case catch class clone const continue declare default do echo else elseif empty readonly enddeclare endfor endforeach endif endswitch endwhile enum eval exit extends final finally fn for foreach function global goto if implements include include_once instanceof insteadof interface isset list match namespace new or print private protected public readonly require require_once return static switch throw trait try unset use var while xor yield null self parent'
-const SH_KW = 'if then else elif fi case esac for select while until do done in function time coproc return exit break continue local export readonly declare typeset unset shift source alias set eval exec trap'
-const SH_BUILTIN = 'echo printf read cd pwd test true false kill wait cat ls grep sed awk find mkdir rm cp mv chmod chown touch'
-const PS_KW = 'begin break catch class continue data define do dynamicparam else elseif end enum exit filter finally for foreach from function hidden if in param process return static switch throw trap try until using var while workflow parallel sequence inlinescript configuration'
-const SQL_KW = 'select from where and or not insert into values update set delete create table drop alter add column index view trigger procedure function returns return begin end declare if else case when then join inner left right full outer cross on using group by order having limit offset union all distinct as is in exists between like ilike primary key foreign references unique check default constraint with recursive asc desc grant revoke commit rollback transaction replace temporary temp database schema cascade auto_increment explain analyze vacuum pragma natural over partition window lateral returning conflict do nothing merge matched collate escape'
-const SQL_TYPES = 'int integer smallint bigint tinyint decimal numeric real float double precision char varchar nchar nvarchar text blob boolean bool date time timestamp datetime interval serial bigserial uuid json jsonb bytea money bit binary varbinary'
+const KT_KW = `
+  as break class continue do else for fun if in interface is object package return super this throw try typealias typeof
+  val var when while by catch constructor delegate dynamic field file finally get import init param property receiver
+  set setparam where actual abstract annotation companion const crossinline data enum expect external final infix inline
+  inner internal lateinit noinline open operator out override private protected public reified sealed suspend tailrec
+  vararg null
+`
+const KT_TYPES = `
+  Any Boolean Byte Char Double Float Int Long Nothing Short String Unit Array List Map Set MutableList MutableMap
+  Exception
+`
+const SWIFT_KW = `
+  associatedtype class deinit enum extension fileprivate func import init inout internal let open operator private
+  precedencegroup protocol public rethrows static struct subscript typealias var break case catch continue default defer
+  do else fallthrough for guard if in repeat return throw throws switch where while as await async is super self Self
+  try nil final lazy mutating nonmutating override required weak unowned convenience dynamic indirect optional willSet
+  didSet get set actor nonisolated isolated consume borrowing consuming
+`
+const SWIFT_TYPES = `
+  Int Int8 Int16 Int32 Int64 UInt UInt8 UInt16 UInt32 UInt64 Float Double Bool String Character Void Array Dictionary
+  Set Optional Any AnyObject Error
+`
+const DART_KW = `
+  abstract as assert async await base break case catch class const continue covariant default deferred do else enum
+  export extends extension external factory final finally for get hide if implements import in interface is late library
+  mixin new null on operator part required rethrow return sealed set show static super switch sync this throw try
+  typedef when while with yield
+`
+const SCALA_KW = `
+  abstract case catch class def do else extends final finally for forSome if implicit import lazy match new null object
+  override package private protected return sealed super this throw trait try type val var while with yield given using
+  enum export then end derives extension inline opaque transparent
+`
+const PY_KW = `
+  and as assert async await break class continue def del elif else except finally for from global if import in is lambda
+  nonlocal not or pass raise return try while with yield None
+`
+const RUBY_KW = `
+  BEGIN END alias and begin break case class def defined? do else elsif end ensure for if in module next nil not or redo
+  rescue retry return self super then undef unless until when while yield __FILE__ __LINE__ __method__ raise require
+  require_relative
+`
+const PHP_KW = `
+  abstract and array as break callable case catch class clone const continue declare default do echo else elseif empty
+  readonly enddeclare endfor endforeach endif endswitch endwhile enum eval exit extends final finally fn for foreach
+  function global goto if implements include include_once instanceof insteadof interface isset list match namespace new
+  or print private protected public readonly require require_once return static switch throw trait try unset use var
+  while xor yield null self parent
+`
+const SH_KW = `
+  if then else elif fi case esac for select while until do done in function time coproc return exit break continue local
+  export readonly declare typeset unset shift source alias set eval exec trap
+`
+const SH_BUILTIN = `
+  echo printf read cd pwd test true false kill wait cat ls grep sed awk find mkdir rm cp mv chmod chown touch
+`
+const PS_KW = `
+  begin break catch class continue data define do dynamicparam else elseif end enum exit filter finally for foreach from
+  function hidden if in param process return static switch throw trap try until using var while workflow parallel
+  sequence inlinescript configuration
+`
+const SQL_KW = `
+  select from where and or not insert into values update set delete create table drop alter add column index view
+  trigger procedure function returns return begin end declare if else case when then join inner left right full outer
+  cross on using group by order having limit offset union all distinct as is in exists between like ilike primary key
+  foreign references unique check default constraint with recursive asc desc grant revoke commit rollback transaction
+  replace temporary temp database schema cascade auto_increment explain analyze vacuum pragma natural over partition
+  window lateral returning conflict do nothing merge matched collate escape
+`
+const SQL_TYPES = `
+  int integer smallint bigint tinyint decimal numeric real float double precision char varchar nchar nvarchar text blob
+  boolean bool date time timestamp datetime interval serial bigserial uuid json jsonb bytea money bit binary varbinary
+`
 const LUA_KW = 'and break do else elseif end for function if in local not or repeat return then until while nil'
-const GO_KW = 'break case chan const continue defer else fallthrough for func go goto if import interface map package range return select struct switch type var nil'
-const GO_TYPES = 'bool byte complex64 complex128 error float32 float64 int int8 int16 int32 int64 rune string uint uint8 uint16 uint32 uint64 uintptr any comparable'
-const RUST_KW = 'as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref return self static struct super trait type unsafe use where while union macro_rules yield'
+const GO_KW = `
+  break case chan const continue defer else fallthrough for func go goto if import interface map package range return
+  select struct switch type var nil
+`
+const GO_TYPES = `
+  bool byte complex64 complex128 error float32 float64 int int8 int16 int32 int64 rune string uint uint8 uint16 uint32
+  uint64 uintptr any comparable
+`
+const RUST_KW = `
+  as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref
+  return self static struct super trait type unsafe use where while union macro_rules yield
+`
 const RUST_TYPES = 'bool char str u8 u16 u32 u64 u128 usize i8 i16 i32 i64 i128 isize f32 f64'
-const PERL_KW = 'my our local sub package use require no if elsif else unless while until for foreach do last next redo return and or not eq ne lt gt le ge cmp defined undef bless ref print say die warn eval wantarray sprintf printf splice push pop shift unshift join split keys values each exists delete map grep sort reverse open close chomp lc uc length substr index scalar wantarray local'
+const PERL_KW = `
+  my our local sub package use require no if elsif else unless while until for foreach do last next redo return and or
+  not eq ne lt gt le ge cmp defined undef bless ref print say die warn eval wantarray sprintf printf splice push pop
+  shift unshift join split keys values each exists delete map grep sort reverse open close chomp lc uc length substr
+  index scalar wantarray local
+`
 const R_KW = 'if else repeat while function for in next break switch'
-const GD_KW = 'if elif else for while match break continue pass return class class_name extends is in as self signal func static const enum var await preload yield assert breakpoint super not and or onready export tool'
-const HS_KW = 'case class data default deriving do else foreign if import in infix infixl infixr instance let module newtype of then type where qualified as hiding forall'
-const BAT_KW = 'echo set if else goto call exit for in do not exist defined errorlevel equ neq lss leq gtr geq setlocal endlocal enabledelayedexpansion enableextensions shift pushd popd cd chdir start pause rem title cls copy del move mkdir md rmdir rd type ren find findstr choice'
+const GD_KW = `
+  if elif else for while match break continue pass return class class_name extends is in as self signal func static
+  const enum var await preload yield assert breakpoint super not and or onready export tool
+`
+const HS_KW = `
+  case class data default deriving do else foreign if import in infix infixl infixr instance let module newtype of then
+  type where qualified as hiding forall
+`
+const BAT_KW = `
+  echo set if else goto call exit for in do not exist defined errorlevel equ neq lss leq gtr geq setlocal endlocal
+  enabledelayedexpansion enableextensions shift pushd popd cd chdir start pause rem title cls copy del move mkdir md
+  rmdir rd type ren find findstr choice
+`
 const CSS_DEDENT = /^\s*\}$/
 const BRACE = /^\s*[}\])]$/
 
@@ -64,72 +175,296 @@ const clike = { line: '//', block: '/* */', q: '"\'', prop: 1, fold: 'brace', in
 /** The table: the first language naming an extension or alias wins. */
 export const LANGS = [
   { name: 'Plain text', lex: '', names: 'txt text plain plaintext', prose: 1 },
-  { ...clike, name: 'JavaScript', names: 'js mjs cjs javascript node ecmascript', ml: '`', q: '"\'`', interp: '`j', re: 1, track: 1, kw: JS_KW, soft: 'async static get set of from as', bool: 'true false', defs: JS_DEFS, word: '$', close: '()[]{}\'\'""``', meta: '@', dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
-  { ...clike, name: 'TypeScript', names: 'ts mts cts typescript', ml: '`', q: '"\'`', interp: '`j', re: 1, track: 1, kw: TS_KW, soft: 'async static get set of from as type interface namespace module declare abstract implements readonly override keyof infer is satisfies unique asserts accessor private protected public', bool: 'true false', types: TS_TYPES, ts: 1, defs: TS_DEFS, word: '$', close: '()[]{}\'\'""``', meta: '@', dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
-  { ...clike, name: 'JSX', names: 'jsx', ml: '`', q: '"\'`', interp: '`j', re: 1, track: 1, jsx: 1, kw: JS_KW, soft: 'async static get set of from as', bool: 'true false', defs: JS_DEFS, word: '$', close: '()[]{}\'\'""``', meta: '@', dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
-  { ...clike, name: 'TSX', names: 'tsx', ml: '`', q: '"\'`', interp: '`j', re: 1, track: 1, jsx: 1, kw: TS_KW, soft: 'async static get set of from as type interface namespace module declare abstract implements readonly override keyof infer is satisfies unique asserts accessor private protected public', bool: 'true false', types: TS_TYPES, ts: 1, defs: TS_DEFS, word: '$', close: '()[]{}\'\'""``', meta: '@', dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
-  { name: 'JSON', names: 'json json5 map jsonld webmanifest', files: /^\.?(babelrc|eslintrc|prettierrc|swcrc)$/, q: '"', keys: 2, bool: 'true false', kw: 'null', fold: 'brace', indent: /[{[]\s*$/, dedent: BRACE },
-  { name: 'JSON with comments', names: 'jsonc code-workspace', files: /^(tsconfig|jsconfig)(\..+)?\.json$/, line: '//', block: '/* */', q: '"', keys: 2, bool: 'true false', kw: 'null', fold: 'brace', indent: /[{[]\s*$/, dedent: BRACE },
-  { name: 'Jupyter notebook', names: 'ipynb', q: '"', keys: 2, bool: 'true false', kw: 'null', fold: 'brace', indent: /[{[]\s*$/, dedent: BRACE },
-  { name: 'CSS', lex: 'css', names: 'css', block: '/* */', word: '-', fold: 'brace', indent: /[{(]\s*$/, dedent: CSS_DEDENT },
-  { name: 'SCSS', lex: 'css', names: 'scss sass', line: '//', block: '/* */', word: '-', fold: 'brace', indent: /[{(]\s*$/, dedent: CSS_DEDENT },
-  { name: 'Less', lex: 'css', names: 'less', line: '//', block: '/* */', word: '-', fold: 'brace', indent: /[{(]\s*$/, dedent: CSS_DEDENT },
-  { name: 'HTML', lex: 'markup', names: 'html htm xhtml shtml handlebars hbs', html: 1, block: '<!-- -->', word: '-', fold: 'indent', close: '()[]{}\'\'""', indent: /<[^/!?][^>]*[^/]>\s*$/, dedent: /^\s*<\/\w/ },
-  { name: 'Vue', lex: 'markup', names: 'vue svelte astro', html: 1, block: '<!-- -->', word: '-', fold: 'indent', close: '()[]{}\'\'""', indent: /(<[^/!?][^>]*[^/]>|[{([])\s*$/, dedent: /^\s*(<\/\w|[}\])])/ },
-  { name: 'XML', lex: 'markup', names: 'xml xsl xslt xsd svg rss atom plist wsdl xaml csproj fsproj vbproj props targets resx manifest config', block: '<!-- -->', word: '-', fold: 'indent', close: '()[]{}\'\'""', indent: /<[^/!?][^>]*[^/]>\s*$/, dedent: /^\s*<\/\w/ },
+  { ...clike, name: 'JavaScript', names: 'js mjs cjs javascript node ecmascript', ml: '`', q: '"\'`', interp: '`j',
+    re: 1, track: 1, kw: JS_KW, soft: 'async static get set of from as', bool: 'true false', defs: JS_DEFS, word: '$',
+    close: '()[]{}\'\'""``', meta: '@', dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
+  { ...clike, name: 'TypeScript', names: 'ts mts cts typescript', ml: '`', q: '"\'`', interp: '`j', re: 1, track: 1,
+    kw: TS_KW,
+    soft: `
+      async static get set of from as type interface namespace module declare abstract implements readonly override
+      keyof infer is satisfies unique asserts accessor private protected public
+    `,
+    bool: 'true false', types: TS_TYPES, ts: 1, defs: TS_DEFS, word: '$', close: '()[]{}\'\'""``', meta: '@',
+    dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
+  { ...clike, name: 'JSX', names: 'jsx', ml: '`', q: '"\'`', interp: '`j', re: 1, track: 1, jsx: 1, kw: JS_KW,
+    soft: 'async static get set of from as', bool: 'true false', defs: JS_DEFS, word: '$', close: '()[]{}\'\'""``',
+    meta: '@', dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
+  { ...clike, name: 'TSX', names: 'tsx', ml: '`', q: '"\'`', interp: '`j', re: 1, track: 1, jsx: 1, kw: TS_KW,
+    soft: `
+      async static get set of from as type interface namespace module declare abstract implements readonly override
+      keyof infer is satisfies unique asserts accessor private protected public
+    `,
+    bool: 'true false', types: TS_TYPES, ts: 1, defs: TS_DEFS, word: '$', close: '()[]{}\'\'""``', meta: '@',
+    dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
+  { name: 'JSON', names: 'json json5 map jsonld webmanifest', files: /^\.?(babelrc|eslintrc|prettierrc|swcrc)$/, q: '"',
+    keys: 2, bool: 'true false', kw: 'null', fold: 'brace', indent: /[{[]\s*$/, dedent: BRACE },
+  { name: 'JSON with comments', names: 'jsonc code-workspace', files: /^(tsconfig|jsconfig)(\..+)?\.json$/, line: '//',
+    block: '/* */', q: '"', keys: 2, bool: 'true false', kw: 'null', fold: 'brace', indent: /[{[]\s*$/, dedent: BRACE },
+  { name: 'Jupyter notebook', names: 'ipynb', q: '"', keys: 2, bool: 'true false', kw: 'null', fold: 'brace',
+    indent: /[{[]\s*$/, dedent: BRACE },
+  { name: 'CSS', lex: 'css', names: 'css', block: '/* */', word: '-', fold: 'brace', indent: /[{(]\s*$/,
+    dedent: CSS_DEDENT },
+  { name: 'SCSS', lex: 'css', names: 'scss sass', line: '//', block: '/* */', word: '-', fold: 'brace',
+    indent: /[{(]\s*$/, dedent: CSS_DEDENT },
+  { name: 'Less', lex: 'css', names: 'less', line: '//', block: '/* */', word: '-', fold: 'brace', indent: /[{(]\s*$/,
+    dedent: CSS_DEDENT },
+  { name: 'HTML', lex: 'markup', names: 'html htm xhtml shtml handlebars hbs', html: 1, block: '<!-- -->', word: '-',
+    fold: 'indent', close: '()[]{}\'\'""', indent: /<[^/!?][^>]*[^/]>\s*$/, dedent: /^\s*<\/\w/ },
+  { name: 'Vue', lex: 'markup', names: 'vue svelte astro', html: 1, block: '<!-- -->', word: '-', fold: 'indent',
+    close: '()[]{}\'\'""', indent: /(<[^/!?][^>]*[^/]>|[{([])\s*$/, dedent: /^\s*(<\/\w|[}\])])/ },
+  { name: 'XML', lex: 'markup',
+    names: 'xml xsl xslt xsd svg rss atom plist wsdl xaml csproj fsproj vbproj props targets resx manifest config',
+    block: '<!-- -->', word: '-', fold: 'indent', close: '()[]{}\'\'""', indent: /<[^/!?][^>]*[^/]>\s*$/,
+    dedent: /^\s*<\/\w/ },
   { name: 'Markdown', lex: 'markdown', names: 'md markdown mkd mdx', prose: 1, block: '<!-- -->', fold: 'heading' },
-  { name: 'Python', names: 'py pyw pyi python python3 py3 bzl gyp', files: /^(BUCK|BUILD|SConstruct|SConscript)$/, line: '#', q: '"\'', tq: '"\'', pre: 'py', kw: PY_KW, soft: 'match case type', bool: 'True False', defs: 'def=d class=c', prop: 1, meta: '@', fold: 'indent', close: '()[]{}\'\'""', indent: /:\s*(#.*)?$/, dedent: /^\s*(?:else:|elif .*:|except.*:|finally:)$/ },
-  { ...clike, name: 'Rust', names: 'rs rust', ml: '"', track: 1, pre: 'rs', nest: 1, kw: RUST_KW, bool: 'true false', types: RUST_TYPES, caps: 1, defs: 'fn=d struct=t enum=t trait=t type=t union=t mod=d const=d static=d', rust: 1, close: '()[]{}""' },
-  { ...clike, name: 'Go', names: 'go golang', rq: '`', ml: '`', track: 1, kw: GO_KW, bool: 'true false', types: GO_TYPES, defs: 'func=d type=t var=d const=d package=d', go: 1, close: '()[]{}\'\'""``' },
-  { ...clike, name: 'C', names: 'c h ino', pp: 1, decl: 1, kw: C_KW, kwAtoms: 'NULL', bool: 'true false', types: C_TYPES, defs: 'struct=t union=t enum=t', cfn: 1 },
-  { ...clike, name: 'C++', names: 'cpp c++ cc cxx hpp h++ hh hxx ipp tpp inl cu cuh mm m objc objective-c', pp: 1, decl: 1, pre: 'cpp', kw: C_KW + ' ' + CPP_KW, bool: 'true false', types: C_TYPES + ' bool wchar_t char8_t char16_t char32_t auto', defs: 'struct=t union=t enum=t class=t namespace=n', cfn: 1 },
-  { ...clike, name: 'C#', names: 'cs csharp c# csx cake', cs: 1, kw: CS_KW, soft: 'init value where yield record required nameof global partial var dynamic async await', bool: 'true false', types: CS_TYPES, defs: 'class=d interface=d struct=d record=d delegate=d var=d', prop: 0 },
-  { ...clike, name: 'Java', names: 'java jav', tq: '"', decl: 1, kw: JAVA_KW, soft: 'var record sealed permits yield', bool: 'true false', types: JAVA_TYPES, caps: 1, defs: 'class=d interface=d enum=d record=d', jfn: 1, prop: 0, caps: 0 },
-  { ...clike, name: 'Kotlin', names: 'kt kts kotlin', tq: '"', kw: KT_KW, bool: 'true false', types: KT_TYPES, defs: 'class=d interface=d object=d fun=d val=d var=d typealias=d', meta: 'w', nest: 1, prop: 0 },
-  { ...clike, name: 'Swift', names: 'swift', tq: '"', swift: 1, kw: SWIFT_KW, bool: 'true false', types: SWIFT_TYPES, defs: 'class=d struct=d enum=d protocol=d extension=d func=d let=d var=d typealias=d actor=d import=d', meta: 'w', nest: 1, prop: 1 },
-  { ...clike, name: 'Dart', names: 'dart', tq: '"\'', pre: 'dart', caps: 1, kw: DART_KW, bool: 'true false', defs: 'class=t enum=t mixin=t extension=t typedef=t', meta: 'w', prop: 0 },
-  { ...clike, name: 'Scala', names: 'scala sc sbt', tq: '"', pre: 'scala', kw: SCALA_KW + ' _', types: 'Int Long Short Byte Char Float Double Boolean Unit String Any AnyRef AnyVal Nothing Null Option Some None List Seq Map Set Vector Array Iterator Future Either Left Right BigInt BigDecimal Throwable Exception', bool: 'true false', defs: 'class=d object=d trait=d def=d val=d var=d type=d enum=d given=d package=d', meta: 'w', nest: 1, prop: 0 },
-  { ...clike, name: 'Groovy', names: 'groovy gradle gvy', files: /^Jenkinsfile$/, line: '//', tq: '"\'', kw: JAVA_KW + ' def as in trait', bool: 'true false', types: JAVA_TYPES, defs: 'class=d interface=d enum=d trait=d def=d', meta: 'w', prop: 0 },
-  { ...clike, name: 'PHP', lex: 'php', names: 'php php3 php4 php5 php7 php8 phtml', line: '// #', q: '"\'', ml: '"\'', interp: '"k', php: 1, ci: 1, kw: PHP_KW, bool: 'true false', defs: 'function=d class=c interface=c trait=c enum=c namespace=n', vars: '$', word: '$', close: '()[]{}\'\'""' },
-  { name: 'Ruby', names: 'rb ruby rbw rake gemspec ru jruby', files: /^(Gemfile|Rakefile|Podfile|Vagrantfile|Brewfile|Guardfile|Fastfile)$/, line: '#', q: '"\'`', ml: '"\'`', interp: '"b`b', heredoc: 'rb', ruby: 1, re: 1, kw: RUBY_KW, bool: 'true false', caps: 1, defs: 'def=d class=t module=t', prop: 1, vars: '@$', word: '?!', fold: 'indent', close: '()[]{}\'\'""||', indent: /^\s*(?:def|class|module|if|unless|case|while|until|for|begin|else|elsif|when|rescue|ensure)\b.*$|\bdo(\s*\|[^|]*\|)?\s*$|[{([]\s*$/, dedent: /^\s*(?:end|else|elsif|when|rescue|ensure)$/ },
-  { name: 'Lua', names: 'lua luau rockspec', line: '--', q: '"\'', lua: 1, kw: LUA_KW, bool: 'true false', fold: 'indent', close: '()[]{}\'\'""', indent: /(?:\bthen|\bdo|\bfunction\s*[\w.:]*\s*\([^)]*\)|\belse|\brepeat|[{([])\s*$/, dedent: /^\s*(?:end|else|elseif|until)$/ },
-  { name: 'Shell', names: 'sh bash zsh ksh fish shell shellscript console bats command', files: /^(\.?(bashrc|bash_profile|bash_logout|zshrc|zprofile|zshenv|profile)|PKGBUILD|APKBUILD|configure)$/, line: '#', q: '"', rq: '\'', ml: '"\'', interp: '"h', heredoc: 'sh', sh: 1, kw: SH_KW, defs: 'function=d', vars: '$', fold: 'brace', close: '()[]{}\'\'""``', indent: /(?:\bthen|\bdo|\{|\(|\belse|\bin)\s*$/, dedent: /^\s*(?:fi|done|esac|else|elif.*|\}|;;)$/ },
-  { name: 'PowerShell', names: 'ps1 psm1 psd1 pwsh powershell posh', line: '#', block: '<# #>', q: '"', rq: '\'', ml: '"\'', interp: '"p', heredoc: 'ps', ps: 1, ci: 1, kw: PS_KW, vars: '$', word: '-$', fold: 'brace', close: '()[]{}\'\'""', indent: /[{([]\s*$/, dedent: BRACE },
-  { name: 'Batch', lex: 'bat', names: 'bat cmd batch', ci: 1, kw: BAT_KW, close: '()""%%', fold: 'brace', indent: /\(\s*$/, dedent: /^\s*\)$/ },
-  { name: 'SQL', names: 'sql pgsql plsql mysql sqlite psql ddl dml cql hql', line: '--', block: '/* */', q: '"', rq: '\'', ml: '\'', qi: '`', ci: 1, kw: SQL_KW + ' count sum avg min max coalesce nullif cast current_timestamp current_date current_time now concat substring upper lower trim length round abs ifnull', bool: 'true false', kwAtoms: 'null', types: SQL_TYPES, fold: 'brace', close: '()[]{}\'\'""``', indent: /\(\s*$/, dedent: /^\s*\)$/ },
-  { name: 'YAML', lex: 'yaml', names: 'yaml yml', files: /^\.?(clang-format|clangd)$/, line: '#', fold: 'indent', close: '()[]{}\'\'""', indent: /:\s*(#.*)?$|^\s*-\s*$/ },
-  { name: 'TOML', lex: 'ini', names: 'toml', files: /^(Cargo\.lock|Pipfile|poetry\.lock|uv\.lock)$/, toml: 1, line: '#', fold: 'indent', close: '()[]{}\'\'""' },
-  { name: 'INI', lex: 'ini', names: 'ini cfg conf cnf properties prefs reg inf desktop service editorconfig gitconfig npmrc env', files: /^\.?(env(\..*)?|gitconfig|gitmodules|editorconfig|npmrc|pypirc|flake8|pylintrc|coveragerc)$/, line: '# ;', fold: 'indent', close: '()[]{}\'\'""' },
-  { name: 'Dockerfile', lex: 'docker', names: 'dockerfile containerfile', files: /^(Dockerfile|Containerfile)(\..*)?$|\.dockerfile$/i, line: '#', q: '"', rq: '\'', docker: 1, ci: 1, kw: 'from as run cmd label maintainer expose env add copy entrypoint volume user workdir arg onbuild stopsignal healthcheck shell', fold: 'indent', close: '()[]{}\'\'""' },
-  { name: 'Makefile', lex: 'make', names: 'mk mak make makefile', files: /^(GNUmakefile|makefile|Makefile|.*\.mk)$/, line: '#', q: '"', rq: '\'', vars: '$', kw: 'include sinclude ifeq ifneq ifdef ifndef else endif define endef export unexport override private vpath', fold: 'indent', close: '()[]{}\'\'""' },
-  { name: 'CMake', names: 'cmake', files: /^CMakeLists\.txt$/, line: '#', q: '"', ml: '"', interp: '"h', vars: '$', ci: 1, kw: 'if else elseif endif foreach endforeach while endwhile function endfunction macro endmacro return set unset option project add_executable add_library target_link_libraries target_include_directories include find_package message install', fold: 'indent', close: '()""' },
+  { name: 'Python', names: 'py pyw pyi python python3 py3 bzl gyp', files: /^(BUCK|BUILD|SConstruct|SConscript)$/,
+    line: '#', q: '"\'', tq: '"\'', pre: 'py', kw: PY_KW, soft: 'match case type', bool: 'True False',
+    defs: 'def=d class=c', prop: 1, meta: '@', fold: 'indent', close: '()[]{}\'\'""', indent: /:\s*(#.*)?$/,
+    dedent: /^\s*(?:else:|elif .*:|except.*:|finally:)$/ },
+  { ...clike, name: 'Rust', names: 'rs rust', ml: '"', track: 1, pre: 'rs', nest: 1, kw: RUST_KW, bool: 'true false',
+    types: RUST_TYPES, caps: 1, defs: 'fn=d struct=t enum=t trait=t type=t union=t mod=d const=d static=d', rust: 1,
+    close: '()[]{}""' },
+  { ...clike, name: 'Go', names: 'go golang', rq: '`', ml: '`', track: 1, kw: GO_KW, bool: 'true false',
+    types: GO_TYPES, defs: 'func=d type=t var=d const=d package=d', go: 1, close: '()[]{}\'\'""``' },
+  { ...clike, name: 'C', names: 'c h ino', pp: 1, decl: 1, kw: C_KW, kwAtoms: 'NULL', bool: 'true false',
+    types: C_TYPES, defs: 'struct=t union=t enum=t', cfn: 1 },
+  { ...clike, name: 'C++', names: 'cpp c++ cc cxx hpp h++ hh hxx ipp tpp inl cu cuh mm m objc objective-c', pp: 1,
+    decl: 1, pre: 'cpp', kw: C_KW + ' ' + CPP_KW, bool: 'true false',
+    types: C_TYPES + ' bool wchar_t char8_t char16_t char32_t auto',
+    defs: 'struct=t union=t enum=t class=t namespace=n', cfn: 1 },
+  { ...clike, name: 'C#', names: 'cs csharp c# csx cake', cs: 1, kw: CS_KW,
+    soft: 'init value where yield record required nameof global partial var dynamic async await', bool: 'true false',
+    types: CS_TYPES, defs: 'class=d interface=d struct=d record=d delegate=d var=d', prop: 0 },
+  { ...clike, name: 'Java', names: 'java jav', tq: '"', decl: 1, kw: JAVA_KW, soft: 'var record sealed permits yield',
+    bool: 'true false', types: JAVA_TYPES, caps: 1, defs: 'class=d interface=d enum=d record=d', jfn: 1, prop: 0,
+    caps: 0 },
+  { ...clike, name: 'Kotlin', names: 'kt kts kotlin', tq: '"', kw: KT_KW, bool: 'true false', types: KT_TYPES,
+    defs: 'class=d interface=d object=d fun=d val=d var=d typealias=d', meta: 'w', nest: 1, prop: 0 },
+  { ...clike, name: 'Swift', names: 'swift', tq: '"', swift: 1, kw: SWIFT_KW, bool: 'true false', types: SWIFT_TYPES,
+    defs: 'class=d struct=d enum=d protocol=d extension=d func=d let=d var=d typealias=d actor=d import=d', meta: 'w',
+    nest: 1, prop: 1 },
+  { ...clike, name: 'Dart', names: 'dart', tq: '"\'', pre: 'dart', caps: 1, kw: DART_KW, bool: 'true false',
+    defs: 'class=t enum=t mixin=t extension=t typedef=t', meta: 'w', prop: 0 },
+  { ...clike, name: 'Scala', names: 'scala sc sbt', tq: '"', pre: 'scala', kw: SCALA_KW + ' _',
+    types: `
+      Int Long Short Byte Char Float Double Boolean Unit String Any AnyRef AnyVal Nothing Null Option Some None List Seq
+      Map Set Vector Array Iterator Future Either Left Right BigInt BigDecimal Throwable Exception
+    `,
+    bool: 'true false', defs: 'class=d object=d trait=d def=d val=d var=d type=d enum=d given=d package=d', meta: 'w',
+    nest: 1, prop: 0 },
+  { ...clike, name: 'Groovy', names: 'groovy gradle gvy', files: /^Jenkinsfile$/, line: '//', tq: '"\'',
+    kw: JAVA_KW + ' def as in trait', bool: 'true false', types: JAVA_TYPES,
+    defs: 'class=d interface=d enum=d trait=d def=d', meta: 'w', prop: 0 },
+  { ...clike, name: 'PHP', lex: 'php', names: 'php php3 php4 php5 php7 php8 phtml', line: '// #', q: '"\'', ml: '"\'',
+    interp: '"k', php: 1, ci: 1, kw: PHP_KW, bool: 'true false',
+    defs: 'function=d class=c interface=c trait=c enum=c namespace=n', vars: '$', word: '$', close: '()[]{}\'\'""' },
+  { name: 'Ruby', names: 'rb ruby rbw rake gemspec ru jruby',
+    files: /^(Gemfile|Rakefile|Podfile|Vagrantfile|Brewfile|Guardfile|Fastfile)$/, line: '#', q: '"\'`', ml: '"\'`',
+    interp: '"b`b', heredoc: 'rb', ruby: 1, re: 1, kw: RUBY_KW, bool: 'true false', caps: 1,
+    defs: 'def=d class=t module=t', prop: 1, vars: '@$', word: '?!', fold: 'indent', close: '()[]{}\'\'""||',
+    indent: /^\s*(?:def|class|module|if|unless|case|while|until|for|begin|else|elsif|when|rescue|ensure)\b|\bdo(\s*\|[^|]*\|)?\s*$|[{([]\s*$/,
+    dedent: /^\s*(?:end|else|elsif|when|rescue|ensure)$/ },
+  { name: 'Lua', names: 'lua luau rockspec', line: '--', q: '"\'', lua: 1, kw: LUA_KW, bool: 'true false',
+    fold: 'indent', close: '()[]{}\'\'""',
+    indent: /(?:\bthen|\bdo|\bfunction\s*[\w.:]*\s*\([^)]*\)|\belse|\brepeat|[{([])\s*$/,
+    dedent: /^\s*(?:end|else|elseif|until)$/ },
+  { name: 'Shell', names: 'sh bash zsh ksh fish shell shellscript console bats command',
+    files: /^(\.?(bashrc|bash_profile|bash_logout|zshrc|zprofile|zshenv|profile)|PKGBUILD|APKBUILD|configure)$/,
+    line: '#', q: '"', rq: '\'', ml: '"\'', interp: '"h', heredoc: 'sh', sh: 1, kw: SH_KW, defs: 'function=d',
+    vars: '$', fold: 'brace', close: '()[]{}\'\'""``', indent: /(?:\bthen|\bdo|\{|\(|\belse|\bin)\s*$/,
+    dedent: /^\s*(?:fi|done|esac|else|elif.*|\}|;;)$/ },
+  { name: 'PowerShell', names: 'ps1 psm1 psd1 pwsh powershell posh', line: '#', block: '<# #>', q: '"', rq: '\'',
+    ml: '"\'', interp: '"p', heredoc: 'ps', ps: 1, ci: 1, kw: PS_KW, vars: '$', word: '-$', fold: 'brace',
+    close: '()[]{}\'\'""', indent: /[{([]\s*$/, dedent: BRACE },
+  { name: 'Batch', lex: 'bat', names: 'bat cmd batch', ci: 1, kw: BAT_KW, close: '()""%%', fold: 'brace',
+    indent: /\(\s*$/, dedent: /^\s*\)$/ },
+  { name: 'SQL', names: 'sql pgsql plsql mysql sqlite psql ddl dml cql hql', line: '--', block: '/* */', q: '"',
+    rq: '\'', ml: '\'', qi: '`', ci: 1,
+    kw: SQL_KW + `
+      count sum avg min max coalesce nullif cast current_timestamp current_date current_time now concat substring upper
+      lower trim length round abs ifnull
+    `,
+    bool: 'true false', kwAtoms: 'null', types: SQL_TYPES, fold: 'brace', close: '()[]{}\'\'""``', indent: /\(\s*$/,
+    dedent: /^\s*\)$/ },
+  { name: 'YAML', lex: 'yaml', names: 'yaml yml', files: /^\.?(clang-format|clangd)$/, line: '#', fold: 'indent',
+    close: '()[]{}\'\'""', indent: /:\s*(#.*)?$|^\s*-\s*$/ },
+  { name: 'TOML', lex: 'ini', names: 'toml', files: /^(Cargo\.lock|Pipfile|poetry\.lock|uv\.lock)$/, toml: 1, line: '#',
+    fold: 'indent', close: '()[]{}\'\'""' },
+  { name: 'INI', lex: 'ini',
+    names: 'ini cfg conf cnf properties prefs reg inf desktop service editorconfig gitconfig npmrc env',
+    files: /^\.?(env(\..*)?|gitconfig|gitmodules|editorconfig|npmrc|pypirc|flake8|pylintrc|coveragerc)$/, line: '# ;',
+    fold: 'indent', close: '()[]{}\'\'""' },
+  { name: 'Dockerfile', lex: 'docker', names: 'dockerfile containerfile',
+    files: /^(Dockerfile|Containerfile)(\..*)?$|\.dockerfile$/i, line: '#', q: '"', rq: '\'', docker: 1, ci: 1,
+    kw: `
+      from as run cmd label maintainer expose env add copy entrypoint volume user workdir arg onbuild stopsignal
+      healthcheck shell
+    `,
+    fold: 'indent', close: '()[]{}\'\'""' },
+  { name: 'Makefile', lex: 'make', names: 'mk mak make makefile', files: /^(GNUmakefile|makefile|Makefile|.*\.mk)$/,
+    line: '#', q: '"', rq: '\'', vars: '$',
+    kw: 'include sinclude ifeq ifneq ifdef ifndef else endif define endef export unexport override private vpath',
+    fold: 'indent', close: '()[]{}\'\'""' },
+  { name: 'CMake', names: 'cmake', files: /^CMakeLists\.txt$/, line: '#', q: '"', ml: '"', interp: '"h', vars: '$',
+    ci: 1,
+    kw: `
+      if else elseif endif foreach endforeach while endwhile function endfunction macro endmacro return set unset option
+      project add_executable add_library target_link_libraries target_include_directories include find_package message
+      install
+    `,
+    fold: 'indent', close: '()""' },
   { name: 'diff', lex: 'diff', names: 'diff patch rej' },
-  { name: 'GDScript', names: 'gd gdscript', line: '#', q: '"\'', tq: '"\'', kw: GD_KW, bool: 'true false', atom: 'null PI TAU INF NAN', types: 'int float bool String Vector2 Vector3 Vector2i Vector3i Color Array Dictionary Node Object', defs: 'func=d class=c class_name=c var=d const=d signal=d enum=t', prop: 1, meta: 'w', gd: 1, fold: 'indent', close: '()[]{}\'\'""', indent: /:\s*(#.*)?$/, dedent: /^\s*(?:else:|elif .*:)$/ },
-  { name: 'R', names: 'r rscript rprofile rmd', line: '#', q: '"\'`', ml: '"\'', kw: R_KW, bool: 'TRUE FALSE T F', atom: 'NULL NA NA_integer_ NA_real_ NA_character_ Inf NaN', defs: '', fold: 'brace', close: '()[]{}\'\'""``', indent: /[{([]\s*$/, dedent: BRACE },
-  { name: 'Perl', names: 'pl pm perl t psgi pod', line: '#', q: '"\'`', ml: '"\'`', interp: '"h', heredoc: 'sh', perl: 1, re: 1, kw: PERL_KW, defs: 'sub=d package=n use=m no=m', vars: '$@%', fold: 'brace', close: '()[]{}\'\'""', indent: /[{([]\s*$/, dedent: BRACE },
-  { name: 'Haskell', names: 'hs lhs haskell purs', line: '--', block: '{- -}', nest: 1, q: '"', kw: HS_KW, bool: 'True False', fold: 'indent' },
-  { name: 'Elixir', names: 'ex exs elixir heex', line: '#', q: '"\'', tq: '"\'', ml: '"', interp: '"b', ruby: 1, kw: 'def defp defmodule defmacro defmacrop defstruct defprotocol defimpl do end fn if else unless case cond with for receive try catch rescue after raise when and or not in import alias require use quote unquote nil', bool: 'true false', caps: 1, defs: 'def=d defp=d defmodule=t defmacro=d defprotocol=t', prop: 1, vars: '@', fold: 'indent', indent: /\bdo\s*$|->\s*$/, dedent: /^\s*(?:end|else|after|rescue|catch)$/ },
-  { name: 'Erlang', names: 'erl hrl', line: '%', q: '"', kw: 'after and andalso band begin bnot bor bsl bsr bxor case catch cond div end fun if let not of or orelse receive rem try when xor', caps: 1, fold: 'indent' },
-  { name: 'Clojure', names: 'clj cljs cljc edn clojure', line: ';', q: '"', ml: '"', word: '-?!*<>=/+', kw: 'def defn defn- defmacro defmulti defmethod defprotocol defrecord deftype fn let loop recur if if-not when when-not cond case do ns require import try catch finally throw nil', bool: 'true false', defs: 'def=d defn=d defn-=d defmacro=d', lisp: 1, fold: 'brace' },
-  { name: 'Lisp', names: 'lisp cl el scm ss rkt scheme racket', line: ';', block: '#| |#', q: '"', ml: '"', word: '-?!*<>=/+', kw: 'defun defmacro defvar defparameter defconstant defclass defmethod defgeneric lambda let let* if when unless cond case progn loop do dolist dotimes setq setf define define-syntax nil', bool: 't #t #f', defs: 'defun=d defmacro=d defvar=d define=d', lisp: 1, fold: 'brace' },
-  { name: 'OCaml', names: 'ml mli mll mly ocaml fs fsi fsx fsharp f#', block: '(* *)', nest: 1, line: '//', q: '"', kw: 'and as assert begin class constraint do done downto else end exception external for fun function functor if in include inherit initializer lazy let match method module mutable new nonrec object of open or private rec sig struct then to try type val virtual when while with member namespace use yield', bool: 'true false', defs: 'let=d type=t module=n val=d member=d', caps: 1, fold: 'indent' },
-  { name: 'Julia', names: 'jl julia', line: '#', block: '#= =#', nest: 1, q: '"', tq: '"', ml: '"', interp: '"h', kw: 'baremodule begin break catch const continue do else elseif end export finally for function global if import let local macro module quote return struct try using while abstract mutable primitive type where in isa nothing', bool: 'true false', defs: 'function=d struct=t macro=d module=n', meta: 'w', fold: 'indent' },
-  { name: 'Zig', names: 'zig', line: '//', q: '"\'', kw: 'addrspace align allowzero and anyframe anytype asm async await break callconv catch comptime const continue defer else enum errdefer error export extern fn for if inline linksection noalias noinline nosuspend opaque or orelse packed pub resume return struct suspend switch test threadlocal try union unreachable usingnamespace var volatile while null undefined', bool: 'true false', types: 'i8 u8 i16 u16 i32 u32 i64 u64 i128 u128 isize usize f16 f32 f64 f128 bool void noreturn type anyerror comptime_int comptime_float', defs: 'fn=d const=d var=d', prop: 1, fold: 'brace', indent: /[{([]\s*$/, dedent: BRACE },
-  { name: 'Nim', names: 'nim nims nimble', line: '#', q: '"\'', tq: '"', kw: 'addr and as asm bind block break case cast concept const continue converter defer discard distinct div do elif else end enum except export finally for from func if import in include interface is isnot iterator let macro method mixin mod nil not notin object of or out proc ptr raise ref return shl shr static template try tuple type using var when while xor yield', bool: 'true false', defs: 'proc=d func=d method=d iterator=d template=d macro=d type=t', fold: 'indent', indent: /[:=]\s*$/ },
-  { name: 'Pascal', names: 'pas pp dpr lpr', line: '//', block: '(* *)', rq: '\'', ci: 1, kw: 'and array as asm begin case class const constructor destructor div do downto else end except exports file finalization finally for function goto if implementation in inherited initialization inline interface is label library mod nil not object of or out packed procedure program property raise record repeat resourcestring set shl shr string then threadvar to try type unit until uses var while with xor', bool: 'true false', defs: 'function=d procedure=d', fold: 'indent' },
-  { name: 'Fortran', names: 'f f90 f95 f03 f08 for f77', line: '!', q: '"\'', ci: 1, kw: 'program end subroutine function module use implicit none integer real double precision complex logical character parameter dimension allocatable intent in out inout if then else elseif endif do enddo while call return stop contains type select case default print write read open close allocate deallocate', bool: '.true. .false.', fold: 'indent' },
-  { name: 'Visual Basic', names: 'vb vbs bas cls frm vba vbscript', line: '\' rem', q: '"', ci: 1, kw: 'addhandler addressof alias and andalso as boolean byref byte byval call case catch cbool cbyte cchar cdate cdbl cdec char cint class clng cobj const continue csbyte cshort csng cstr ctype cuint culng cushort date decimal declare default delegate dim directcast do double each else elseif end endif enum erase error event exit finally for friend function get gettype global gosub goto handles if implements imports in inherits integer interface is isnot let lib like long loop me mod module mustinherit mustoverride mybase myclass namespace narrowing new next not nothing notinheritable notoverridable object of on operator option optional or orelse overloads overridable overrides paramarray partial private property protected public raiseevent readonly redim removehandler resume return sbyte select set shadows shared short single static step stop string structure sub synclock then throw to try trycast typeof uinteger ulong ushort using variant wend when while widening with withevents writeonly xor', bool: 'true false', defs: 'sub=d function=d class=d module=d', fold: 'indent' },
-  { name: 'Protocol Buffers', names: 'proto protobuf', line: '//', block: '/* */', q: '"\'', kw: 'syntax package import option message enum service rpc returns repeated optional required oneof map reserved extend stream public weak edition', bool: 'true false', types: 'double float int32 int64 uint32 uint64 sint32 sint64 fixed32 fixed64 sfixed32 sfixed64 bool string bytes', defs: 'message=t enum=t service=t rpc=d', fold: 'brace', indent: /[{([]\s*$/, dedent: BRACE },
-  { name: 'GraphQL', names: 'graphql gql graphqls', line: '#', q: '"', tq: '"', kw: 'query mutation subscription fragment on type interface union enum input scalar schema extend directive implements repeatable', bool: 'true false', atom: 'null', defs: 'query=d mutation=d fragment=d type=t interface=t enum=t input=t union=t scalar=t', meta: 'w', fold: 'brace', indent: /[{([]\s*$/, dedent: BRACE },
-  { name: 'Terraform', names: 'tf tfvars hcl nomad', line: '# //', block: '/* */', q: '"', interp: '"j', kw: 'resource data variable output module provider locals terraform for in if', bool: 'true false', atom: 'null', fold: 'brace', indent: /[{([]\s*$/, dedent: BRACE },
-  { name: 'Nix', names: 'nix', line: '#', block: '/* */', q: '"', ml: '"', interp: '"j', kw: 'let in with rec inherit if then else assert import', bool: 'true false', atom: 'null', fold: 'brace', indent: /[{([]\s*$/, dedent: BRACE },
-  { name: 'Solidity', names: 'sol', ...clike, kw: 'pragma solidity contract interface library function modifier event struct enum mapping public private internal external view pure payable returns return if else for while do break continue emit require revert assert memory storage calldata constant immutable override virtual new delete using import is', bool: 'true false', types: 'address bool string bytes uint int uint256 int256 uint8 bytes32', defs: 'contract=t interface=t library=t function=d modifier=d event=d struct=t enum=t' },
-  { name: 'Verilog', names: 'v sv svh vh', ...clike, pp: 1, kw: 'module endmodule input output inout wire reg logic always always_ff always_comb assign begin end if else case endcase for while parameter localparam integer function endfunction task endtask initial posedge negedge generate endgenerate', defs: 'module=t' },
-  { name: 'VHDL', names: 'vhd vhdl', line: '--', q: '"', ci: 1, kw: 'library use entity is port in out inout end architecture of begin signal process if then else elsif case when others for loop generate component map type constant variable function procedure return downto to', fold: 'indent' },
+  { name: 'GDScript', names: 'gd gdscript', line: '#', q: '"\'', tq: '"\'', kw: GD_KW, bool: 'true false',
+    atom: 'null PI TAU INF NAN',
+    types: 'int float bool String Vector2 Vector3 Vector2i Vector3i Color Array Dictionary Node Object',
+    defs: 'func=d class=c class_name=c var=d const=d signal=d enum=t', prop: 1, meta: 'w', gd: 1, fold: 'indent',
+    close: '()[]{}\'\'""', indent: /:\s*(#.*)?$/, dedent: /^\s*(?:else:|elif .*:)$/ },
+  { name: 'R', names: 'r rscript rprofile rmd', line: '#', q: '"\'`', ml: '"\'', kw: R_KW, bool: 'TRUE FALSE T F',
+    atom: 'NULL NA NA_integer_ NA_real_ NA_character_ Inf NaN', defs: '', fold: 'brace', close: '()[]{}\'\'""``',
+    indent: /[{([]\s*$/, dedent: BRACE },
+  { name: 'Perl', names: 'pl pm perl t psgi pod', line: '#', q: '"\'`', ml: '"\'`', interp: '"h', heredoc: 'sh',
+    perl: 1, re: 1, kw: PERL_KW, defs: 'sub=d package=n use=m no=m', vars: '$@%', fold: 'brace', close: '()[]{}\'\'""',
+    indent: /[{([]\s*$/, dedent: BRACE },
+  { name: 'Haskell', names: 'hs lhs haskell purs', line: '--', block: '{- -}', nest: 1, q: '"', kw: HS_KW,
+    bool: 'True False', fold: 'indent' },
+  { name: 'Elixir', names: 'ex exs elixir heex', line: '#', q: '"\'', tq: '"\'', ml: '"', interp: '"b', ruby: 1,
+    kw: `
+      def defp defmodule defmacro defmacrop defstruct defprotocol defimpl do end fn if else unless case cond with for
+      receive try catch rescue after raise when and or not in import alias require use quote unquote nil
+    `,
+    bool: 'true false', caps: 1, defs: 'def=d defp=d defmodule=t defmacro=d defprotocol=t', prop: 1, vars: '@',
+    fold: 'indent', indent: /\bdo\s*$|->\s*$/, dedent: /^\s*(?:end|else|after|rescue|catch)$/ },
+  { name: 'Erlang', names: 'erl hrl', line: '%', q: '"',
+    kw: `
+      after and andalso band begin bnot bor bsl bsr bxor case catch cond div end fun if let not of or orelse receive rem
+      try when xor
+    `,
+    caps: 1, fold: 'indent' },
+  { name: 'Clojure', names: 'clj cljs cljc edn clojure', line: ';', q: '"', ml: '"', word: '-?!*<>=/+',
+    kw: `
+      def defn defn- defmacro defmulti defmethod defprotocol defrecord deftype fn let loop recur if if-not when when-not
+      cond case do ns require import try catch finally throw nil
+    `,
+    bool: 'true false', defs: 'def=d defn=d defn-=d defmacro=d', lisp: 1, fold: 'brace' },
+  { name: 'Lisp', names: 'lisp cl el scm ss rkt scheme racket', line: ';', block: '#| |#', q: '"', ml: '"',
+    word: '-?!*<>=/+',
+    kw: `
+      defun defmacro defvar defparameter defconstant defclass defmethod defgeneric lambda let let* if when unless cond
+      case progn loop do dolist dotimes setq setf define define-syntax nil
+    `,
+    bool: 't #t #f', defs: 'defun=d defmacro=d defvar=d define=d', lisp: 1, fold: 'brace' },
+  { name: 'OCaml', names: 'ml mli mll mly ocaml fs fsi fsx fsharp f#', block: '(* *)', nest: 1, line: '//', q: '"',
+    kw: `
+      and as assert begin class constraint do done downto else end exception external for fun function functor if in
+      include inherit initializer lazy let match method module mutable new nonrec object of open or private rec sig
+      struct then to try type val virtual when while with member namespace use yield
+    `,
+    bool: 'true false', defs: 'let=d type=t module=n val=d member=d', caps: 1, fold: 'indent' },
+  { name: 'Julia', names: 'jl julia', line: '#', block: '#= =#', nest: 1, q: '"', tq: '"', ml: '"', interp: '"h',
+    kw: `
+      baremodule begin break catch const continue do else elseif end export finally for function global if import let
+      local macro module quote return struct try using while abstract mutable primitive type where in isa nothing
+    `,
+    bool: 'true false', defs: 'function=d struct=t macro=d module=n', meta: 'w', fold: 'indent' },
+  { name: 'Zig', names: 'zig', line: '//', q: '"\'',
+    kw: `
+      addrspace align allowzero and anyframe anytype asm async await break callconv catch comptime const continue defer
+      else enum errdefer error export extern fn for if inline linksection noalias noinline nosuspend opaque or orelse
+      packed pub resume return struct suspend switch test threadlocal try union unreachable usingnamespace var volatile
+      while null undefined
+    `,
+    bool: 'true false',
+    types: `
+      i8 u8 i16 u16 i32 u32 i64 u64 i128 u128 isize usize f16 f32 f64 f128 bool void noreturn type anyerror comptime_int
+      comptime_float
+    `,
+    defs: 'fn=d const=d var=d', prop: 1, fold: 'brace', indent: /[{([]\s*$/, dedent: BRACE },
+  { name: 'Nim', names: 'nim nims nimble', line: '#', q: '"\'', tq: '"',
+    kw: `
+      addr and as asm bind block break case cast concept const continue converter defer discard distinct div do elif
+      else end enum except export finally for from func if import in include interface is isnot iterator let macro
+      method mixin mod nil not notin object of or out proc ptr raise ref return shl shr static template try tuple type
+      using var when while xor yield
+    `,
+    bool: 'true false', defs: 'proc=d func=d method=d iterator=d template=d macro=d type=t', fold: 'indent',
+    indent: /[:=]\s*$/ },
+  { name: 'Pascal', names: 'pas pp dpr lpr', line: '//', block: '(* *)', rq: '\'', ci: 1,
+    kw: `
+      and array as asm begin case class const constructor destructor div do downto else end except exports file
+      finalization finally for function goto if implementation in inherited initialization inline interface is label
+      library mod nil not object of or out packed procedure program property raise record repeat resourcestring set shl
+      shr string then threadvar to try type unit until uses var while with xor
+    `,
+    bool: 'true false', defs: 'function=d procedure=d', fold: 'indent' },
+  { name: 'Fortran', names: 'f f90 f95 f03 f08 for f77', line: '!', q: '"\'', ci: 1,
+    kw: `
+      program end subroutine function module use implicit none integer real double precision complex logical character
+      parameter dimension allocatable intent in out inout if then else elseif endif do enddo while call return stop
+      contains type select case default print write read open close allocate deallocate
+    `,
+    bool: '.true. .false.', fold: 'indent' },
+  { name: 'Visual Basic', names: 'vb vbs bas cls frm vba vbscript', line: '\' rem', q: '"', ci: 1,
+    kw: `
+      addhandler addressof alias and andalso as boolean byref byte byval call case catch cbool cbyte cchar cdate cdbl
+      cdec char cint class clng cobj const continue csbyte cshort csng cstr ctype cuint culng cushort date decimal
+      declare default delegate dim directcast do double each else elseif end endif enum erase error event exit finally
+      for friend function get gettype global gosub goto handles if implements imports in inherits integer interface is
+      isnot let lib like long loop me mod module mustinherit mustoverride mybase myclass namespace narrowing new next
+      not nothing notinheritable notoverridable object of on operator option optional or orelse overloads overridable
+      overrides paramarray partial private property protected public raiseevent readonly redim removehandler resume
+      return sbyte select set shadows shared short single static step stop string structure sub synclock then throw to
+      try trycast typeof uinteger ulong ushort using variant wend when while widening with withevents writeonly xor
+    `,
+    bool: 'true false', defs: 'sub=d function=d class=d module=d', fold: 'indent' },
+  { name: 'Protocol Buffers', names: 'proto protobuf', line: '//', block: '/* */', q: '"\'',
+    kw: `
+      syntax package import option message enum service rpc returns repeated optional required oneof map reserved extend
+      stream public weak edition
+    `,
+    bool: 'true false',
+    types: 'double float int32 int64 uint32 uint64 sint32 sint64 fixed32 fixed64 sfixed32 sfixed64 bool string bytes',
+    defs: 'message=t enum=t service=t rpc=d', fold: 'brace', indent: /[{([]\s*$/, dedent: BRACE },
+  { name: 'GraphQL', names: 'graphql gql graphqls', line: '#', q: '"', tq: '"',
+    kw: `
+      query mutation subscription fragment on type interface union enum input scalar schema extend directive implements
+      repeatable
+    `,
+    bool: 'true false', atom: 'null',
+    defs: 'query=d mutation=d fragment=d type=t interface=t enum=t input=t union=t scalar=t', meta: 'w', fold: 'brace',
+    indent: /[{([]\s*$/, dedent: BRACE },
+  { name: 'Terraform', names: 'tf tfvars hcl nomad', line: '# //', block: '/* */', q: '"', interp: '"j',
+    kw: 'resource data variable output module provider locals terraform for in if', bool: 'true false', atom: 'null',
+    fold: 'brace', indent: /[{([]\s*$/, dedent: BRACE },
+  { name: 'Nix', names: 'nix', line: '#', block: '/* */', q: '"', ml: '"', interp: '"j',
+    kw: 'let in with rec inherit if then else assert import', bool: 'true false', atom: 'null', fold: 'brace',
+    indent: /[{([]\s*$/, dedent: BRACE },
+  { name: 'Solidity', names: 'sol', ...clike,
+    kw: `
+      pragma solidity contract interface library function modifier event struct enum mapping public private internal
+      external view pure payable returns return if else for while do break continue emit require revert assert memory
+      storage calldata constant immutable override virtual new delete using import is
+    `,
+    bool: 'true false', types: 'address bool string bytes uint int uint256 int256 uint8 bytes32',
+    defs: 'contract=t interface=t library=t function=d modifier=d event=d struct=t enum=t' },
+  { name: 'Verilog', names: 'v sv svh vh', ...clike, pp: 1,
+    kw: `
+      module endmodule input output inout wire reg logic always always_ff always_comb assign begin end if else case
+      endcase for while parameter localparam integer function endfunction task endtask initial posedge negedge generate
+      endgenerate
+    `,
+    defs: 'module=t' },
+  { name: 'VHDL', names: 'vhd vhdl', line: '--', q: '"', ci: 1,
+    kw: `
+      library use entity is port in out inout end architecture of begin signal process if then else elsif case when
+      others for loop generate component map type constant variable function procedure return downto to
+    `,
+    fold: 'indent' },
   { name: 'Assembly', names: 'asm s nasm', line: '; #', q: '"\'', fold: 'indent' },
-  { name: 'AutoHotkey', names: 'ahk', line: ';', block: '/* */', q: '"', ci: 1, kw: 'if else loop while return break continue global local static class extends new', fold: 'brace' },
+  { name: 'AutoHotkey', names: 'ahk', line: ';', block: '/* */', q: '"', ci: 1,
+    kw: 'if else loop while return break continue global local static class extends new', fold: 'brace' },
   { name: 'LaTeX', lex: 'tex', names: 'tex latex ltx sty cls bib', line: '%', prose: 1, fold: 'indent' },
-  { name: 'Gitignore', names: 'gitignore dockerignore npmignore eslintignore prettierignore gitattributes hgignore', files: /^\.(gitignore|dockerignore|npmignore|eslintignore|prettierignore|gitattributes)$/, line: '#' },
+  { name: 'Gitignore', names: 'gitignore dockerignore npmignore eslintignore prettierignore gitattributes hgignore',
+    files: /^\.(gitignore|dockerignore|npmignore|eslintignore|prettierignore|gitattributes)$/, line: '#' },
 ]
 
 let byName = null // extension or alias → language
@@ -139,7 +474,7 @@ let byName = null // extension or alias → language
 export function lang(name) {
   if (!byName) {
     byName = new Map()
-    for (const l of LANGS) for (const n of (l.names ?? '').split(' ')) if (n && !byName.has(n)) byName.set(n, l)
+    for (const l of LANGS) for (const n of (l.names ?? '').split(/\s+/)) if (n && !byName.has(n)) byName.set(n, l)
   }
   if (!name) return null
   const base = name.slice(Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1)

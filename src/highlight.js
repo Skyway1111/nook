@@ -65,8 +65,7 @@ function run(L, text, st, out, next) {
  * `[from, to, className]`. Null for a language nook doesn't color. */
 export function tokenize(code, name) {
   const L = lang(name)
-  if (!L?.lex && L?.lex !== undefined) return null
-  if (!L) return null
+  if (!L || L.lex === '') return null
   const lines = code.split('\n')
   const st = []
   const out = []
@@ -146,7 +145,7 @@ function skip(s, i, end) {
 
 // ---- The code lexer: C-like, scripting and data languages, driven by langs.js's fields.
 
-const set = (s, ci) => new Set(s ? (ci ? s.toLowerCase() : s).split(' ') : [])
+const set = (s, ci) => new Set(s ? (ci ? s.toLowerCase() : s).trim().split(/\s+/) : [])
 const CLASS_OF = { d: DEF, t: TYPE, c: CLASSNAME, n: NAMESPACE, p: PROPDEF }
 
 /** A language's fields made ready for lexing, once. */
@@ -156,7 +155,9 @@ function prep(L) {
   // A sigil starts a variable, not a name.
   for (const ch of L.lisp ? L.word : L.word?.replace(/[?!]/g, '') ?? '') if (!L.vars?.includes(ch)) extra.add(ch.charCodeAt(0))
   const defs = new Map()
-  for (const pair of (L.defs ?? '').split(' ')) if (pair) defs.set(L.ci ? pair.slice(0, -2).toLowerCase() : pair.slice(0, -2), CLASS_OF[pair.at(-1)])
+  for (const pair of (L.defs ?? '').split(/\s+/)) {
+    if (pair) defs.set(L.ci ? pair.slice(0, -2).toLowerCase() : pair.slice(0, -2), CLASS_OF[pair.at(-1)])
+  }
   const interp = {}
   for (let k = 0; k + 1 < (L.interp ?? '').length; k += 2) interp[L.interp[k]] = L.interp[k + 1]
   const block = L.block?.split(' ')
@@ -248,7 +249,7 @@ function code(L, s, i, end, st, base, out) {
     if (c === 35 && i === 0 && s[1] === '!') { put(out, 0, end, L.sh ? META : COMMENT); break } // #!/bin/sh
     if (L.sh) {
       // name=value, and a command's -options
-      const m = c === 45 ? at(/-{1,2}[\w-]+/y, s, i) : prev !== 1 && isStart(c) ? at(/\w+(?=\+?=)/y, s, i) : null
+      const m = c === 45 ? at(/-{1,2}[\w-]+/y, s, i) : isStart(c) && (i === start || /[\s;(&|]/.test(s[i - 1])) ? at(/\w+(?=\+?=)/y, s, i) : null
       if (m && (c !== 45 || isSpace(s.charCodeAt(i - 1)))) {
         put(out, i, i + m[0].length, c === 45 ? PROP : DEF)
         i += m[0].length
@@ -330,6 +331,7 @@ function code(L, s, i, end, st, base, out) {
       let e = name(s, i, end, P.extra)
       if (L.ps && s[e] === '-' && isStart(s.charCodeAt(e + 1))) e = name(s, e + 1, end, P.extra) // Get-ChildItem
       if (L.ruby && (s[e] === '?' || s[e] === '!') && s[e + 1] !== '=') e++
+      if (L.sh) while (e < end && (isPart(s.charCodeAt(e)) || '.@/:%+-'.includes(s[e]))) e++ // a shell word: ramey@case.edu
       const word = s.slice(i, e)
       const nq = s[e]
       // A string's prefix: f"", r'', b"", R"(", s"".
@@ -359,14 +361,14 @@ function code(L, s, i, end, st, base, out) {
       } else if (P.kw.has(key) && !(P.soft.has(key) && !soft(L, s, after, end, ac, key, prev, ctx, keyPos))) {
         put(out, from, e, KEYWORD)
         const d = P.defs.get(key)
-        want = d && !(L.go && key === 'func' && ac === 40) ? d : 0
+        want = d && !(L.go && key === 'func' && ac === 40) && stmt !== 'import' ? d : 0
         if (js) {
           if (key === 'new') want = ac === 60 ? 0 : CLASSNAME
           if (key === 'class') head = 'c'
           else if (key === 'interface' || key === 'enum') head = 't'
           else if (key === 'import') head = 'i'
           if (key === 'as' && (ctx === 'i' || stmt === 'import')) want = DEF
-          else if (L.ts && typing < 0 && (key === 'implements' || key === 'satisfies' || key === 'as' || key === 'is' || key === 'keyof' || (key === 'extends' && head !== 'c'))) typing = depth
+          else if (L.ts && typing < 0 && (TYPE_AFTER.has(key) || (key === 'extends' && head !== 'c'))) typing = depth
           if (key === 'function' && ac === 40) head = 'p'
           if (key === 'catch') head = 'p'
         } else if (L.rust) {
@@ -406,7 +408,8 @@ function code(L, s, i, end, st, base, out) {
         cls = TYPE
         typed = true
       } else if (L.ruby && ac === 58 && s.charCodeAt(after + 1) !== 58 && after === e) cls = ATOM // name: value
-      else if (L.php && (ac === 36 || ac === 92 || s[from - 1] === '?' || s[from - 1] === '\\' || stmt === 'use' || stmt === 'namespace' || (prevc === 58 && s[skip(s, 0, from) - 1] !== '?'))) cls = TYPE
+      else if (L.php && (ac === 36 || ac === 92 || s[from - 1] === '?' || s[from - 1] === '\\' || stmt === 'use'
+        || stmt === 'namespace' || prevc === 58)) cls = TYPE // a type before $x, in a path, after ?, after ):
       else if (js) cls = jsName(L, s, after, ac, ctx, keyPos, prev, stmt, t0 === '{', prevc)
       else if (L.rust) cls = rustName(word, s, after, ac, ctx, keyPos, pattern, prevc, stmt, t0 === '(')
       else if (L.go) cls = goName(s, after, ac, ctx, keyPos, pattern, prevc, typed, stmt)
@@ -428,7 +431,9 @@ function code(L, s, i, end, st, base, out) {
       continue
     }
     // Sigils: $x, @x, %x
-    if (P.vars.includes(s[i]) && (isStart(s.charCodeAt(i + 1)) || (c === 36 && /[{\d?!#@*_]/.test(s[i + 1] ?? '')) || (c === 64 && s[i + 1] === '@'))) {
+    const variable = P.vars.includes(s[i])
+      && (isStart(s.charCodeAt(i + 1)) || (c === 36 && /[{\d?!#@*_]/.test(s[i + 1] ?? '')) || (c === 64 && s[i + 1] === '@'))
+    if (variable) {
       let e
       if (c === 36 && s[i + 1] === '{') e = (s.indexOf('}', i) + 1) || end
       else e = name(s, i + 1 + (s[i + 1] === '@' ? 1 : 0), end, P.extra)
@@ -597,7 +602,8 @@ function code(L, s, i, end, st, base, out) {
       angle--
       if (!angle && L.decl) typing = -1
       if (!angle && (L.ts || L.rust) && s[i] === '(' ) typing = -1
-    } else if (c === 124 && L.rust && s[i] !== '|' && s[i] !== '=' && (prevc === 40 || prevc === 44 || prevc === 61 || prev === 3 || (prevc === 0 && prev === 0))) {
+    } else if (c === 124 && L.rust && s[i] !== '|' && s[i] !== '=' && (prev === 3 || (prev === 0 && (prevc === 0 || prevc === 40
+      || prevc === 44 || prevc === 61)))) {
       // A closure's parameters, |a, b: T|: names before a colon bind, after it are types.
       const close = s.indexOf('|', i)
       if (close > 0) {
@@ -628,7 +634,10 @@ function code(L, s, i, end, st, base, out) {
 }
 
 // Keywords after which a member's name still leads: `private static readonly x`.
-const MODIFIERS = new Set(['static', 'private', 'public', 'protected', 'readonly', 'async', 'get', 'set', 'abstract', 'override', 'declare', 'accessor', 'export', 'default', 'pub', 'final', 'const', 'internal', 'virtual', 'sealed', 'open'])
+const MODIFIERS = new Set(`static private public protected readonly async get set abstract override declare accessor
+  export default pub final const internal virtual sealed open`.split(/\s+/))
+// TypeScript's keywords a type follows.
+const TYPE_AFTER = new Set(['implements', 'satisfies', 'as', 'is', 'keyof'])
 
 /** Whether a comment starts at `i`. A shell's # does only at a word's start; a word-like marker (rem) only as a
  * whole word. */
@@ -653,10 +662,17 @@ function soft(L, s, i, end, c, key, prev, ctx, keyPos) {
   if (i >= end || c === 61 || c === 58 || c === 44 || c === 41 || c === 59 || c === 46) return false
   if (key === 'async') return isStart(c) || c === 40
   if (key === 'match' || key === 'case') return keyPos && c !== 40 && /:\s*(#.*)?$/.test(s) // Python's
-  if (key === 'type') return (prev === 3 && (isStart(c) || c === 123)) || (isStart(c) && (L.pre === 'py' || /^\w+\s*(<.*>)?\s*=/.test(s.slice(i))))
-  if (key === 'of' || key === 'as' || key === 'from' || key === 'is' || key === 'satisfies') return (prev === 1 || prev === 3) && WORD_AFTER.has(c) || (prev === 1 || prev === 3) && isStart(c)
+  if (key === 'type') {
+    // import type { X }, type X = …, Python's type X = …
+    return (prev === 3 && (isStart(c) || c === 123)) || (isStart(c) && (L.pre === 'py' || /^\w+\s*(<.*>)?\s*=/.test(s.slice(i))))
+  }
+  if (key === 'of' || key === 'as' || key === 'from' || key === 'is' || key === 'satisfies') {
+    return (prev === 1 || prev === 3) && (WORD_AFTER.has(c) || isStart(c))
+  }
   if (key === 'keyof' || key === 'infer') return isStart(c) || WORD_AFTER.has(c)
-  if (key === 'get' || key === 'set' || key === 'static') return (isStart(c) || c === 35 || c === 91 || c === 42 || (key === 'static' && c === 123)) && (ctx === 'c' || ctx === 'o')
+  if (key === 'get' || key === 'set' || key === 'static') {
+    return (ctx === 'c' || ctx === 'o') && (isStart(c) || c === 35 || c === 91 || c === 42 || (key === 'static' && c === 123))
+  }
   return isStart(c) || c === 35 || c === 91 || c === 42 || c === 123
 }
 // What a soft keyword like `from` can come before: a string, a bracket, a template.
@@ -1120,7 +1136,7 @@ function tag(L, s, i, end, st, base, out) {
     }
     if (isStart(c) || c === 58 || c === 64 || c === 35) {
       const e = name(s, i + 1, end, ATTR)
-      if (L.name === 'Vue' && (c !== 118 || s[i + 1] === '-') && !isStart(c) || (c === 118 && s[i + 1] === '-')) {
+      if (L.name === 'Vue' && (c === 58 || c === 64 || c === 35 || (c === 118 && s[i + 1] === '-'))) {
         // A directive (:prop, @event, v-if): its value is JavaScript
         put(out, i, e, c === 118 ? KEYWORD : 0)
         const v = at(/\s*=\s*(["'])/y, s, e)
@@ -1186,7 +1202,6 @@ function php(L, s, i, end, st, base, out) {
 
 // ---- CSS, SCSS and Less
 
-const CSS_ATOMS = /^(?:url|var|calc|rgb|rgba|hsl|hsla|min|max|clamp|attr|env|linear-gradient|radial-gradient|conic-gradient|repeating-linear-gradient|translate|translateX|translateY|rotate|scale|matrix|cubic-bezier|steps|color-mix|format|local|image-set|counter|fit-content|minmax|repeat|blur|drop-shadow|brightness|contrast|saturate|hue-rotate|invert|opacity|sepia|grayscale)$/
 
 function css(L, s, i, end, st, base, out) {
   // One frame at `base`: how many blocks are open, and c inside a comment.
@@ -1372,8 +1387,7 @@ function markdown(L, s, i, end, st, base, out, next) {
       return
     }
     const inner = lang(top.slice(bar + 1))
-    if (inner?.lex !== undefined && !inner.lex) return
-    if (inner) LEXERS[inner.lex ?? 'code'](inner, s, i, end, st, base + 1, out)
+    if (inner && inner.lex !== '') LEXERS[inner.lex ?? 'code'](inner, s, i, end, st, base + 1, out)
     for (let k = base + 1; k < st.length; k++) if (st[k][0] === 'S' && st[k][3] !== 'm') { st.length = k; break }
     return
   }
@@ -1452,7 +1466,9 @@ function markdown(L, s, i, end, st, base, out, next) {
   // A link's definition: [label]: url "title"
   const d = /^ {0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)(\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/.exec(rest)
   if (d && !b) {
-    const u = s.indexOf(d[1], k + rest.indexOf(']:'))
+    const colon = k + rest.indexOf(']:') + 1
+    put(out, colon, colon + 1, META)
+    const u = s.indexOf(d[1], colon)
     put(out, u, u + d[1].length, URL)
     if (d[2]) put(out, s.lastIndexOf(d[2].trim()), end, STRING)
     return
@@ -1790,9 +1806,11 @@ function tomlValue(s, i, end, st, base, out) {
 
 // ---- diff
 
+const DIFF_HEAD = /^(diff|index|similarity|rename|new file|deleted file|old mode|new mode|Binary)\b/
+
 function diff(L, s, i, end, st, base, out) {
   const c = s[0]
-  const cls = c === '+' ? INSERTED : c === '-' ? DELETED : c === '@' ? META : /^(diff|index|similarity|rename|new file|deleted file|old mode|new mode|Binary)\b/.test(s) ? META : 0
+  const cls = c === '+' ? INSERTED : c === '-' ? DELETED : c === '@' || DIFF_HEAD.test(s) ? META : 0
   put(out, 0, end, cls)
 }
 
@@ -1915,7 +1933,8 @@ function tex(L, s, i, end, st, base, out) {
   m.lastIndex = i
   for (let r; (r = m.exec(s)) && r.index < end;) {
     const t = r[0]
-    put(out, r.index, r.index + t.length, t[0] === '%' ? COMMENT : t[0] === '\\' ? (/^\\(begin|end)$/.test(t) ? KEYWORD : TYPE) : t[0] === '$' ? META : 0)
+    const cls = t[0] === '%' ? COMMENT : t[0] === '$' ? META : t === '\\begin' || t === '\\end' ? KEYWORD : t[0] === '\\' ? TYPE : 0
+    put(out, r.index, r.index + t.length, cls)
   }
 }
 
