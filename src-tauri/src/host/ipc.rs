@@ -115,8 +115,8 @@ pub fn message(json: &str) {
         Some((Run::Thread, f)) => {
             let args = args.to_owned();
             work(move || {
-                let r = f(&Args { json: &args, body: &[] });
-                plat::post(move || reply(id, r));
+                let text = reply_text(id, f(&Args { json: &args, body: &[] }));
+                plat::post(move || plat::send_reply(&text));
             });
         }
     }
@@ -182,12 +182,16 @@ fn envelope(json: &str) -> Option<(u64, &str, &str)> {
 }
 
 fn reply(id: u64, r: Result<Out, String>) {
-    let text = match r {
-        Ok(Out::Json(v)) => format!("[{id},1,{v}]"),
+    plat::send_reply(&reply_text(id, r));
+}
+
+/// A reply as the page hears it. A worker writes its own, so a long one is copied off the UI thread.
+fn reply_text(id: u64, r: Result<Out, String>) -> String {
+    match r {
+        Ok(Out::Json(v)) => [&format!("[{id},1,"), &*v, "]"].concat(), // one copy, sized up front
         Ok(Out::Bytes(_)) => format!("[{id},0,\"bytes come back through fetch\"]"),
         Err(e) => format!("[{id},0,{}]", json::to_string(&e)),
-    };
-    plat::send_reply(&text);
+    }
 }
 
 /// Sends event `name` with JSON `payload` to the page, from any thread.

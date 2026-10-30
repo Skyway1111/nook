@@ -382,7 +382,11 @@ zeroed!(
 
 /// `s` as Windows takes a string: UTF-16, ending in a NUL.
 pub fn wide(s: impl AsRef<OsStr>) -> Vec<u16> {
-    s.as_ref().encode_wide().chain([0]).collect()
+    let s = s.as_ref();
+    let mut w = Vec::with_capacity(s.len() + 1); // never more units than UTF-8 has bytes
+    w.extend(s.encode_wide());
+    w.push(0);
+    w
 }
 
 #[link(name = "kernel32.dll", kind = "raw-dylib", modifiers = "+verbatim")]

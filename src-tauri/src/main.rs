@@ -276,9 +276,12 @@ fn shown_dir(e: &fs::DirEntry) -> Option<bool> {
 
 const BOM: &[u8] = b"\xEF\xBB\xBF";
 
-/// A file's text as a file tab holds it: UTF-8 without the BOM.
-fn decode(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
-    String::from_utf8_lossy(bytes.strip_prefix(BOM).unwrap_or(bytes))
+/// A file's text as a file tab holds it: UTF-8 without the BOM. Text that is UTF-8 keeps its buffer.
+fn decode(mut bytes: Vec<u8>) -> String {
+    if bytes.starts_with(BOM) {
+        bytes.drain(..BOM.len());
+    }
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 /// A file's text for a file tab. Refuses binary files and files over 4 MiB.
@@ -290,7 +293,7 @@ fn read_text(path: String) -> Result<String, String> {
     if bytes.contains(&0) {
         return Err("it isn't text".into());
     }
-    Ok(decode(&bytes).into_owned())
+    Ok(decode(bytes))
 }
 
 /// When a file last changed, and its size. A file tab rereads the file only when this changes.
@@ -350,7 +353,7 @@ fn write_text(path: String, text: String, base: Option<String>) -> Result<bool, 
     if std::str::from_utf8(&old).is_err() {
         return Err("it isn't UTF-8, and saving would garble it".into());
     }
-    if base.is_some_and(|b| decode(&old) != b) {
+    if base.is_some_and(|b| old.strip_prefix(BOM).unwrap_or(&old) != b.as_bytes()) {
         return Ok(false);
     }
     let bom = if old.starts_with(BOM) { BOM } else { b"" };

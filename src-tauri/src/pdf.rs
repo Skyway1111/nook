@@ -119,13 +119,13 @@ mod os {
             Some(share) if !share.starts_with(['?', '.']) => format!(r"\\?\UNC\{share}"),
             _ => full,
         };
-        Some(full.encode_utf16().chain([0]).collect())
+        Some(wide(full))
     }
 
     fn render(path: &str, fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, i32> {
         let &(create_device, create_renderer) = FNS.get_or_init(load).as_ref().ok_or(0x8007007e_u32 as i32)?; // ERROR_MOD_NOT_FOUND
         let path = verbatim(path).ok_or(0x800700a1_u32 as i32)?; // ERROR_BAD_PATHNAME
-        let class: Vec<u16> = "Windows.Data.Pdf.PdfDocument".encode_utf16().chain([0]).collect();
+        let class = wide("Windows.Data.Pdf.PdfDocument");
         unsafe {
             let mut file = null_mut();
             ok(CreateRandomAccessStreamOnFile(path.as_ptr(), 0, &RANDOM_ACCESS_STREAM, &mut file))?; // read, sharing all

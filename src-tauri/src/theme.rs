@@ -55,7 +55,7 @@ pub fn read_theme() -> Theme {
     if first {
         let _ = fs::create_dir_all(&dir).and_then(|()| fs::write(&path, THEME_SEED));
     }
-    let read = |p: &Path| fs::read(p).ok().map(|bytes| decode(&bytes).into_owned());
+    let read = |p: &Path| fs::read(p).ok().map(decode);
     let name = read_settings().ok().and_then(|s| s.theme);
     let pack_dir = name.as_ref().map(|n| dir.join("themes").join(n));
     let pack = pack_dir.as_ref().and_then(|d| read(&d.join("theme.css")));

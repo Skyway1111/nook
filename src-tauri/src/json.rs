@@ -778,6 +778,7 @@ impl W for str {
     fn w(&self, o: &mut Out) {
         const HEX: &[u8; 16] = b"0123456789abcdef";
         let s = &mut o.s;
+        s.reserve(self.len() + 2);
         s.push('"');
         let mut from = 0;
         for (i, &b) in self.as_bytes().iter().enumerate() {
