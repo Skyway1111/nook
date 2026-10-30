@@ -18,6 +18,7 @@ pub fn pdf_page(path: String, width: u32, height: u32) -> Result<Response, Strin
 
 #[cfg(windows)]
 mod os {
+    use crate::sys::{GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
     use std::{
         ffi::c_void,
         ptr::{null, null_mut},
@@ -47,12 +48,6 @@ mod os {
     const E_POINTER: i32 = 0x80004003_u32 as i32;
     const E_TIMEOUT: i32 = 0x800705b4_u32 as i32;
 
-    #[link(name = "kernel32.dll", kind = "raw-dylib", modifiers = "+verbatim")]
-    extern "system" {
-        fn LoadLibraryExW(name: *const u16, file: P, flags: u32) -> P;
-        fn GetProcAddress(module: P, name: *const u8) -> P;
-    }
-
     #[link(name = "combase.dll", kind = "raw-dylib", modifiers = "+verbatim")]
     extern "system" {
         fn CoIncrementMTAUsage(cookie: *mut P) -> i32;
@@ -75,16 +70,15 @@ mod os {
 
     fn load() -> Option<(CreateDevice, CreateRenderer)> {
         let find = |dll: &str, name: &[u8]| unsafe {
-            let dll: Vec<u16> = dll.encode_utf16().chain([0]).collect();
-            let module = LoadLibraryExW(dll.as_ptr(), null_mut(), 0x800); // LOAD_LIBRARY_SEARCH_SYSTEM32
-            let f = if module.is_null() { module } else { GetProcAddress(module, name.as_ptr()) };
+            let module = LoadLibraryExW(crate::sys::wide(dll).as_ptr(), null_mut(), LOAD_LIBRARY_SEARCH_SYSTEM32);
+            let f = if module.is_null() { null() } else { GetProcAddress(module, name.as_ptr()) };
             (!f.is_null()).then_some(f)
         };
         let (device, renderer) = (find("d3d11.dll", b"D3D11CreateDevice\0")?, find("windows.data.pdf.dll", b"PdfCreateRenderer\0")?);
         unsafe {
             // A thread that never set up COM is in the process's multithreaded apartment, which this keeps.
             CoIncrementMTAUsage(&mut null_mut());
-            Some((std::mem::transmute::<P, CreateDevice>(device), std::mem::transmute::<P, CreateRenderer>(renderer)))
+            Some((std::mem::transmute::<*const c_void, CreateDevice>(device), std::mem::transmute::<*const c_void, CreateRenderer>(renderer)))
         }
     }
 
