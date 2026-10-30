@@ -137,7 +137,7 @@ export class Term {
     this.linkLine = -1
     this.mouseOut = true
     this.linkResized = false
-    this.linkMark = null
+    this.hover = null // the hovered link's cells: { y1, x1, y2, x2 }, end exclusive
     this.openLink = link
 
     this.marksList = new Set()
@@ -199,7 +199,6 @@ export class Term {
     const m = this.ctx.measureText(W)
     this.charW = m.width
     this.charH = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent
-    this.ascent = m.fontBoundingBoxAscent
     this.flat.fill(NaN)
     this.widths.clear()
     return true
@@ -283,7 +282,8 @@ export class Term {
 
   // ---- size
 
-  /** Sets the size; the same size does nothing. Row elements change at once, even while a frame is held. */
+  /** Sets the size; the same size does nothing. As xterm's DOM renderer did, the rows repaint at once, even
+   * while a synchronized update holds the frame, and onRender waits for the frame after the hold. */
   resize(cols, rows) {
     if (!this.vt.resize(cols, rows)) return
     this.resizeRows()
@@ -291,6 +291,7 @@ export class Term {
     this.clearSelection()
     this.clearLink()
     this.linkResized = true
+    if (!this.paused) this.paint()
     this.emit('resize', { cols: this.vt.cols, rows: this.vt.rows })
     this.refresh()
   }
@@ -304,7 +305,7 @@ export class Term {
     for (let y = this.snaps.length; y < rows; y++) this.snaps.push(new Uint32Array(cols * 3))
     this.snaps.length = rows
     this.sigs.length = this.html.length = rows
-    const state = new Int32Array(rows * 3).fill(-2)
+    const state = new Int32Array(rows * 5).fill(-2)
     this.state = state
     this.force = true
   }
@@ -403,8 +404,14 @@ export class Term {
 
   draw = () => {
     this.frame = 0
+    if (this.paused || this.vt.sync) return
+    this.paint()
+    this.emit('render')
+  }
+
+  /** Brings every row, the selection, marks, scrollbar and textarea up to date with the screen. */
+  paint() {
     const vt = this.vt
-    if (this.paused || vt.sync) return
     if (this.flat[87] !== this.flat[87]) {
       this.measure([[W, 0, 0]])
       this.setSpacing()
@@ -427,7 +434,9 @@ export class Term {
     const [sx, sy, ex, ey] = range ?? [0, -1, 0, -1]
     const view = b.trimmed + top
     const state = this.state
+    const hover = this.hover
     const dirty = []
+    let rebuilt = false
     for (let y = 0; y < rows; y++) {
       const line = b.lines.get(top + y)
       if (!line) continue
@@ -441,41 +450,49 @@ export class Term {
         else if (abs === ey && sy < ey) s1 = ex
         else if (abs === sy && sy < ey) [s0, s1] = [sx, cols]
       }
-      const k = y * 3
+      let h0 = 0
+      let h1 = 0
+      if (hover) {
+        const abs = top + y
+        if (abs >= hover.y1 && abs <= hover.y2) [h0, h1] = [abs === hover.y1 ? hover.x1 : 0, abs === hover.y2 ? hover.x2 : cols]
+      }
+      const k = y * 5
       const curState = cur < 0 ? -1 : cur * 8 + look
-      let changed = force | +(state[k] !== curState) | +(state[k + 1] !== s0) | +(state[k + 2] !== s1)
+      let changed = force | +(state[k] !== curState) | +(state[k + 1] !== s0) | +(state[k + 2] !== s1) | +(state[k + 3] !== h0) | +(state[k + 4] !== h1)
       state[k] = curState
       state[k + 1] = s0
       state[k + 2] = s1
-      if (copy(line, this.snaps[y], cols)) changed = 1
+      state[k + 3] = h0
+      state[k + 4] = h1
+      let cells = copy(line, this.snaps[y], cols)
       if (line.comb || line.ext || this.sigs[y]) {
         const sig = extras(line, cols)
         if (sig !== this.sigs[y]) {
           this.sigs[y] = sig
-          changed = 1
+          cells = true
         }
       }
-      if (changed) dirty.push(y, line, cur, s0, s1)
+      if (cells && this.link && top + y >= this.link.range.start.y - 1 && top + y <= this.link.range.end.y - 1) rebuilt = true
+      if (changed || cells) dirty.push(y, line, cur, s0, s1, h0, h1)
     }
     const built = []
     let again = null
-    for (let i = 0; i < dirty.length; i += 5) {
+    const html = i => this.rowHtml(dirty[i + 1], dirty[i + 2], curClass, dirty[i + 3], dirty[i + 4], dirty[i + 5], dirty[i + 6])
+    for (let i = 0; i < dirty.length; i += 7) {
       this.unmeasured = false
-      built.push(this.rowHtml(dirty[i + 1], dirty[i + 2], curClass, dirty[i + 3], dirty[i + 4]))
+      built.push(html(i))
       if (this.unmeasured) (again ??= []).push(i)
     }
     if (again) {
       this.measure([...this.pending.values()])
       this.pending.clear()
-      for (const i of again) built[i / 5] = this.rowHtml(dirty[i + 1], dirty[i + 2], curClass, dirty[i + 3], dirty[i + 4])
+      for (const i of again) built[i / 7] = html(i)
     }
-    let rebuilt = false
     for (let i = 0; i < built.length; i++) {
-      const y = dirty[i * 5]
+      const y = dirty[i * 7]
       if (built[i] === this.html[y]) continue
       this.html[y] = built[i]
       this.rowEls[y].innerHTML = built[i]
-      if (this.link && y + top >= this.link.range.start.y - 1 && y + top <= this.link.range.end.y - 1) rebuilt = true
     }
     vt.changed = false
     this.place(view, range, force)
@@ -484,11 +501,11 @@ export class Term {
     // A link under the pointer whose rows changed, or that scrolled, is asked for again.
     if (this.link && (rebuilt || view !== this.linkView)) this.reaskLink()
     this.linkView = view
-    this.emit('render')
   }
 
-  /** Row cells as HTML: cells that draw alike merged into one span, up to the last cell that draws anything. */
-  rowHtml(line, cur, curClass, s0, s1) {
+  /** Row cells as HTML: cells that draw alike merged into one span, up to the last cell that draws anything.
+   * Cells `s0` to `s1` are selected, `h0` to `h1` a hovered link's. */
+  rowHtml(line, cur, curClass, s0, s1, h0, h1) {
     const { d, cap: c } = line
     const cols = this.vt.cols
     let n = Math.min(line.getNoBgTrimmedLength(), cols)
@@ -505,6 +522,7 @@ export class Term {
     let pul = 0
     let psp = 0
     let psel = false
+    let phov = false
     for (let x = 0; x < n; x++) {
       const content = d[x]
       const w = content >>> 22
@@ -548,9 +566,10 @@ export class Term {
       } else g = this.widthOf(ch, bold, italic)
       const sp = g < 0 ? base : w * cellW - g
       const sel = x >= s0 && x < s1
+      const hov = x >= h0 && x < h1
       const ul = underline ? uls * 0x4000000 + (ext ? ext.ulc : 0) + 1 : 0
       const t = code === 60 ? '&lt;' : code === 38 ? '&amp;' : code === -1 && (ch.includes('<') || ch.includes('&')) ? ch.replace(/&/g, '&amp;').replace(/</g, '&lt;') : ch
-      if (open && x !== cur && sel === psel && (sel || bg === pbg) && fg === pfg && ul === pul && sp === psp) {
+      if (open && x !== cur && sel === psel && (sel || bg === pbg) && fg === pfg && ul === pul && sp === psp && hov === phov) {
         text += t
         continue
       }
@@ -561,6 +580,7 @@ export class Term {
       pul = ul
       psp = sp
       psel = sel
+      phov = hov
       let cls = x === cur ? curClass : ''
       let st = ''
       if (bold) cls += ' bold'
@@ -573,6 +593,7 @@ export class Term {
       }
       if (bg & OVERLINE) cls += ' over'
       if (fg & STRIKE) cls += ' strike'
+      if (hov) st += 'text-decoration:underline;'
       let f = fg
       let k = bg
       if (fg & INVERSE) {
@@ -640,11 +661,11 @@ export class Term {
 
   /** A box over `width` cells of buffer line `y` from cell `x`, under the text, in the buffer now in use; it
    * keeps to its line as the view scrolls. Returns `{ el, dispose }`. */
-  mark(y, { x = 0, width = this.vt.cols, className = '', style = '' } = {}) {
+  mark(y, { x = 0, width = this.vt.cols, className = '' } = {}) {
     const b = this.vt.buffer
     const el = this.marks.appendChild(document.createElement('div'))
     el.className = className
-    const m = { el, buffer: b, line: b.trimmed + y, x, width, style, dispose: () => { el.remove(); this.marksList.delete(m) } }
+    const m = { el, buffer: b, line: b.trimmed + y, x, width, dispose: () => { el.remove(); this.marksList.delete(m) } }
     this.marksList.add(m)
     this.placeMark(m, b.trimmed + b.ydisp)
     return m
@@ -653,7 +674,7 @@ export class Term {
   placeMark(m, view) {
     const y = m.line - view
     const shown = m.buffer === this.vt.buffer && y >= 0 && y < this.vt.rows
-    m.el.style.cssText = shown ? `top:${y * this.cellH}px;left:${m.x * this.cellW}px;width:${m.width * this.cellW}px;height:${this.cellH}px;${m.style}` : 'display:none'
+    m.el.style.cssText = shown ? `top:${y * this.cellH}px;left:${m.x * this.cellW}px;width:${m.width * this.cellW}px;height:${this.cellH}px` : 'display:none'
   }
 
   // ---- scrolling
@@ -1388,8 +1409,8 @@ export class Term {
     if (!c || !inLink(link, { x: c[0], y: c[1] + this.vt.buffer.ydisp }, this.vt.cols)) return
     this.link = link
     const deco = link.decorations
-    link.state = { underline: deco?.underline ?? true, pointer: deco?.pointerCursor ?? true }
-    if (link.state.underline) this.underline(link)
+    link.state = deco ? { underline: deco.underline, pointer: deco.pointerCursor } : { underline: true, pointer: true }
+    if (link.state.underline) this.setHover(link)
     if (link.state.pointer) this.screen.classList.add('xterm-cursor-pointer')
     link.hover?.(e, link.text)
   }
@@ -1398,8 +1419,7 @@ export class Term {
     const link = this.link
     if (!link) return
     this.link = null
-    this.linkMark?.forEach(m => m.dispose())
-    this.linkMark = null
+    this.setHover(null)
     if (link.state?.pointer) this.screen.classList.remove('xterm-cursor-pointer')
     link.leave?.(this.lastMove, link.text)
   }
@@ -1412,27 +1432,12 @@ export class Term {
     if (c) this.askLink({ x: c[0], y: c[1] + this.vt.buffer.ydisp }, false)
   }
 
-  /** An underline under the link's cells, in the color of its first cell's text. */
-  underline(link) {
-    const { start, end } = link.range
-    const b = this.vt.buffer
-    const cols = this.vt.cols
-    const line = b.getLine(start.y - 1)
-    const cell = line?.getCell(start.x - 1)
-    const color = cell && cell.fg & CM ? `color:${css(cell.fg & COLOR, cell.fg & BOLD)};` : ''
-    const style = `${color}border-bottom-width:${Math.max(1, Math.round(this.fontSize / 15))}px;height:${Math.min(this.cellH, this.underlineAt())}px`
-    const marks = []
-    for (let y = start.y; y <= end.y; y++) {
-      const from = y === start.y ? start.x - 1 : 0
-      const to = y === end.y ? end.x : cols
-      marks.push(this.mark(y - 1, { x: from, width: to - from, className: 'xterm-link-line', style }))
-    }
-    this.linkMark = marks
-  }
-
-  /** How far down its cell the underline sits: just under the text's baseline. */
-  underlineAt() {
-    return Math.round((this.cellH - this.charH) / 2 + this.ascent + Math.max(1, this.fontSize / 10))
+  /** Underlines a link's cells, as text; null takes it away. */
+  setHover(link) {
+    if (!link && !this.hover) return
+    const r = link?.range
+    this.hover = r ? { y1: r.start.y - 1, x1: r.start.x - 1, y2: r.end.y - 1, x2: r.end.x } : null
+    this.refresh()
   }
 
   linkDown = () => { this.downLink = this.link }

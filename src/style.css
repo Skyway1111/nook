@@ -135,16 +135,15 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 .xterm-screen { will-change: transform; }
 /* xterm draws its own themed scrollbar; hide the native one underneath. */
 .xterm .xterm-viewport { background: transparent !important; scrollbar-width: none; }
-/* The terminal (src/term/view.js). Its screen holds, bottom up: marks (search hits, a turn's flash, a hovered link's
-   underline), the selection, the rows of text, and pictures. term/view.js adds the palette's classes, fN and bN. */
+/* The terminal (src/term/view.js). Its screen holds, bottom up: marks (search hits, a turn's flash), the selection,
+   the rows of text, and pictures. term/view.js adds the palette's classes, fN and bN. */
 .xterm { position: relative; cursor: text; user-select: none; -webkit-user-select: none; }
 .xterm.enable-mouse-events { cursor: default; }
 .xterm .xterm-cursor-pointer { cursor: pointer; }
 .xterm .xterm-screen { position: relative; }
 :is(.xterm-marks, .xterm-selection) { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 :is(.xterm-marks, .xterm-selection) > div { position: absolute; }
-.xterm-selection > div { background: linear-gradient(var(--selection), var(--selection)), #000; } /* opaque, as xterm had it */
-.xterm-link-line { z-index: 1; box-sizing: border-box; border-bottom: 0 solid currentColor; color: var(--term-fg); }
+.xterm-marks + .xterm-selection > div { background: linear-gradient(var(--selection), var(--selection)), #000; } /* opaque, as xterm had it */
 .xterm-rows { position: relative; pointer-events: none; color: var(--term-fg); font-weight: normal; font-kerning: none; white-space: pre; line-height: normal; }
 .xterm-rows > div { height: var(--cell-h); line-height: var(--cell-h); overflow: hidden; }
 .xterm-rows span { display: inline-block; height: 100%; vertical-align: top; }
