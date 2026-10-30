@@ -10,7 +10,7 @@
 // Every build is nook as dev.nook.bench, with its own settings and WebView2 profile, so your own nook can stay open
 // and its settings are never touched; close it for numbers you publish, since its work is noise in theirs. An --exe
 // has to be built that way too: `$env:NOOK_ID = 'dev.nook.bench'; npm run build -- --no-pack` puts one in
-// src-tauri\target\release\stage.
+// native\target\release\stage.
 //   npm run bench:windows
 //   node bench/windows.mjs [--base 3318948] [--new origin/main] [--exe base.exe,new.exe] [--wallpapers none,koi]
 //                          [--runs 20] [--sessions 3]
@@ -46,7 +46,7 @@ function build(ref) {
   const dir = join(store, sha)
   if (!existsSync(dir)) git('worktree', 'add', '-f', '--detach', dir, sha)
   const own = existsSync(join(dir, 'scripts', 'build.mjs'))
-  const exe = join(dir, 'src-tauri', 'target', 'release', ...(own ? ['stage'] : []), 'nook.exe')
+  const exe = join(dir, existsSync(join(dir, 'native')) ? 'native' : 'src-tauri', 'target', 'release', ...(own ? ['stage'] : []), 'nook.exe')
   if (benched(exe)) return { label: `${ref} (${sha})`, exe }
   console.log(`Building ${ref} (${sha}) in ${dir}. A commit's first build takes a few minutes.`)
   const env = { ...process.env, NOOK_ID: ID, TAURI_CONFIG: JSON.stringify({ identifier: ID }) }

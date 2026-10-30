@@ -4,7 +4,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "cargo run --manifest-path src-tauri/Cargo.toml",
+    "dev": "cargo run --manifest-path native/Cargo.toml",
     "build": "node scripts/build.mjs",
     "test": "node --test \"src/**/*.test.js\"",
     "bench:windows": "node bench/windows.mjs",

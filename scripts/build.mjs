@@ -18,17 +18,17 @@ const windows = process.platform === 'win32'
 // What ships beside nook.exe, as [from in the repo, to in the install]. A folder copies whole.
 const PAYLOAD = [
   ...(windows ? [
-    ['src-tauri/conpty/conpty.dll', 'conpty.dll'],
-    ['src-tauri/conpty/OpenConsole.exe', 'OpenConsole.exe'],
-    ['src-tauri/conpty/LICENSE', 'conpty-LICENSE.txt'],
+    ['native/conpty/conpty.dll', 'conpty.dll'],
+    ['native/conpty/OpenConsole.exe', 'OpenConsole.exe'],
+    ['native/conpty/LICENSE', 'conpty-LICENSE.txt'],
   ] : []),
   ['src/fonts/OFL.txt', 'Libron-LICENSE.txt'],
   ['src/fonts/FluentIcons-LICENSE.txt', 'FluentIcons-LICENSE.txt'],
-  ['src-tauri/mod/.claude-plugin/plugin.json', 'mod/.claude-plugin/plugin.json'],
-  ['src-tauri/mod/hooks/hooks.json', 'mod/hooks/hooks.json'],
-  ['src-tauri/mod/hooks/register.js', 'mod/hooks/register.js'],
-  ['src-tauri/mod/types/index.d.ts', 'mod/types/index.d.ts'],
-  ['src-tauri/mod/themes/nook.json', 'mod/themes/nook.json'],
+  ['mod/.claude-plugin/plugin.json', 'mod/.claude-plugin/plugin.json'],
+  ['mod/hooks/hooks.json', 'mod/hooks/hooks.json'],
+  ['mod/hooks/register.js', 'mod/hooks/register.js'],
+  ['mod/types/index.d.ts', 'mod/types/index.d.ts'],
+  ['mod/themes/nook.json', 'mod/themes/nook.json'],
   ['themes', 'themes'],
 ]
 
@@ -692,12 +692,12 @@ try {
   stop(e.message)
 }
 if (!process.argv.includes('--dist')) {
-  const tauri = join(root, 'src-tauri')
-  // Cargo reads a relative CARGO_TARGET_DIR from src-tauri, where it runs, so it gets the whole path.
+  const native = join(root, 'native')
+  // Cargo reads a relative CARGO_TARGET_DIR from native, where it runs, so it gets the whole path.
   if (process.env.CARGO_TARGET_DIR) process.env.CARGO_TARGET_DIR = resolve(process.env.CARGO_TARGET_DIR)
-  const release = join(process.env.CARGO_TARGET_DIR ?? join(tauri, 'target'), 'release')
+  const release = join(process.env.CARGO_TARGET_DIR ?? join(native, 'target'), 'release')
   const exe = windows ? 'nook.exe' : 'nook'
-  run('cargo', ['build', '--release'], tauri)
+  run('cargo', ['build', '--release'], native)
   // The stage is a nook that runs where it is: the exe and what ships beside it, and nothing else.
   const stage = join(release, 'stage')
   rmSync(stage, { recursive: true, force: true })
@@ -705,13 +705,13 @@ if (!process.argv.includes('--dist')) {
   copyFileSync(join(release, exe), join(stage, exe))
   for (const [from, to] of PAYLOAD) cpSync(join(root, from), join(stage, to), { recursive: true })
   console.log(`${join(stage, exe)} runs with its payload beside it`)
-  const cargo = readFileSync(join(tauri, 'Cargo.toml'), 'utf8')
+  const cargo = readFileSync(join(native, 'Cargo.toml'), 'utf8')
   const [version, about, home] = ['version', 'description', 'repository'].map(k => new RegExp(`^${k} = "(.+)"`, 'm').exec(cargo)[1])
   const name = NOOK_NAME || 'nook'
   if (pack && windows) {
-    run('cargo', ['build', '--release'], join(tauri, 'setup'))
+    run('cargo', ['build', '--release'], join(native, 'setup'))
     const out = join(release, `${name}_${version}_x64-setup.exe`)
-    run(join(process.env.CARGO_TARGET_DIR ?? join(tauri, 'setup', 'target'), 'release', 'setup.exe'), ['--pack', stage, out], root)
+    run(join(process.env.CARGO_TARGET_DIR ?? join(native, 'setup', 'target'), 'release', 'setup.exe'), ['--pack', stage, out], root)
     console.log(out)
   } else if (pack) {
     const arch = { x64: 'amd64', arm64: 'arm64' }[process.arch]
@@ -737,7 +737,7 @@ function deb(stage, { name, version, arch, about, home }) {
   add(`./usr/share/applications/${name}.desktop`, Buffer.from(`[Desktop Entry]\nType=Application\nName=${name}\nComment=${about}\n` +
     `Exec=${name} %f\nIcon=${name}\nTerminal=false\nCategories=Development;\nStartupWMClass=${name}\n`))
   for (const [icon, size] of [['32x32', '32x32'], ['128x128', '128x128'], ['128x128@2x', '256x256'], ['icon', '512x512']])
-    add(`./usr/share/icons/hicolor/${size}/apps/${name}.png`, readFileSync(join(root, 'src-tauri', 'icons', `${icon}.png`)))
+    add(`./usr/share/icons/hicolor/${size}/apps/${name}.png`, readFileSync(join(native, 'icons', `${icon}.png`)))
   files.sort((a, b) => (a[0] < b[0] ? -1 : 1))
   const size = files.reduce((n, f) => n + (f[1]?.length ?? 0), 0)
   const control = `Package: ${name}\nVersion: ${version}\nArchitecture: ${arch}\nMaintainer: ${name}\n` +

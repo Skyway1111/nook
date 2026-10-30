@@ -7,7 +7,7 @@ import { path as paths } from './paths.js'
 
 /** nook's own theme's card picture. */
 const PREVIEW = new URL('./nook.jpg', import.meta.url).href
-/** nook's Claude theme, from its mod (src-tauri/mod/themes/nook.json), as Claude's settings name it. */
+/** nook's Claude theme, from its mod (mod/themes/nook.json), as Claude's settings name it. */
 const NOOK = 'custom:nook:nook'
 const label = name => name.replace(/[-_]+/g, ' ').replace(/(^|\s)\p{L}/gu, c => c.toUpperCase())
 

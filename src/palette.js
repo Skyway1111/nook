@@ -1,7 +1,7 @@
 // The terminal palette's theme variables. Colors 0-15 are theme.css's 16 ANSI colors. nook's Claude theme
-// (src-tauri/mod/themes/nook.json) draws each of Claude's color tokens it lists in its own slot from 16 up,
+// (mod/themes/nook.json) draws each of Claude's color tokens it lists in its own slot from 16 up,
 // and that slot takes `--claude-<token>`.
-import nook from '../src-tauri/mod/themes/nook.json' with { type: 'json' }
+import nook from '../mod/themes/nook.json' with { type: 'json' }
 
 const ANSI = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white']
 const SLOTS = new Map(Object.entries(nook.overrides).map(([token, color]) => [Number(/\d+(?=\))/.exec(color)), token]))

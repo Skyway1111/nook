@@ -1,6 +1,6 @@
 node_modules/
 dist/
-src-tauri/target/
+native/target/
 # Claude Code writes this beside a mod it loads, for its own types
-src-tauri/mod/tsconfig.json
-src-tauri/setup/target/
+mod/tsconfig.json
+native/setup/target/

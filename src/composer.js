@@ -29,7 +29,7 @@ const bg = cell => color(cell.isBgDefault(), cell.isBgRGB(), cell.getBgColor()) 
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi)
 const same = (a, b) => a?.from === b?.from && a?.to === b?.to && a?.px === b?.px
 
-/** The model and effort menus and the context ring, from what nook's mod reports (`src-tauri/mod`). */
+/** The model and effort menus and the context ring, from what nook's mod reports (`mod`). */
 function chipsHtml({ model, effort, context }) {
   if (!model) return ''
   const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(model) // claude-opus-5-5[1m] is Opus 5.5

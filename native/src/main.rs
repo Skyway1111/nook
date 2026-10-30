@@ -166,9 +166,8 @@ pub fn resource(name: &str) -> PathBuf {
     {
         let root = Path::new(host::ROOT);
         match name {
-            "themes" => root.join(name),
-            "conpty.dll" | "OpenConsole.exe" => root.join("src-tauri").join("conpty").join(name),
-            _ => root.join("src-tauri").join(name),
+            "conpty.dll" | "OpenConsole.exe" => root.join("native").join("conpty").join(name),
+            _ => root.join(name),
         }
     }
     #[cfg(not(debug_assertions))]
@@ -452,7 +451,7 @@ fn main() {
         #[cfg(target_os = "linux")]
         icon: include_bytes!("../icons/32x32.png"),
         #[cfg(debug_assertions)]
-        watch: &["src", "index.html", "src-tauri/mod/themes"],
+        watch: &["src", "index.html", "mod/themes"],
     };
     if let Err(e) = host::run(cfg, commands) {
         eprintln!("{e}");

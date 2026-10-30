@@ -1,4 +1,4 @@
-// `claude plugin test src-tauri/mod`: what the mod tells nook a session is doing. Each `on` stands for the
+// `claude plugin test mod`: what the mod tells nook a session is doing. Each `on` stands for the
 // engine beneath the mod, and the report is the last JSON written to NOOK_STATE.
 import { expect, test } from 'claude-code/testing'
 

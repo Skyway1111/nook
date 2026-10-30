@@ -85,7 +85,7 @@ impl Sessions {
     }
 }
 
-/// Where nook's mod (`src-tauri/mod`) writes session `id`'s model, effort, and context fill. It reads
+/// Where nook's mod (`mod`) writes session `id`'s model, effort, and context fill. It reads
 /// requests from the same path with `.cmd` for an extension.
 fn state_file(id: u64) -> PathBuf {
     std::env::temp_dir().join("nook").join(format!("{}-{id}.json", std::process::id()))

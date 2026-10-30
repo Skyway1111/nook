@@ -35,8 +35,8 @@
 // floods over shorter spans, 16 opens, no Claude-view pass unless --tui on, and a number that comes close to its
 // bar gets more launches before the verdict. --koi also switches each session to the koi wallpaper for a while.
 // Needs Xvfb, xdotool and python3, and nook built as dev.nook.bench, which keeps its own settings:
-// `NOOK_ID=dev.nook.bench npm run build -- --no-pack` puts one in src-tauri/target/release/stage.
-//   node bench/linux.mjs [--bin src-tauri/target/release/stage/nook[,other...]] [--wallpapers none,koi] [--runs 30]
+// `NOOK_ID=dev.nook.bench npm run build -- --no-pack` puts one in native/target/release/stage.
+//   node bench/linux.mjs [--bin native/target/release/stage/nook[,other...]] [--wallpapers none,koi] [--runs 30]
 //                        [--sessions 3] [--tui off] [--repo path] [--quick] [--koi] [--json out.json]
 import { spawn, execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
@@ -45,7 +45,7 @@ import { join, resolve } from 'path'
 import { ID, benched, f, judge, median, quantile, table } from './stats.mjs'
 
 const flag = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i < 0 ? fallback : process.argv[i + 1] }
-const bins = flag('bin', new URL('../src-tauri/target/release/stage/nook', import.meta.url).pathname).split(',').map(b => resolve(b))
+const bins = flag('bin', new URL('../native/target/release/stage/nook', import.meta.url).pathname).split(',').map(b => resolve(b))
 const wallpapers = flag('wallpapers', 'none').split(',')
 const quick = process.argv.includes('--quick')
 const runs = Number(flag('runs', quick ? 16 : 30))

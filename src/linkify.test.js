@@ -19,7 +19,7 @@ test('paths in prose, with their lines and columns', () => {
 
 test("Claude's tool calls name a whole path, spaces included", () => {
   assert.deepEqual(findPaths('⏺ Update(src/my file.js)').map(f => f.path), ['src/my file.js'])
-  assert.deepEqual(findPaths('⏺ Read(src-tauri/src/pty.rs · lines 1-40)').map(f => f.path), ['src-tauri/src/pty.rs'])
+  assert.deepEqual(findPaths('⏺ Read(native/src/pty.rs · lines 1-40)').map(f => f.path), ['native/src/pty.rs'])
   assert.deepEqual(findPaths('⏺ Write(/home/ada/x.txt)').map(f => f.path), ['/home/ada/x.txt'])
 })
 

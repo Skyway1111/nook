@@ -65,7 +65,7 @@ if (bin) bin = resolve(bin)
 else {
   console.log('Building this tree.')
   run(process.execPath, ['scripts/build.mjs', '--no-pack'], { cwd: repo, env })
-  bin = join(resolve(repo, process.env.CARGO_TARGET_DIR ?? 'src-tauri/target'), 'release', 'stage', 'nook')
+  bin = join(resolve(repo, process.env.CARGO_TARGET_DIR ?? 'native/target'), 'release', 'stage', 'nook')
 }
 const built = performance.now()
 
@@ -77,9 +77,9 @@ const changed = [
 const all = process.argv.includes('--all')
 const touches = re => all || changed.some(p => re.test(p))
 const passes = {
-  koi: touches(/^src\/(wallpapers?|backdrops|themer|themes|settings)\.js$|^src\/(style|theme)\.css$|^src-tauri\/src\/theme\.rs$/),
-  tui: touches(/^src\/(terminal|composer|turns|sequences|progress|pictures|links|linkify)\.js$|^src\/style\.css$|^package(-lock)?\.json$|^bench\/(tui\.mjs|pixels\.py)$|^src-tauri\/src\/(pty|shell\w*)\.rs$/),
-  repo: touches(/^src\/(git|files|gitmarks|diff|history|merge|conflicts|blame|graph|patch|paths)\.js$|^src\/(history|merge)\.css$|^src-tauri\/src\/(git|history|index)\.rs$|^bench\/diffrepo\.mjs$/),
+  koi: touches(/^src\/(wallpapers?|backdrops|themer|themes|settings)\.js$|^src\/(style|theme)\.css$|^native\/src\/theme\.rs$/),
+  tui: touches(/^src\/(terminal|composer|turns|sequences|progress|pictures|links|linkify)\.js$|^src\/style\.css$|^package(-lock)?\.json$|^bench\/(tui\.mjs|pixels\.py)$|^native\/src\/(pty|shell\w*)\.rs$/),
+  repo: touches(/^src\/(git|files|gitmarks|diff|history|merge|conflicts|blame|graph|patch|paths)\.js$|^src\/(history|merge)\.css$|^native\/src\/(git|history|index)\.rs$|^bench\/diffrepo\.mjs$/),
 }
 const args = [fileURLToPath(new URL('linux.mjs', import.meta.url)), '--bin', `${main.bin},${bin}`, '--quick']
 if (passes.koi) args.push('--koi')

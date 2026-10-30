@@ -13,7 +13,7 @@ import { connect, sleep, median, quantile } from './cdp.mjs'
 
 const { send, evaluate, trace, close } = await connect(process.argv[2])
 const repo = fileURLToPath(new URL('..', import.meta.url))
-const exe = resolve(repo, process.env.CARGO_TARGET_DIR ?? 'src-tauri/target', 'debug', 'nook.exe')
+const exe = resolve(repo, process.env.CARGO_TARGET_DIR ?? 'native/target', 'debug', 'nook.exe')
 
 // Prints "epochMs width height" per step. Per-monitor DPI aware, so sizes are physical px like the page's.
 const DRAG = `Add-Type @'
