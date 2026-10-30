@@ -426,7 +426,16 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       rows = moved
     }
     edits.forEach((e, n) => { for (let j = at2[n]; j < at2[n] + e.ins; j++) if (doc.lines[j].length > longest) longest = doc.lines[j].length })
-    if (!hs && wrap && longest * cw > textWidth) heights()
+    if (!hs && wrap && longest * cw > textWidth) { // the lines these edits made are the first taller than a row
+      const n = doc.count
+      hs = new Float32Array(n).fill(lh)
+      total = n * lh
+      bp = new Float64Array((n >> B) + 2)
+      for (let k = 0; k < bp.length; k++) bp[k] = (k << B) * lh
+      bpKnown = (n - 1) >> B
+      cb = -1
+      edits.forEach((e, k) => { for (let j = at2[k]; j < at2[k] + e.ins; j++) setH(j, estimate(j)) })
+    }
     cleanHi = lineAfter(edits, cleanHi + 1) - 1 // `apply` took in every line the edits touched
   }
 
