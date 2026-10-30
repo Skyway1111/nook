@@ -182,7 +182,8 @@ function welcome() {
 
 let quick
 const openQuick = () => {
-  quick ??= Promise.all([import('./quickopen.js'), import('./commands.js')]).then(([{ startQuickOpen }, { appCommands }]) => startQuickOpen({
+  // The palette lists every wallpaper, so it loads them too.
+  quick ??= Promise.all([import('./quickopen.js'), import('./commands.js'), wallpaper.load()]).then(([{ startQuickOpen }, { appCommands }]) => startQuickOpen({
     dir: tabFolder,
     commands: appCommands({
       tabs, files, git, drawer, wallpaper, home, banner, insertPath,
