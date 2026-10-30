@@ -52,12 +52,18 @@ const IS_TASK = /^\[[ xX]\] +\S/
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
 const ENC = /[&<>"']/g
 const NOENC = /[<>"']|&(?!(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/g
-const sub = ch => ESC[ch]
 /** `s` safe in HTML text or an attribute. Without `all`, an `&` that starts a reference stays. */
 function escape(s, all) {
   const r = all ? ENC : NOENC
   r.lastIndex = 0
-  return r.test(s) ? s.replace(r, sub) : s
+  let m = r.exec(s)
+  if (!m) return s
+  let out = '', last = 0
+  do {
+    out += s.slice(last, m.index) + ESC[s[m.index]]
+    last = m.index + 1
+  } while ((m = r.exec(s)))
+  return out + s.slice(last)
 }
 
 const NUMREF = /&#(?:(\d{1,7})|[Xx]([A-Fa-f0-9]{1,6}));/g
@@ -65,7 +71,7 @@ const numref = (_, d, h) => {
   const c = d === undefined ? parseInt(h, 16) : parseInt(d, 10)
   return c === 0 || c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff) ? '\ufffd' : String.fromCodePoint(c)
 }
-const decode = s => s.includes('&#') ? s.replace(NUMREF, numref) : s
+const decode = s => s.replace(NUMREF, numref)
 
 function rtrim(s, c) {
   let n = s.length
@@ -86,6 +92,9 @@ function cleanUrl(href) {
 }
 
 let links, queue, top, inLink, inRawBlock, linkEmitted
+// Whether the document holds an `@`, a `mailto:`/`xmpp:`, or what can become two spaces before a line break: where it
+// doesn't, plain text never looks for them.
+let hasAt, hasMail, hasBr
 
 /** The HTML for Markdown `md`. */
 export function toHtml(md) {
@@ -93,7 +102,11 @@ export function toHtml(md) {
   queue = []
   top = true
   inLink = inRawBlock = linkEmitted = false
-  const tokens = lex(md.replace(/\r\n|\r/g, '\n'), [])
+  if (md.includes('\r')) md = md.replace(/\r\n|\r/g, '\n')
+  hasAt = md.includes('@')
+  hasMail = md.includes('mailto:') || md.includes('xmpp:')
+  hasBr = md.includes('  \n') || md.includes('\t')
+  const tokens = lex(md, [])
   for (let i = 0; i < queue.length; i++) queue[i].html = inline(queue[i].src, false)
   return render(tokens)
 }
@@ -436,8 +449,8 @@ function list(s, i) {
     if (!(cap = item.exec(s))) break
     B_HR.lastIndex = p
     if (B_HR.test(s)) break
-    let raw = cap[0]
-    p += raw.length
+    const from = p
+    p += cap[0].length
     const bulletIndent = cap[1].length
     let line = cap[2].endsWith('\n') ? cap[2].slice(0, -1) : cap[2], sp = spaces(line, 0)
     if (line.charCodeAt(sp) === 9) line = line.replace(/^[ \t]+/, w => expandTabs(w, bulletIndent))
@@ -451,7 +464,6 @@ function list(s, i) {
     }
     const next = blank ? lineAt(s, p) : ''
     if (blank && /^[ \t]*$/.test(next)) {
-      raw += next + '\n'
       p += next.length + 1
       early = true
     }
@@ -475,18 +487,19 @@ function list(s, i) {
           contents += '\n' + rawLine
         }
         blank = blankNow
-        raw += rawLine + '\n'
         p += rawLine.length + 1
         line = untabbed.slice(indent)
       }
     }
+    // A line's newline, or one added after the last line.
+    const raw = p > n ? s.slice(from, n) + '\n' : s.slice(from, p)
     if (!token.loose) {
       if (endsWithBlank) token.loose = true
       else if (endsBlank(raw)) endsWithBlank = true
     }
     token.items.push({ raw, task: IS_TASK.test(contents), text: contents, tokens: null })
-    token.raw += raw
   }
+  token.raw = p > n ? s.slice(i, n) + '\n' : s.slice(i, p)
   const lastItem = token.items[token.items.length - 1]
   if (!lastItem) return
   lastItem.raw = lastItem.raw.trimEnd()
@@ -727,7 +740,7 @@ function reflink(src, p, alt) {
 }
 
 /** Emphasis or strikethrough at `p`, as marked pairs its delimiters. */
-function delimited(src, p, prev, masked, alt, tilde) {
+function delimited(src, p, prev, k, alt, tilde) {
   const L = tilde ? DEL_L : EM_L
   L.lastIndex = p
   const m = L.exec(src)
@@ -745,7 +758,7 @@ function delimited(src, p, prev, masked, alt, tilde) {
   const midRun = prev === delim
   const R = tilde ? DEL_R : delim === '*' ? EM_R_AST : EM_R_UND
   R.lastIndex = 0
-  const ms = masked.slice(p + lLength)
+  const ms = (k.masked ??= mask(src)).slice(p + lLength)
   while ((r = R.exec(ms)) !== null) {
     const d = r[1] || r[2] || r[3] || r[4] || r[5] || r[6]
     if (!d) continue
@@ -798,13 +811,13 @@ function textEnd(s, p, k) {
     STOP.lastIndex = q
     k.stop = STOP.exec(s)?.index ?? n
   }
-  if (k.br < q) {
+  if (k.br < q && k.br < n) {
     let t = s.indexOf('  \n', q)
     if (t < 0) t = n
     else while (t > q && s.charCodeAt(t - 1) === 32) t--
     k.br = t
   }
-  if (k.mail <= q) {
+  if (k.mail <= q && k.mail < n) {
     let t = q + 1
     for (;;) {
       const a = s.indexOf('mailto:', t), b = s.indexOf('xmpp:', t)
@@ -818,7 +831,7 @@ function textEnd(s, p, k) {
     }
     k.mail = t
   }
-  if (k.at <= q) {
+  if (k.at <= q && k.at < n) {
     let a = q
     for (;;) {
       a = s.indexOf('@', a)
@@ -843,8 +856,8 @@ function textEnd(s, p, k) {
 function inline(src, alt) {
   const n = src.length
   let out = '', text = '', textRaw = false, inText = false
-  let prev = '', keep = false, masked = null
-  const k = { stop: -1, br: -1, mail: -1, at: -1, name: 0 }
+  let prev = '', keep = false
+  const k = { stop: -1, br: hasBr ? -1 : n, mail: hasMail ? -1 : n, at: hasAt ? -1 : n, name: n, refs: src.includes('&#'), masked: null }
   let p = 0, m, r
   while (p < n) {
     if (!keep) prev = ''
@@ -881,19 +894,19 @@ function inline(src, alt) {
         }
       }
     }
-    if (!r && (c === 42 || c === 95)) r = delimited(src, p, prev, masked ??= mask(src), alt, false)
+    if (!r && (c === 42 || c === 95)) r = delimited(src, p, prev, k, alt, false)
     if (!r) {
       if (c === 96) {
         I_CODE.lastIndex = p
         if ((m = I_CODE.exec(src))) {
-          let code = m[2].replace(/\n/g, ' ')
+          let code = m[2].includes('\n') ? m[2].replace(/\n/g, ' ') : m[2]
           if (/[^ ]/.test(code) && code[0] === ' ' && code[code.length - 1] === ' ') code = code.slice(1, -1)
           r = [p + m[0].length, alt ? code : `<code>${escape(code, true)}</code>`]
         }
       } else if (c === 32 || c === 92) {
         I_BR.lastIndex = p
         if ((m = I_BR.exec(src))) r = [p + m[0].length, alt ? '' : '<br>']
-      } else if (c === 126) r = delimited(src, p, prev, masked ??= mask(src), alt, true)
+      } else if (c === 126) r = delimited(src, p, prev, k, alt, true)
     }
     if (!r && c === 60) {
       I_AUTOLINK.lastIndex = p
@@ -933,7 +946,7 @@ function inline(src, alt) {
     const last = raw[raw.length - 1]
     if (last !== '_') prev = last
     keep = true
-    const t = inRawBlock ? raw : decode(raw)
+    const t = inRawBlock || !k.refs ? raw : decode(raw)
     if (inText) text += t
     else {
       inText = true
