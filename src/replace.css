@@ -6,7 +6,7 @@
 .replace-bar .line { display: flex; gap: 6px; align-items: center; }
 .replace-bar input {
   flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 10px; font: .93rem var(--font-term); color: var(--ink-1);
-  background: var(--raised); border: 1px solid transparent; border-radius: 6px; outline: none; user-select: text;
+  background: var(--raised); border: 1px solid transparent; border-radius: 6px; outline: none; user-select: text; -webkit-user-select: text;
 }
 .replace-bar input.files { font-family: var(--font-ui); }
 .replace-bar input:focus { border-color: var(--accent); }

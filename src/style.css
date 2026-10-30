@@ -13,6 +13,7 @@ body {
   color: var(--ink-2);
   font: 1rem/1.4 var(--font-ui);
   user-select: none;
+  -webkit-user-select: none;
   cursor: default;
   --files-width: var(--sidebar-width); --git-width: var(--sidebar-width); /* a dragged edge sets these inline */
   /* Body fills a viewport that never scrolls, so fixed paints as scroll does, and a fixed one would take a layer. */
@@ -340,7 +341,7 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 /* Quiet until used: no frame until it's hovered, focused, or holding text. */
 #filter {
   flex: 1; min-width: 0; height: 28px; margin-left: 6px; padding: 0 8px; font: inherit; font-size: .93rem;
-  color: var(--ink-1); background: none; border: 1px solid transparent; border-radius: 6px; outline: none; user-select: text;
+  color: var(--ink-1); background: none; border: 1px solid transparent; border-radius: 6px; outline: none; user-select: text; -webkit-user-select: text;
 }
 #filter::placeholder { color: var(--ink-3); }
 #filter:hover { background: var(--hover); }
@@ -362,6 +363,7 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
   width: 100%; padding: 2px 4px; font: inherit; color: var(--ink-1);
   background: var(--raised); border: 1px solid var(--accent); border-radius: 4px; outline: none;
   user-select: text;
+  -webkit-user-select: text;
 }
 .row input { min-width: 0; margin-left: -5px; } /* its text where the label's was */
 
@@ -392,7 +394,7 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 #list .row[data-git="dir"] span { color: color-mix(in srgb, var(--ansi-yellow) 55%, var(--ink-2)); }
 
 #status, #banner, #git-error { margin: 6px 4px 0; padding: 6px 8px; border-radius: 6px; font-size: .9rem; background: var(--raised); color: var(--ink-1); }
-#banner { margin: 6px 0 4px; box-shadow: inset 2px 0 0 var(--ansi-red); user-select: text; }
+#banner { margin: 6px 0 4px; box-shadow: inset 2px 0 0 var(--ansi-red); user-select: text; -webkit-user-select: text; }
 
 /* Git panel */
 #git { display: flex; flex-direction: column; gap: 4px; min-width: 0; min-height: 0; overflow: hidden; padding: 6px 8px 8px; }
@@ -417,7 +419,7 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 #git-branch span { overflow: hidden; text-overflow: ellipsis; }
 svg.glyph { flex: none; width: 15px; height: 15px; }
 svg.defs { position: absolute; width: 0; height: 0; }
-#git-error { flex: none; max-height: 160px; overflow-y: auto; margin: 0; white-space: pre-wrap; user-select: text; box-shadow: inset 2px 0 0 var(--ansi-red); }
+#git-error { flex: none; max-height: 160px; overflow-y: auto; margin: 0; white-space: pre-wrap; user-select: text; -webkit-user-select: text; box-shadow: inset 2px 0 0 var(--ansi-red); }
 
 /* While git is mid-merge, rebase, or the like: what's left, and the way out either side. */
 #git-op { padding: 6px 6px 6px 10px; border-radius: 8px; background: color-mix(in oklch, var(--ansi-yellow) 12%, transparent); box-shadow: inset 2px 0 0 var(--ansi-yellow); }
@@ -469,7 +471,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 #git-compose:focus-within { border-color: var(--accent); }
 #git-message {
   height: 64px; padding: 0; resize: none; border: 0; outline: none; background: none;
-  font: .93rem/1.4 var(--font-term); color: var(--ink-1); user-select: text;
+  font: .93rem/1.4 var(--font-term); color: var(--ink-1); user-select: text; -webkit-user-select: text;
 }
 #git-message::placeholder { color: var(--ink-3); }
 #git #git-commit { margin-left: auto; }
@@ -510,7 +512,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 #settings .theme :is(.remove, .share):hover { color: var(--ink-1); }
 .theme.add { align-items: center; justify-content: center; border-style: dashed; }
 .theme.add .icon { font-size: 16px; }
-#settings-theme-note { user-select: text; }
+#settings-theme-note { user-select: text; -webkit-user-select: text; }
 .knob { display: grid; grid-template-columns: 8.5em 1fr 28px; align-items: center; gap: 10px; min-height: 34px; color: var(--ink-2); }
 .knob .reset { visibility: hidden; }
 .knob.set .reset { visibility: visible; } /* the user's theme.css sets this one */
@@ -520,7 +522,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 }
 #settings :is(.field, textarea):is(:hover, :focus) { border-color: var(--accent); }
 #settings .field { height: 30px; font: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.knob input.field { justify-self: start; width: 80px; user-select: text; }
+.knob input.field { justify-self: start; width: 80px; user-select: text; -webkit-user-select: text; }
 .knob .hue {
   appearance: none; height: 8px; margin: 0; border-radius: 4px; outline: none;
   background: linear-gradient(to right in oklch, oklch(.75 .12 0), oklch(.75 .12 90), oklch(.75 .12 180), oklch(.75 .12 270), oklch(.75 .12 359));
@@ -541,10 +543,10 @@ svg.defs { position: absolute; width: 0; height: 0; }
 #settings summary:hover { color: var(--ink-1); }
 #settings pre {
   max-height: 360px; overflow: auto; margin: 6px 0 0; padding: 10px 12px; border-radius: 8px;
-  background: var(--raised); font: .85rem/1.5 var(--font-term); color: var(--term-fg); user-select: text;
+  background: var(--raised); font: .85rem/1.5 var(--font-term); color: var(--term-fg); user-select: text; -webkit-user-select: text;
 }
 #settings label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); }
-#settings textarea { padding: 6px 10px; resize: vertical; font: .9rem/1.5 var(--font-term); white-space: pre; user-select: text; }
+#settings textarea { padding: 6px 10px; resize: vertical; font: .9rem/1.5 var(--font-term); white-space: pre; user-select: text; -webkit-user-select: text; }
 #settings .toggle { flex-direction: row; align-items: center; gap: 8px; }
 /* Switches, for Settings' toggles and the wallpaper picker's: WebKitGTK paints a checkbox white whatever accent-color
    says, so these are drawn from the theme. The knob is a gradient, not a pseudo-element, which an input may not get. */
@@ -564,10 +566,10 @@ svg.defs { position: absolute; width: 0; height: 0; }
 #settings .pill:hover { color: var(--accent); }
 
 /* File views */
-.view:not(.claude) { overflow: auto; outline: none; user-select: text; cursor: auto; }
+.view:not(.claude) { overflow: auto; outline: none; user-select: text; -webkit-user-select: text; cursor: auto; }
 .view.picture { overflow: hidden; }
 /* A picture that zooms and pans (previews.js): the image is placed by a transform from its top left. */
-.zoom { position: absolute; inset: 0; overflow: hidden; outline: none; cursor: grab; user-select: none; }
+.zoom { position: absolute; inset: 0; overflow: hidden; outline: none; cursor: grab; user-select: none; -webkit-user-select: none; }
 .zoom:active { cursor: grabbing; }
 .zoom img {
   position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; border-radius: 2px;
@@ -603,7 +605,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .sheet .row:nth-child(even) { background: oklch(1 0 0 / .025); }
 .sheet .row:hover { background: var(--hover); }
 .sheet .row > span { padding: 0 8px; white-space: pre; overflow: hidden; text-overflow: ellipsis; border-right: 1px solid var(--line); }
-.sheet .n { color: var(--ink-3); text-align: right; user-select: none; }
+.sheet .n { color: var(--ink-3); text-align: right; user-select: none; -webkit-user-select: none; }
 .sheet .foot {
   position: sticky; left: 0; bottom: 0; width: max-content; margin: 8px 0 0 8px; padding: 3px 9px; border-radius: 6px;
   font: .8rem var(--font-ui); background: var(--raised); color: var(--ink-3);
@@ -686,7 +688,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .cm-editor :is(.cm-textfield, .cm-button) { font: inherit; padding: 2px 8px; color: var(--ink-1); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; }
 .cm-editor .cm-button { cursor: pointer; }
 .cm-editor .cm-button:hover { color: var(--accent); }
-.cm-editor .cm-textfield { user-select: text; }
+.cm-editor .cm-textfield { user-select: text; -webkit-user-select: text; }
 .cm-editor .cm-textfield:focus { border-color: var(--accent); outline: none; }
 /* Completions: a list under the word being typed. */
 .cm-editor .cm-tooltip { position: fixed; z-index: 500; background: var(--raised); color: var(--ink-1); border: 1px solid var(--line); border-radius: 7px; box-shadow: var(--shadow); overflow: hidden; }
@@ -771,7 +773,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .view.diff .danger:hover { color: var(--ansi-red); }
 .view.diff .ln { display: flex; width: max-content; min-width: 100%; }
 .view.diff .cell { display: flex; flex: 1; min-height: 1.5em; white-space: pre; tab-size: 4; }
-.view.diff .cell i { flex: none; width: 6ch; padding-right: 1.5ch; text-align: right; font-style: normal; color: var(--ink-3); user-select: none; }
+.view.diff .cell i { flex: none; width: 6ch; padding-right: 1.5ch; text-align: right; font-style: normal; color: var(--ink-3); user-select: none; -webkit-user-select: none; }
 .view.diff .cell.add { background: color-mix(in oklch, var(--ansi-green) 14%, transparent); }
 .view.diff .cell.del { background: color-mix(in oklch, var(--ansi-red) 14%, transparent); }
 .view.diff .cell.add .mark { background: color-mix(in oklch, var(--ansi-green) 30%, transparent); border-radius: 2px; }
@@ -811,7 +813,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 #menu { min-width: 200px; max-width: min(560px, 90vw); max-height: min(440px, 80vh); overflow-y: auto; padding: 4px; }
 #menu input {
   width: 100%; height: 30px; margin-bottom: 4px; padding: 0 10px; font: inherit; color: var(--ink-1);
-  background: var(--bg); border: 1px solid var(--accent); border-radius: 5px; outline: none; user-select: text;
+  background: var(--bg); border: 1px solid var(--accent); border-radius: 5px; outline: none; user-select: text; -webkit-user-select: text;
 }
 #menu button { display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 10px; border-radius: 5px; text-align: left; color: var(--ink-1); }
 #menu button:hover, #menu button:focus-visible { background: var(--hover); outline: none; }
@@ -833,13 +835,13 @@ svg.defs { position: absolute; width: 0; height: 0; }
 #quick {
   position: fixed; z-index: 12; top: 44px; left: 50%; translate: -50% 0;
   display: flex; flex-direction: column; width: min(640px, calc(100vw - 32px)); max-height: min(520px, calc(100vh - 64px));
-  padding: 6px; border-radius: 10px; user-select: none;
+  padding: 6px; border-radius: 10px; user-select: none; -webkit-user-select: none;
   background: linear-gradient(var(--raised) 0 0), var(--bg); /* solid, as the menu is */
   border: 1px solid var(--line); box-shadow: var(--shadow);
 }
 #quick input {
   flex: none; height: 34px; padding: 0 12px; font: inherit; font-size: 1.07rem; color: var(--ink-1);
-  background: var(--bg); border: 1px solid var(--accent); border-radius: 7px; outline: none; user-select: text;
+  background: var(--bg); border: 1px solid var(--accent); border-radius: 7px; outline: none; user-select: text; -webkit-user-select: text;
 }
 #quick ul { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 6px 0 0; padding: 0; scrollbar-width: thin; }
 #quick ul:empty { display: none; }
@@ -927,7 +929,7 @@ input[type=number]:is(:hover, :focus)::-webkit-inner-spin-button { opacity: .7; 
   padding: 4px 4px 4px 10px; border-radius: 9px; font: .86rem var(--font-ui); color: var(--ink-2);
   background: var(--raised); border: 1px solid var(--line); box-shadow: var(--shadow);
 }
-.find input { width: 200px; border: 0; outline: none; background: none; color: var(--ink-1); font: inherit; user-select: text; }
+.find input { width: 200px; border: 0; outline: none; background: none; color: var(--ink-1); font: inherit; user-select: text; -webkit-user-select: text; }
 .find .count { min-width: 64px; padding: 0 6px; text-align: right; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .find.none .count { color: var(--ansi-red); }
 .find button { width: 24px; height: 24px; border-radius: 6px; color: var(--ink-2); }
