@@ -48,7 +48,7 @@ fn run_progress(dir: &Path, args: &[impl AsRef<OsStr>], mut each: impl FnMut(&st
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("can't run git: {e}"))?;
+    let mut child = crate::spawning(|| cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()).map_err(|e| format!("can't run git: {e}"))?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let (out, said) = thread::scope(|s| {

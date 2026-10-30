@@ -289,19 +289,17 @@ mod os {
         }
     }
 
-    /// A pipe whose `inherited` end (0 read, 1 write) the worker may inherit.
-    fn pipe(inherited: usize) -> io::Result<[OwnedHandle; 2]> {
+    /// A pipe's read end, then its write end.
+    fn pipe() -> io::Result<[OwnedHandle; 2]> {
         let (mut r, mut w) = (null_mut(), null_mut());
         check(unsafe { CreatePipe(&mut r, &mut w, null(), 0) })?;
-        let ends = [owned(r)?, owned(w)?];
-        check(unsafe { SetHandleInformation(ends[inherited].as_raw_handle(), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) })?;
-        Ok(ends)
+        Ok([owned(r)?, owned(w)?])
     }
 
     /// Starts the worker: its process, the pipe nook writes to it, and the pipe it answers on.
     pub fn spawn() -> io::Result<(Process, File, File)> {
-        let [their_in, to_them] = pipe(0)?;
-        let [from_them, their_out] = pipe(1)?;
+        let [their_in, to_them] = pipe()?;
+        let [from_them, their_out] = pipe()?;
         let (token, job) = (token()?, job()?);
         let exe = wide(std::env::current_exe()?);
         // Only what Windows' own DLLs look for.
@@ -335,8 +333,15 @@ mod os {
             let mut pi = PROCESS_INFORMATION::default();
             // No console at all, not even a hidden one: its host would be a process outside the sandbox.
             let flags = DETACHED_PROCESS | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
+            // Its ends must be inheritable, so they are only while no other process starts, and close before one can.
+            let ends = [their_in, their_out];
             let started = made.and_then(|()| {
-                check(CreateProcessAsUserW(token.as_raw_handle(), exe.as_ptr(), null_mut(), null(), null(), 1, flags, env.as_ptr().cast(), null(), &si, &mut pi))
+                crate::spawning(|| {
+                    ends.iter().try_for_each(|end| check(SetHandleInformation(end.as_raw_handle(), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)))?;
+                    let started = check(CreateProcessAsUserW(token.as_raw_handle(), exe.as_ptr(), null_mut(), null(), null(), 1, flags, env.as_ptr().cast(), null(), &si, &mut pi));
+                    drop(ends);
+                    started
+                })
             });
             DeleteProcThreadAttributeList(list.as_mut_ptr().cast());
             started?;
