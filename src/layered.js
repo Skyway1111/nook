@@ -352,7 +352,12 @@ function place(g) {
   for (let v = 0; v < V; v++) rank.push(raw[v] - least.get(find(v)))
   // Only ranks with a node, a border, or a label stay; edges just pass through the others.
   const mids = routes.map((r, i) => (r && g.edges[i].label ? rank[r.a] + ((rank[r.b] - rank[r.a]) >> 1) : -1))
-  const kept = [...new Set([...rank, ...mids.filter(m => m >= 0)])].sort((a, b) => a - b)
+  // An edge asked to be longer keeps the ranks it was given, as if nodes sat there.
+  const asked = new Set()
+  routes.forEach((r, i) => {
+    for (let k = 1; r && k < (g.edges[i].minlen || 1); k++) if (rank[r.a] + k * span < rank[r.b]) asked.add(rank[r.a] + k * span)
+  })
+  const kept = [...new Set([...rank, ...mids.filter(m => m >= 0), ...asked])].sort((a, b) => a - b)
   const squeeze = new Map(kept.map((k, i) => [k, i]))
   for (let v = 0; v < V; v++) rank[v] = squeeze.get(rank[v])
 
@@ -568,6 +573,7 @@ function place(g) {
     height[rank[v]] = Math.max(height[rank[v]], H[v])
     kind[rank[v]] |= v < N ? 2 : dummy[v] === 2 ? 1 : 0
   }
+  for (const k of asked) kind[squeeze.get(k)] |= 2
   for (const chain of chains) if (chain) for (let k = 1; k < chain.length; k++) if (!dummy[chain[k - 1]] || !dummy[chain[k]]) ends[rank[chain[k - 1]]] = 1
   for (let r = 1; r < R; r++) {
     const a = kind[r - 1], b = kind[r]
