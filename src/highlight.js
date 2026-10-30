@@ -18,6 +18,11 @@ const names = []
 export const className = id => (names[id] ??= [...FLAGS.filter(([f]) => id & f).map(f => f[1]),
   ...(id & 31 ? [`tok-${BASE[id & 31]}`] : [])].join(' '))
 
+/** Whether class number `id` marks a comment or a string, whose brackets don't pair with code's. */
+export const inText = id => (id & 31) === COMMENT || (id & 31) === STRING || (id & 31) === STRING2
+/** Whether class number `id` marks a heading. */
+export const inHeading = id => (id & HEADING) !== 0
+
 const MAX_LINE = 10_000 // characters of a line colored at most: a minified file can be one 4 MB line
 
 // States: a stack's frames joined by \0, numbered as first seen. 0 is the empty stack.
