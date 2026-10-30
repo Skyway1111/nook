@@ -11,6 +11,7 @@ import { WINDOWS } from '../paths.js'
 const SCROLLBAR = 14 // px the scrollbar takes beside the screen
 const SLICE_MS = 12 // the longest one parse runs before the page gets a turn
 const HOLD_MS = 1000 // the longest a synchronized update (DEC 2026) holds the frame
+const BURST_MS = 8 // the longest a frame waits for the cursor a program hid mid-frame to show again
 const SEPARATORS = ' ()[]{}\',"`' // what ends a double-clicked word
 const CURSORS = { block: 'xterm-cursor xterm-cursor-block', bar: 'xterm-cursor xterm-cursor-bar', underline: 'xterm-cursor xterm-cursor-underline' }
 const OUTLINE = 'xterm-cursor xterm-cursor-outline' // the cursor while the terminal has no focus
@@ -108,6 +109,8 @@ export class Term {
     this.typed = false // the next write follows user input, so it parses at once, for a quicker echo
     this.frame = 0
     this.holdTimer = 0
+    this.burstTimer = 0
+    this.cursorShown = false // the last frame drew the cursor
     this.paused = false
     this.focused = false
     this.mouseMode = 'none'
@@ -411,13 +414,27 @@ export class Term {
       clearTimeout(this.holdTimer)
       this.holdTimer = 0
     }
+    // ConPTY sends each frame between hiding the cursor and showing it again, in chunks a millisecond apart, so
+    // a frame that would show the cursor gone waits for it to come back: one frame shows a key's whole echo.
+    if (this.vt.cursorHidden && this.cursorShown) {
+      this.burstTimer ||= setTimeout(() => {
+        this.burstTimer = 0
+        this.cursorShown = false
+        this.refresh()
+      }, BURST_MS)
+      return
+    }
+    if (this.burstTimer) {
+      clearTimeout(this.burstTimer)
+      this.burstTimer = 0
+    }
     if (this.paused) return void (this.missed = true)
     this.frame ||= requestAnimationFrame(this.draw)
   }
 
   draw = () => {
     this.frame = 0
-    if (this.paused || this.vt.sync) return
+    if (this.paused || this.vt.sync || this.burstTimer) return
     this.paint()
     this.emit('render')
   }
@@ -437,7 +454,8 @@ export class Term {
     let cy = -1
     let cx = -1
     let look = 0
-    if (!vt.cursorHidden && vt.cursorInit) {
+    this.cursorShown = !vt.cursorHidden && vt.cursorInit
+    if (this.cursorShown) {
       cy = b.ybase + b.y - top
       cx = Math.min(b.x, cols - 1)
       look = this.focused ? (vt.cursorStyle === 'bar' ? 2 : vt.cursorStyle === 'underline' ? 3 : 1) : 4
@@ -1561,6 +1579,7 @@ export class Term {
     document.removeEventListener('mouseup', this.reportUp)
     document.removeEventListener('mousemove', this.reportDrag)
     clearTimeout(this.holdTimer)
+    clearTimeout(this.burstTimer)
     clearTimeout(this.barTimer)
     cancelAnimationFrame(this.frame)
     this.seen.disconnect()
