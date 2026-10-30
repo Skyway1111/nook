@@ -1,7 +1,7 @@
 // mermaid's timeline and journey: columns along an arrow, grouped under sections, each section in its own
 // color. A timeline's column is a period with its events stacked under it; a journey's is a task, with a
 // face for how it felt and dots for who took part.
-import { label, text, esc, r } from './labels.js'
+import { label, text, r } from './labels.js'
 
 const PX = 12, PY = 8 // px around a box's label
 const GAP = 16 // px between columns

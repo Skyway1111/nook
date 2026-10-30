@@ -2,7 +2,7 @@
 // [*] as start and end dots, forks, joins and choices, laid out by layered.js. A line it can't read is
 // skipped.
 import { layout, trace, basis, box, selfLoop } from './layered.js'
-import { label, text, esc, r, styles, LINE } from './labels.js'
+import { label, text, esc, r, styles } from './labels.js'
 
 const PX = 14, PY = 8 // px around a state's label
 const ARROW = 9 // px from an arrowhead's base to its tip

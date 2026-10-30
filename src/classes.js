@@ -1,7 +1,7 @@
 // mermaid's classDiagram: each class a box of its name, attributes and methods, laid out by layered.js
 // along its relations. A line it can't read is skipped.
 import { layout, trace, basis, box } from './layered.js'
-import { label, text, esc, r, styles, LINE } from './labels.js'
+import { label, text, esc, r, styles } from './labels.js'
 
 const PX = 12, PY = 6 // px around a compartment's lines
 // What each end of a relation draws, and how far short of the box its line stops for it.
@@ -53,7 +53,7 @@ export function draw(src) {
     ;(method ? c.methods : c.attrs).push([t, style])
   }
   for (const raw of src.split('\n').slice(1)) {
-    let line = raw.trim()
+    const line = raw.trim()
     if (!line || line.startsWith('%%')) continue
     if (body) {
       if (line.startsWith('}')) { body = null; continue }
@@ -94,7 +94,7 @@ export function draw(src) {
     const all = [...head, ...parts[0], ...parts[1]]
     const w = Math.max(80, ...all.map(l => l.w)) + 2 * PX
     const hh = head.reduce((s, l) => s + l.h, 0) + 2 * PY
-    const sizes = parts.map(p => (p.length ? p.length * LINE + 2 * PY : 0))
+    const sizes = parts.map(p => (p.length ? p.reduce((s, l) => s + l.h, 2 * PY) : 0))
     return { head, parts, w, hh, sizes, h: hh + sizes[0] + sizes[1] }
   })
   const noteBoxes = notes.map(n => ({ w: n.lab.w + 2 * PX, h: n.lab.h + 2 * PY }))
