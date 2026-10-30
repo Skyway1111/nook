@@ -14,7 +14,7 @@ bench = false
 panic = "abort"
 
 [profile.release]
-opt-level = "s"
+opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
