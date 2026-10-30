@@ -703,7 +703,7 @@ export function splitPictures(text, shown) {
  * off, spaces collapsed, cut at a word near `room` characters. */
 export function gist(text, room = 280) {
   const plain = outsideCode(text, part => part, ' ')
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/!?\[([^[\]]*)\]\([^)[]*\)/g, '$1')
     .replace(/^\s{0,3}(#{1,6}|[-*+]|\d+\.|>)\s+/gm, '')
     .replace(/(\*\*|__|`)/g, '')
     .replace(/\s+/g, ' ')
