@@ -6,6 +6,7 @@
 use std::{
     ffi::{c_char, c_int, c_uint, CStr, CString},
     fs, io,
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     ptr::{null, null_mut},
     sync::Mutex,
@@ -22,7 +23,6 @@ extern "C" {
 }
 const AT_FDCWD: c_int = -100;
 const RENAME_NOREPLACE: c_uint = 1;
-const EEXIST: i32 = 17;
 const EINVAL: i32 = 22;
 
 /// The files Cut or Copy put on nook's clipboard, and whether they were cut.
@@ -101,24 +101,29 @@ pub fn recycle(path: String) -> Result<bool, String> {
     }
 }
 
-/// Renames a file or folder. A name that's taken fails instead of replacing what has it: the kernel checks as it
-/// renames, or on a file system that can't (EINVAL, which glibc also says for a kernel without renameat2), nook checks
-/// first.
-pub fn rename_path(from: String, to: String) -> Result<bool, String> {
-    let taken = || {
-        let name = Path::new(&to).file_name().unwrap_or_default().to_string_lossy();
-        Err(format!("“{name}” is already there"))
-    };
-    let (a, b) = (CString::new(from.as_str()).map_err(err)?, CString::new(to.as_str()).map_err(err)?);
+/// Renames `from` to `to` unless `to` is taken: the kernel checks as it renames, or on a file system that can't
+/// (EINVAL, which glibc also says for a kernel without renameat2), nook checks first.
+fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    let c = |p: &Path| CString::new(p.as_os_str().as_bytes()).map_err(io::Error::from);
+    let (a, b) = (c(from)?, c(to)?);
     if unsafe { renameat2(AT_FDCWD, a.as_ptr(), AT_FDCWD, b.as_ptr(), RENAME_NOREPLACE) } == 0 {
-        return Ok(true);
+        return Ok(());
     }
-    let e = io::Error::last_os_error();
-    match e.raw_os_error() {
-        Some(EEXIST) => taken(),
-        Some(EINVAL) if fs::symlink_metadata(&to).is_ok() => taken(),
-        Some(EINVAL) => fs::rename(&from, &to).map(|()| true).map_err(err),
-        _ => Err(err(e)),
+    match io::Error::last_os_error() {
+        e if e.raw_os_error() != Some(EINVAL) => Err(e),
+        _ if fs::symlink_metadata(to).is_ok() => Err(io::ErrorKind::AlreadyExists.into()),
+        _ => fs::rename(from, to),
+    }
+}
+
+/// Renames a file or folder. A name that's taken fails instead of replacing what has it.
+pub fn rename_path(from: String, to: String) -> Result<bool, String> {
+    match rename_new(Path::new(&from), Path::new(&to)) {
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            let name = Path::new(&to).file_name().unwrap_or_default().to_string_lossy();
+            Err(format!("“{name}” is already there"))
+        }
+        renamed => renamed.map(|()| true).map_err(err),
     }
 }
 
@@ -172,9 +177,10 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-/// Moves `from` to `to`: a rename, or across file systems, a copy and then a delete of the original.
+/// Moves `from` to a free name `to`: a rename, which fails rather than replace a file made there since, or across file
+/// systems, a copy and then a delete of the original.
 fn move_path(from: &Path, to: &Path) -> io::Result<()> {
-    match fs::rename(from, to) {
+    match rename_new(from, to) {
         Err(e) if e.raw_os_error() == Some(18) => {
             // EXDEV: another file system
             copy_tree(from, to)?;
