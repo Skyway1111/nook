@@ -17,6 +17,11 @@ fn main() {
     let version = toml.lines().find_map(|l| l.strip_prefix("version = \"")?.strip_suffix('"')).unwrap();
     println!("cargo:rustc-env=NOOK_VERSION={version}");
     rsrc::link("../icons/icon.ico", &name, version);
-    println!("cargo:rustc-link-arg-bins=-nostartfiles");
-    println!("cargo:rustc-link-arg-bins=-Wl,--entry=start");
+    if std::env::var("CARGO_CFG_TARGET_ENV").unwrap() == "msvc" {
+        println!("cargo:rustc-link-arg-bins=/ENTRY:start");
+        println!("cargo:rustc-link-arg-bins=/NODEFAULTLIB");
+    } else {
+        println!("cargo:rustc-link-arg-bins=-nostartfiles");
+        println!("cargo:rustc-link-arg-bins=-Wl,--entry=start");
+    }
 }

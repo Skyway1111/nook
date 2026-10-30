@@ -74,6 +74,15 @@ extern "system" {
     pub fn ExitProcess(code: u32) -> !;
 }
 
+// What the compiler calls to copy and fill memory, from ntdll rather than a C runtime.
+#[allow(dead_code)]
+#[link(name = "ntdll", kind = "raw-dylib")]
+extern "C" {
+    pub fn memcpy(d: V, s: *const c_void, n: usize) -> V;
+    pub fn memmove(d: V, s: *const c_void, n: usize) -> V;
+    pub fn memset(d: V, c: i32, n: usize) -> V;
+}
+
 #[link(name = "advapi32", kind = "raw-dylib")]
 extern "system" {
     pub fn RegCreateKeyExW(k: H, sub: P, r: u32, class: P, opt: u32, sam: u32, sa: V, out: *mut H, disp: *mut u32) -> u32;
