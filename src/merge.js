@@ -1,11 +1,12 @@
 // A merge tab: a conflicted file's conflicts, each with its two sides next to each other and buttons that settle
 // it by taking one side or both. Each one settled rewrites the file; "Mark resolved" stages it for the commit
 // that finishes the merge. conflicts.js reads the markers.
-import './merge.css'
-import { invoke } from '@tauri-apps/api/core'
-import { el } from './ui.js'
+import { invoke } from './host.js'
+import { el, sheet } from './ui.js'
 import { parseConflicts, isConflict, resolve } from './conflicts.js'
 import { colorize } from './diff.js'
+
+await sheet(new URL('./merge.css', import.meta.url))
 
 /** Lines of settled text shown around each conflict. */
 const CONTEXT = 3
@@ -187,9 +188,9 @@ export function startMerge(view, { root, path, rel, name, run, openFile }) {
   }
 
   async function highlight(lines, cells, n) {
-    const { tokenize } = await import('./editor.js')
-    const [old, now] = await Promise.all([lines.old, lines.new].map(ls => tokenize(ls.join('\n'), name).catch(() => null)))
+    const { tokenize } = await import('./highlight.js')
     if (n !== paint) return
+    const [old, now] = [lines.old, lines.new].map(ls => tokenize(ls.join('\n'), name))
     for (const c of cells) {
       const tokens = (c.side === 'old' ? old : now)?.[c.n]
       if (tokens?.length) colorize(c.code, c.text, tokens)

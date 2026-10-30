@@ -12,7 +12,7 @@ A Windows and Linux app for Claude Code. nook runs the real `claude` in terminal
 
 nook runs on 64-bit Windows 10 1809 or later and on Windows 11. The git panel needs [Git for Windows](https://git-scm.com/downloads/win).
 
-On Linux, build nook from source, as **Build from source** below says. It needs WebKitGTK 4.1, `git`, `unzip`, `xdg-open`, and `gio` for the trash. Claude Code reads a pasted screenshot through `xclip` on X11 or `wl-paste` on Wayland, so install the one for your session.
+On Linux, build nook from source, as **Build from source** below says. It needs WebKitGTK 4.1 and GTK 3, and the git panel needs `git`. A PDF Claude reads shows its first page only with `libpoppler-glib8` installed. Claude Code reads a pasted screenshot through `xclip` on X11 or `wl-paste` on Wayland, so install the one for your session.
 
 ## What nook adds
 
@@ -87,40 +87,40 @@ To make your own theme, follow [Make a theme](docs/themes.md).
 
 ## How nook works with Claude Code
 
-nook starts each Claude session in a pseudoterminal and draws it with xterm.js. Every key you type goes to Claude. nook never edits your prompt or Claude's output.
+nook starts each Claude session in a pseudoterminal and draws it in a terminal of its own. Every key you type goes to Claude. nook never edits your prompt or Claude's output.
 
-Each session nook starts also loads a small Claude Code plugin from `src-tauri/mod`. The plugin tells its tab the model, the effort, and how full the context is. It runs the model and effort you pick from the prompt card, and adds the pictures under Claude's drawing. It passes every event on unchanged, and sessions you start outside nook never load it.
+Each session nook starts also loads a small Claude Code plugin from `mod`. The plugin tells its tab the model, the effort, and how full the context is. It runs the model and effort you pick from the prompt card, and adds the pictures under Claude's drawing. It passes every event on unchanged, and sessions you start outside nook never load it.
 
 [architecture.md](architecture.md) maps the code.
 
 ## Build from source
 
-You need [Node.js](https://nodejs.org) 20.19 or later, [Rust](https://rustup.rs), and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your system. On Debian or Ubuntu, those are `sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev build-essential`.
+You need [Node.js](https://nodejs.org) 22 or later and [Rust](https://rustup.rs), with the GNU or the MSVC toolchain on Windows. On Debian or Ubuntu, also run `sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev build-essential`.
 
 ```powershell
-npm install
-npm run dev      # a debug build. To start in a folder: npm run dev -- -- <folder>
-npm run build    # nook.exe and the installer, or on Linux nook, a .deb, and an AppImage, in src-tauri/target/release
-npm test         # the frontend's tests: the wallpapers' scenes and both systems' path rules
-cd src-tauri; cargo test
+npm run dev      # a debug build that loads the page from src/ as you edit it. To start in a folder: npm run dev -- -- <folder>
+npm run build    # nook and its installer, or on Linux a .deb, in native/target/release. Add -- --no-pack to skip the installer.
+npm test         # the page's tests
+cd native; cargo test
 ```
 
-On Linux, `node bench/linux.mjs --bin <nook> --wallpapers none,koi` measures a release build: open time and where it goes, resize, key echo, scroll, and output flood times, idle and typing CPU, and memory. Give it two builds, `--bin <base>,<new>`, and it alternates their launches and flags each number that got worse than its noise, printed after the ± beside each change: a number that swings from session to session needs a bigger change to count. It needs Xvfb, xdotool and python3. In bench/tui.mjs, a stand-in for Claude's fullscreen view, key echo is timed on the screen, by the pixels of the composer's draft.
+On Linux, build nook as the benches' own identity, `NOOK_ID=dev.nook.bench npm run build -- --no-pack`, and `node bench/linux.mjs --wallpapers none,koi` measures it: open time and where it goes, resize, key echo, scroll, and output flood times, idle and typing CPU, and memory. Give it two builds, `--bin <base>,<new>`, and it alternates their launches and flags each number that got worse than its noise, printed after the ± beside each change: a number that swings from session to session needs a bigger change to count. It needs Xvfb, xdotool and python3. In bench/tui.mjs, a stand-in for Claude's fullscreen view, key echo is timed on the screen, by the pixels of the composer's draft.
 
 Before merging, `npm run gate` builds this tree and `origin/main` (main once per commit, kept in `~/.cache/nook-bench`) and runs that bench's `--quick` mode on them in about five minutes. It adds the koi wallpaper, Claude's fullscreen view, or a repository with a large diff only when the change touches what they measure, and gives a number more launches only when its change comes close to its bar. The full run above stays the occasional, thorough check.
 
-On Windows, `npm run bench:windows` builds the commit the overnight R&D began from (PR #1's merge) and the newest `origin/main`, then compares their open, resize, idle CPU and memory on your machine, with and without a wallpaper. Close nook first: while the bench runs, your settings folder moves aside and comes back when it ends. `--base`, `--new` or `--exe base.exe,new.exe` pick other builds.
+On Windows, `npm run bench:windows` builds the commit the overnight R&D began from (PR #1's merge) and the newest `origin/main`, then compares their open, resize, idle CPU and memory on your machine, with and without a wallpaper. Each build runs as `dev.nook.bench`, with its own settings and WebView2 profile, so your nook can stay open, though its work is noise in the numbers. `--base`, `--new` or `--exe base.exe,new.exe` pick other builds. An `--exe` has to be built as `dev.nook.bench` too.
 
-Before a build you publish, run `$env:RUSTFLAGS = "--remap-path-prefix=$env:USERPROFILE=~"`. Without it, `nook.exe` holds your home folder's path in each of its dependencies' source paths.
-
-If a debug nook is open, close it before you rebuild. The build copies `conpty.dll` and `OpenConsole.exe` over the files the running nook holds open, and fails with os error 32.
+On Windows, close a debug nook before you rebuild it: Windows locks the exe it runs from.
 
 ## Credits
 
-- [Libron](https://github.com/nicoverbruggen/libron), the interface font, is under the SIL Open Font License. See `src/fonts/OFL.txt`.
-- On Linux, the icons are Microsoft's [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons), under the MIT License. See `src/fonts/FluentIcons-LICENSE.txt`.
-- `conpty.dll` and `OpenConsole.exe` come from Microsoft's `Microsoft.Windows.Console.ConPTY` package, under the MIT License. See `src-tauri/conpty/LICENSE`.
+- [Libron](https://github.com/nicoverbruggen/libron), the interface font, is under the SIL Open Font License.
+- On Linux, the icons are Microsoft's [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons), under the MIT License.
+- nook's console server follows Microsoft's OpenConsole, from [Windows Terminal](https://github.com/microsoft/terminal), under the MIT License.
+- Parts of the terminal come from [xterm.js](https://github.com/xtermjs/xterm.js), and the Markdown grammar from [marked](https://github.com/markedjs/marked), both under the MIT License.
 - Twilight's picture is *Twilight in the Wilderness* (1860) by Frederic Edwin Church. The Cleveland Museum of Art released its photograph under [CC0](https://clevelandart.org/art/1965.233).
+
+[LICENSES.txt](LICENSES.txt) holds the notices those licenses ask for, and ships beside nook.
 
 nook isn't affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.
 

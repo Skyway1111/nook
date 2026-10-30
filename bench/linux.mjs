@@ -8,7 +8,7 @@
 //   idle      CPU, as % of one core, over 10 s with nothing happening (5 s with --quick)
 //   typing    CPU over 10 s of typing a key every 100 ms (6 s with --quick)
 //   memory    MB of PSS once idle, and again after the flood fills the scrollback
-//   resize full  resize again, once the flood has filled the scrollback, which xterm reflows each time
+//   resize full  resize again, once the flood has filled the scrollback, which the terminal reflows each time
 //   diff      with --repo: ms from asking for the diff of every change to the frame that shows it, and the CPU
 //             seconds nook spends in the 5 s after (3 s with --quick), colors included
 //   history   with --repo: ms from asking for the history to the frame that shows its commits; - for a build
@@ -34,17 +34,18 @@
 // --quick is the merge gate's run, which bench/gate.mjs starts: each session times fewer keys, resizes and
 // floods over shorter spans, 16 opens, no Claude-view pass unless --tui on, and a number that comes close to its
 // bar gets more launches before the verdict. --koi also switches each session to the koi wallpaper for a while.
-// Needs Xvfb, xdotool and python3, and a build: `npx tauri build --no-bundle`.
-//   node bench/linux.mjs [--bin src-tauri/target/release/nook[,other...]] [--wallpapers none,koi] [--runs 30]
+// Needs Xvfb, xdotool and python3, and nook built as dev.nook.bench, which keeps its own settings:
+// `NOOK_ID=dev.nook.bench npm run build -- --no-pack` puts one in native/target/release/stage.
+//   node bench/linux.mjs [--bin native/target/release/stage/nook[,other...]] [--wallpapers none,koi] [--runs 30]
 //                        [--sessions 3] [--tui off] [--repo path] [--quick] [--koi] [--json out.json]
 import { spawn, execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
-import { f, judge, median, quantile, table } from './stats.mjs'
+import { ID, benched, f, judge, median, quantile, table } from './stats.mjs'
 
 const flag = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i < 0 ? fallback : process.argv[i + 1] }
-const bins = flag('bin', new URL('../src-tauri/target/release/nook', import.meta.url).pathname).split(',').map(b => resolve(b))
+const bins = flag('bin', new URL('../native/target/release/stage/nook', import.meta.url).pathname).split(',').map(b => resolve(b))
 const wallpapers = flag('wallpapers', 'none').split(',')
 const quick = process.argv.includes('--quick')
 const runs = Number(flag('runs', quick ? 16 : 30))
@@ -57,7 +58,7 @@ const [W, H] = [1280, 820] // nook's own first size
 const P = quick
   ? { settle: 2000, idle: 5000, keys: 60, resizes: 20, floods: 1, afterFlood: 800, scrolls: 12, resizesFull: 8, diffCpu: 3000 }
   : { settle: 3000, idle: 10000, keys: 100, resizes: 40, floods: 3, afterFlood: 1500, scrolls: 40, resizesFull: 20, diffCpu: 5000 }
-for (const bin of bins) if (!existsSync(bin)) throw new Error(`no build at ${bin}`)
+for (const bin of bins) if (!benched(bin)) throw new Error(`no nook built as ${ID} at ${bin}`)
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
@@ -82,7 +83,7 @@ done`
 /** A config folder whose settings run SHELL and whose theme.css picks `wallpaper`. */
 function scratch(wallpaper, command = ['bash', '-c', SHELL]) {
   const dir = mkdtempSync(join(tmpdir(), 'nook-bench-'))
-  const config = join(dir, 'config', 'dev.nook.app')
+  const config = join(dir, 'config', ID)
   const home = join(dir, 'home')
   mkdirSync(config, { recursive: true })
   mkdirSync(home)
@@ -239,7 +240,7 @@ async function session(app) {
   await sleep(300)
   const scrolls = app.since(from, 'scroll')
   Object.assign(r, { scroll: median(scrolls), scrollP95: quantile(scrolls, 0.95) })
-  // With the scrollback full, xterm reflows all of it on each resize.
+  // With the scrollback full, the terminal reflows all of it on each resize.
   Object.assign(r, await resizes(app, win, P.resizesFull, 'resizeFull'), { marks })
   if (repo) {
     xdotool('windowsize', '--sync', win, String(W), String(H))
@@ -259,7 +260,7 @@ async function session(app) {
 }
 
 /** Typing and resizing in a stand-in for Claude's fullscreen view, bench/tui.mjs, which redraws the whole
- * screen for each key, so the composer paints its card and xterm patches rows as they do under Claude. */
+ * screen for each key, so the composer paints its card and the terminal patches rows as they do under Claude. */
 async function tuiSession(app) {
   await sleep(P.settle)
   const win = xdotool('search', '--sync', '--onlyvisible', '--pid', String(app.child.pid)).split('\n')[0]

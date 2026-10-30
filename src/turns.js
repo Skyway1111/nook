@@ -2,8 +2,8 @@
 // reads turn by turn: the prompt lands at the top of the view and its row flashes once. Claude writes each
 // prompt into its history as ❯ and the text (> on Windows). Rows are read only when the keys are pressed.
 //
-// Claude Code runs fullscreen on the alternate screen, where it scrolls its own transcript and xterm keeps
-// no history. There a jump pages Claude's view with Claude's own Page Up and Page Down until the prompt
+// Claude Code runs fullscreen on the alternate screen, where it scrolls its own transcript and the terminal
+// keeps no history. There a jump pages Claude's view with Claude's own Page Up and Page Down until the prompt
 // shows in the top half of the view, and flashes it there; the next jump goes on from it.
 
 /** Whether a row of Claude's history is a prompt you sent. */
@@ -16,7 +16,7 @@ const WAIT_MS = 600 // how long to wait for a redraw that may not come, at eithe
 const PAGE_UP = '\x1b[5~'
 const PAGE_DOWN = '\x1b[6~'
 const TO_BOTTOM = '\x1b[1;5F' // Ctrl+End
-const RULE = /^─{8,}\s*$/
+const RULE = /^─{8,}(?: .+ ─+)?\s*$/ // with the session's name in it, once named
 
 /** The row where Claude's transcript ends on its fullscreen view: the top rule of its input box. */
 export function transcriptEnd(screen) {
@@ -49,7 +49,7 @@ export function moved(before, after) {
  * Up or Page Down and says how far the transcript moved from `rows`: `{ after, shift }`, with shift 0 at the
  * view's end and null when it can't tell. */
 export function startPaging(term, send) {
-  const screen = () => Array.from({ length: term.rows }, (_, y) => term.buffer.active.getLine(y)?.translateToString(true) ?? '')
+  const screen = () => Array.from({ length: term.rows }, (_, y) => term.vt.buffer.getLine(y)?.translateToString(true) ?? '')
 
   /** Whether Claude redrew after a key: output came and then paused. */
   function redrawn() {
@@ -82,36 +82,37 @@ export function startPaging(term, send) {
 
 /** Jumps for `term`, whose keys go to Claude through `send`. Returns `{ jump(up), dispose }`. */
 export function startTurns(term, send) {
-  let flash // the row decoration still fading
+  let flash = null // the row still fading: { mark, timer }
   let busy = false // a jump through Claude's own view is under way
 
+  function unflash() {
+    if (!flash) return
+    clearTimeout(flash.timer)
+    flash.mark.dispose()
+    flash = null
+  }
+
+  /** Flashes buffer line `row`. */
   function mark(row) {
-    const b = term.buffer.active
-    flash?.dispose()
-    const marker = term.registerMarker(row - b.baseY - b.cursorY)
-    const decoration = marker && term.registerDecoration({ marker, width: term.cols })
-    if (!decoration) return marker?.dispose()
-    decoration.onRender(e => e.classList.add('turn-flash'))
-    const timer = setTimeout(() => decoration.dispose(), FLASH_MS)
-    decoration.onDispose(() => { clearTimeout(timer); marker.dispose() })
-    flash = decoration
+    unflash()
+    flash = { mark: term.mark(row, { className: 'turn-flash' }), timer: setTimeout(unflash, FLASH_MS) }
   }
 
   function show(row) {
-    term.scrollLines(row - term.buffer.active.viewportY - 1) // a row of what came before stays in view above it
+    term.scrollLines(row - term.vt.buffer.ydisp - 1) // a row of what came before stays in view above it
     mark(row)
   }
 
   /** The prompt above the view's top row, or below it; past the last one, the bottom. */
   function jump(up) {
-    const b = term.buffer.active
-    if (b.type === 'alternate') return fullscreen(up)
-    const top = b.viewportY + 1 // the row under the one `show` keeps above a prompt
+    const b = term.vt.buffer
+    if (b === term.vt.alt) return fullscreen(up)
+    const top = b.ydisp + 1 // the row under the one `show` keeps above a prompt
     const text = y => b.getLine(y)?.translateToString(true) ?? ''
     if (up) {
       for (let y = top - 1; y >= 0; y--) if (isPrompt(text(y))) return show(y)
     } else {
-      for (let y = top + 1; y < b.baseY; y++) if (isPrompt(text(y))) return show(y)
+      for (let y = top + 1; y < b.ybase; y++) if (isPrompt(text(y))) return show(y)
       term.scrollToBottom()
     }
   }
@@ -133,7 +134,7 @@ export function startTurns(term, send) {
     try {
       let rows = screen()
       let from = landed && rows[landed.row] === landed.text ? landed.row : 1 // where the jump goes on from
-      for (let page = 0; page < PAGES; page++) {
+      for (let n = 0; n < PAGES; n++) {
         const prompts = promptRows(rows)
         const half = transcriptEnd(rows) / 2
         if (up) {
@@ -160,5 +161,5 @@ export function startTurns(term, send) {
     }
   }
 
-  return { jump, dispose: () => flash?.dispose() }
+  return { jump, dispose: unflash }
 }

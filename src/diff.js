@@ -1,17 +1,17 @@
 // A diff tab: what changed under a path, staged and unstaged, in syntax colors, unified or side by side.
 // A hunk's buttons stage, unstage, or discard it, or only the lines picked in it, through `git apply`.
 // history.js shows a commit's changes with it too, read-only.
-import { invoke } from '@tauri-apps/api/core'
-import { el, openMenu } from './ui.js'
+import { invoke } from './host.js'
+import { el, flag, openMenu, sheet } from './ui.js'
 import { ICON, basename } from './files.js'
 import { path as paths } from './paths.js'
 import { parseDiff, patch, applyArgs, changedRanges } from './patch.js'
 
+await sheet(new URL('./diff.css', import.meta.url))
+
 /** A file with more diff lines than this waits for a click: thousands of rows would stall the tab. */
 const LONG = 1500
-const SPLIT_KEY = 'nook.diff.split'
-const remembered = key => { try { return localStorage.getItem(key) === '1' } catch { return false } }
-const remember = (key, on) => { try { localStorage.setItem(key, on ? '1' : '0') } catch {} }
+const [splitKept, keepSplit] = flag('nook.diff.split')
 
 /** What `git show` needs to write a commit's changes as a diff tab reads them; a merge shows what it brought in. */
 const SHOW = ['-c', 'core.quotepath=false', 'show', '--format=', '--no-color', '--no-ext-diff', '--no-relative', '-M', '--diff-merges=first-parent', '--src-prefix=a/', '--dst-prefix=b/']
@@ -28,7 +28,7 @@ export function startDiff(view, { root, rel, openFile, run, stage, commit, only 
   view.tabIndex = -1 // focusable, so the keyboard scrolls it
   const fixed = commit !== undefined
   let shown // the diffs' text last painted
-  let split = remembered(SPLIT_KEY)
+  let split = splitKept()
   let hunks = [] // every hunk on screen: { file, hunk, staged, el, cells: Map(line index → [cell]) }
   let picked = null // { k, set, anchor }: lines picked in hunk k
   let undo = null // the last discard's patch, to put back
@@ -109,7 +109,7 @@ export function startDiff(view, { root, rel, openFile, run, stage, commit, only 
 
   function setSplit(on) {
     split = on
-    remember(SPLIT_KEY, on)
+    keepSplit(on)
     refresh(true)
   }
 
@@ -327,9 +327,9 @@ export function startDiff(view, { root, rel, openFile, run, stage, commit, only 
 
   /** Syntax colors for one file's lines, after its plain text shows. */
   async function highlight(sides, n) {
-    const { tokenize } = await import('./editor.js')
-    const [old, now] = await Promise.all([sides.old, sides.new].map(lines => tokenize(lines.join('\n'), sides.name).catch(() => null)))
+    const { tokenize } = await import('./highlight.js')
     if (n !== paint) return
+    const [old, now] = [sides.old, sides.new].map(lines => tokenize(lines.join('\n'), sides.name))
     for (const c of sides.cells) {
       const tokens = (c.side === 'old' ? old : now)?.[c.n]
       if (tokens?.length || c.mark) colorize(c.code, c.text, tokens ?? [], c.mark)

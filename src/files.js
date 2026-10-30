@@ -1,5 +1,5 @@
 // The file browser: anywhere on disk, not scoped to the session's folder.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { $, el, openMenu, showPreview, hidePreview, dragPath } from './ui.js'
 import { path as paths } from './paths.js'
 import { sortEntries } from './order.js'
@@ -16,7 +16,7 @@ export const ICON = {
 export const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i
 const CODE = /\.(js|mjs|cjs|ts|tsx|jsx|py|ipynb|rs|go|c|h|cpp|hpp|cs|java|kt|rb|lua|gd|sh|ps1|bat|css|scss|html|json|jsonc|toml|ya?ml|xml|sql)$/i
 /** Prose: wraps in the editor. */
-export const DOC = /\.(md|markdown|txt)$/i
+const DOC = /\.(md|markdown|txt)$/i
 export const kind = e => (e.dir ? 'dir' : IMAGE.test(e.name) ? 'image' : DOC.test(e.name) ? 'doc' : CODE.test(e.name) ? 'code' : 'file')
 /** A folder's entries as the disk lists them; render() puts them in Explorer's order. */
 const listing = path => invoke('list_dir', { path })
@@ -86,7 +86,7 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
   const ROW = 26 // px, as style.css draws .row
   const WHOLE = 400 // a folder of up to this many entries is drawn whole
   const OVERSCAN = 20
-  const [above, below] = [el('li', { className: 'spacer' }), el('li', { className: 'spacer' })]
+  const [above, below] = [el('li'), el('li')]
   let all = [] // the open folder's rows, in order: { path, kind, name }
   let items = [] // the rows shown: all of them, or those the filter leaves
   let drawn = [-1, -1]

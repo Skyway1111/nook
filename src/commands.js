@@ -1,6 +1,6 @@
 // What the command palette (F1, or > in quick open) can run. Each is `{ title, keys, icon, run, when }`; `when` hides one
 // that has nothing to act on, such as Save with no file open.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { ICON } from './files.js'
 import { path as paths } from './paths.js'
 

@@ -5,9 +5,9 @@
 // resizes, they stretch; once the size holds still, they bake again. Each bake is saved, so the next start paints
 // its first frame from it. A restyle shows the live CSS at once, until the new look bakes. A gradient sized in
 // percents stretches into itself.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 
-const SETTLE_MS = 100 // how long an element's size holds still before it bakes
+export const SETTLE_MS = 100 // how long an element's size holds still before it bakes
 const SAVE_MS = 1000 // how long a bake stands before it's saved for the next start
 const PROPS = ['image', 'position', 'size', 'repeat', 'origin', 'clip', 'attachment']
 const keyOf = cs => PROPS.map(p => cs.getPropertyValue(`background-${p}`)).join('|')

@@ -1,10 +1,4 @@
-import '@xterm/xterm/css/xterm.css'
-import './theme.css'
-import './style.css'
-import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { invoke, win } from './host.js'
 import { startTabs } from './tabs.js'
 import { startFiles, quote, ICON } from './files.js'
 import { startGit } from './git.js'
@@ -12,15 +6,13 @@ import { startSettings } from './settings.js'
 import { bytes } from './palette.js'
 import { holdBackdrops } from './backdrops.js'
 import { startWallpaper } from './wallpaper.js'
-import { startDashboard } from './dashboard.js'
 import { opened } from './recent.js'
 import { path as paths } from './paths.js'
-import { $, openMenu, openPicker } from './ui.js'
+import { $, letter, openMenu, openPicker } from './ui.js'
 import { SAFE, worktreeName, fanNames, since } from './launch.js'
 import { expand, offer, saved } from './prompts.js'
 import { stat as worktreeStat, keep, discard } from './keep.js'
 
-const win = getCurrentWindow()
 // For bench/linux.mjs: how far startup got, in ms since nook started.
 const mark = window.NOOK_BENCH ? event => invoke('bench', { event: `mark:${event}` }) : () => {}
 mark('script')
@@ -46,7 +38,7 @@ const drawer = await startSettings({
     backdrops.restyle()
     // A growing window shows its own background until the page catches up, so that takes the theme's.
     const [r, g, b] = bytes(getComputedStyle(document.documentElement).getPropertyValue('--bg'))
-    getCurrentWebviewWindow().setBackgroundColor([r, g, b, 255]).catch(banner)
+    win.setBackground([r, g, b]).catch(banner)
   },
   onClose: () => tabs.focus(),
   showFolder: () => files.go(configDir),
@@ -170,7 +162,7 @@ addEventListener('keydown', e => {
   const plain = !e.ctrlKey && !e.altKey && !e.shiftKey
   const run = e.key === 'F12' && plain ? goToDefinition
     : e.key === 'ArrowLeft' && e.altKey && !e.ctrlKey && !e.shiftKey && backs.length ? goBack
-    : e.code === 'KeyT' && e.ctrlKey && !e.altKey && !e.shiftKey ? () => openQuick().then(q => q.toggle('#')).catch(banner)
+    : letter(e) === 't' && e.ctrlKey && !e.altKey && !e.shiftKey ? () => openQuick().then(q => q.toggle('#')).catch(banner)
     : null
   if (!run) return
   e.preventDefault()
@@ -190,34 +182,38 @@ function welcome() {
 
 let quick
 const openQuick = () => {
-  quick ??= Promise.all([import('./quickopen.js'), import('./commands.js')]).then(([{ startQuickOpen }, { appCommands }]) => startQuickOpen({
-    dir: tabFolder,
-    commands: appCommands({
-      tabs, files, git, drawer, wallpaper, home, banner, insertPath,
-      newSession: () => tabs.openClaude(here()),
-      openQuick: prefix => openQuick().then(q => q.open(prefix)),
-      quickPrompts,
-      findInFiles,
-      goToDefinition,
-      goBack,
-      canGoBack: () => backs.length > 0,
-      welcome,
-    }),
-    gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
-    outline: () => tabs.active()?.viewer?.outline?.() ?? null,
-    openPath: () => (tabs.active()?.viewer?.word ? tabs.active().path : null),
-    openFile,
-    insertPath,
-    reveal: path => files.reveal(path),
-    onClose: () => tabs.focus(),
-  }))
+  quick ??= Promise.all([import('./quickopen.js'), import('./commands.js')]).then(([{ startQuickOpen }, { appCommands }]) => {
+    // The palette lists every wallpaper, which load once the box has first shown, before > can be typed in it.
+    requestAnimationFrame(() => setTimeout(wallpaper.load))
+    return startQuickOpen({
+      dir: tabFolder,
+      commands: appCommands({
+        tabs, files, git, drawer, wallpaper, home, banner, insertPath,
+        newSession: () => tabs.openClaude(here()),
+        openQuick: prefix => openQuick().then(q => q.open(prefix)),
+        quickPrompts,
+        findInFiles,
+        goToDefinition,
+        goBack,
+        canGoBack: () => backs.length > 0,
+        welcome,
+      }),
+      gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
+      outline: () => tabs.active()?.viewer?.outline?.() ?? null,
+      openPath: () => (tabs.active()?.viewer?.word ? tabs.active().path : null),
+      openFile,
+      insertPath,
+      reveal: path => files.reveal(path),
+      onClose: () => tabs.focus(),
+    })
+  })
   return quick
 }
 addEventListener('keydown', e => {
-  const files = e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'p'
+  const files = e.ctrlKey && !e.shiftKey && letter(e) === 'p'
   const commands = e.key === 'F1' && !e.ctrlKey && !e.shiftKey
   // Ctrl+Shift+O is a file tab's; in a Claude tab, Claude gets it.
-  const symbols = e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'o' && !!tabs.active()?.viewer?.outline
+  const symbols = e.ctrlKey && e.shiftKey && letter(e) === 'o' && !!tabs.active()?.viewer?.outline
   if (!(files || commands || symbols) || e.altKey || e.metaKey || e.repeat) return
   e.preventDefault()
   e.stopPropagation()
@@ -230,13 +226,18 @@ addEventListener('keydown', e => {
     typed += k.key
   }
   addEventListener('keydown', hold, true)
-  openQuick().then(q => q.toggle(commands ? '>' : symbols ? '@' : '', typed)).catch(banner).finally(() => removeEventListener('keydown', hold, true))
+  // F1, or > typed while the box's code loads, opens the palette, which waits for the wallpapers, loaded beside it.
+  if (commands) wallpaper.load()
+  openQuick().then(async q => {
+    if (commands || typed[0] === '>') await wallpaper.load()
+    q.toggle(commands ? '>' : symbols ? '@' : '', typed)
+  }).catch(banner).finally(() => removeEventListener('keydown', hold, true))
 }, true)
 
 // Files dropped from Explorer become paths in the prompt (Claude Code attaches images itself), or, dropped on a
-// folder in the file browser, copies in that folder. Tauri gives the pointer in physical pixels.
-getCurrentWebview().onDragDropEvent(({ payload: { type, position, paths: dropped } }) => {
-  const dir = type === 'leave' || !position ? files.dropFolder(null) : files.dropFolder(position.x / devicePixelRatio, position.y / devicePixelRatio)
+// folder in the file browser, copies in that folder.
+win.onDrop(({ type, x, y, paths: dropped }) => {
+  const dir = type === 'leave' ? files.dropFolder(null) : files.dropFolder(x, y)
   if (type !== 'drop') return
   files.dropFolder(null)
   if (dir) files.receive(dropped, dir)
@@ -269,7 +270,11 @@ addEventListener('nook-review', ({ detail: { root, files: edited } }) => {
   const tab = tabs.active()
   git.review(root || tab?.path || cwd, edited, `${tab?.name ?? 'Claude'} · last turn`)
 })
-dashboard = startDashboard($('pane'), {
+// The sessions dashboard loads on its first open, from its button or Ctrl+Shift+S, or as the pointer reaches the button.
+let board
+const loadDashboard = () => (board ??= import('./dashboard.js').then(startBoard))
+const toggleDashboard = () => loadDashboard().then(d => d.toggle()).catch(banner)
+const startBoard = ({ startDashboard }) => (dashboard = startDashboard($('pane'), {
   button: $('toggle-sessions'),
   list: () => tabs.sessions(),
   open: tab => tabs.show(tab),
@@ -311,7 +316,9 @@ dashboard = startDashboard($('pane'), {
     },
   },
   onClose: () => tabs.focus(),
-})
+}))
+$('toggle-sessions').onclick = toggleDashboard
+$('toggle-sessions').onpointerenter = loadDashboard
 $('new-tab').onclick = newSession
 $('new-tab').onmouseenter = () => { $('new-tab').title = `New Claude session in ${here()}` }
 // The chevron by + starts Claude other ways: continuing or resuming a session saved for this folder, or in a
@@ -378,17 +385,22 @@ async function quickPrompts() {
     offer(current.prompts ?? [], commands, query).map(r => [label(r), icons[r.kind], pick(r)]))
 }
 addEventListener('keydown', e => {
-  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyP') {
+  const k = e.ctrlKey && e.shiftKey && !e.altKey && letter(e)
+  if (k === 'p') {
     e.preventDefault()
     quickPrompts()
   }
-  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === 'KeyE') {
+  if (k === 'e') {
     e.preventDefault()
     files.focus()
   }
-  if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'KeyH' || (e.code === 'KeyF' && !tabs.active()?.terminal))) {
+  if (k === 's') {
     e.preventDefault()
-    findInFiles(e.code === 'KeyH')
+    toggleDashboard()
+  }
+  if (k === 'h' || (k === 'f' && !tabs.active()?.terminal)) {
+    e.preventDefault()
+    findInFiles(k === 'h')
   }
 })
 // The file browser's git colors come from the panel's status, which isn't read while the panel is hidden.
@@ -402,10 +414,7 @@ $('open-config').onclick = drawer.toggle
 $('min').onclick = () => win.minimize()
 $('max').onclick = () => win.toggleMaximize()
 $('close').onclick = () => win.close()
-const syncMaximized = async () => { $('max').textContent = (await win.isMaximized()) ? '' : '' }
-let resized // a dragged edge resizes the window many times a second; ask once it stops
-win.onResized(() => { clearTimeout(resized); resized = setTimeout(syncMaximized, 100) })
-syncMaximized()
+win.onMaximized(max => { $('max').textContent = max ? '\uE923' : '\uE922' })
 // Typing goes to Claude: clicks in the chrome never take focus, and focus that lands on nothing
 // (a closed menu, a finished path edit) returns to the open tab.
 const refocus = () => { if (document.activeElement === document.body) tabs.focus() }
@@ -413,15 +422,15 @@ addEventListener('mousedown', e => {
   if (e.target.closest('#titlebar, #files, #git, .sash') && !e.target.closest('input, textarea')) e.preventDefault()
 })
 addEventListener('focusout', () => setTimeout(refocus))
-win.onFocusChanged(({ payload: focused }) => {
+win.onFocus(focused => {
   document.body.classList.toggle('blurred', !focused)
   if (focused) refocus()
 })
 
 // This is an app, not a page: no browser reload, find, print, new window, or context menu. Ctrl+N does what + does.
 addEventListener('keydown', e => {
-  if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === 'n') newSession()
-  if (e.key === 'F5' || (e.ctrlKey && !e.altKey && /^[nrpfguoshj]$/i.test(e.key))) e.preventDefault()
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.repeat && letter(e) === 'n') newSession()
+  if (e.key === 'F5' || (e.ctrlKey && !e.altKey && /^[nrpfguoshj]$/.test(letter(e)))) e.preventDefault()
 })
 addEventListener('contextmenu', e => e.preventDefault())
 

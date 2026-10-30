@@ -26,8 +26,8 @@ test("a match in the file's name beats one spread over its folders", () => {
 })
 
 test('every term must match, in any order', () => {
-  assert.ok(scorePath(terms('rs main'), 'src-tauri/src/main.rs'))
-  assert.equal(scorePath(terms('rs zzz'), 'src-tauri/src/main.rs'), null)
+  assert.ok(scorePath(terms('rs main'), 'native/src/main.rs'))
+  assert.equal(scorePath(terms('rs zzz'), 'native/src/main.rs'), null)
 })
 
 test('rank keeps the best, best first, and shorter paths break ties', () => {

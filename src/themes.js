@@ -1,14 +1,17 @@
 // The settings drawer's themes: a card for each installed theme, installing one from a .zip or a
 // folder, and Claude's own theme, which follows nook's when the user wants. An installed theme is a
 // folder in `themes` beside settings.json, and `theme.rs` reads and installs it.
-import { invoke, convertFileSrc } from '@tauri-apps/api/core'
-import preview from './nook.jpg'
+import { invoke, convertFileSrc } from './host.js'
 import { $, el } from './ui.js'
 import { path as paths } from './paths.js'
 
-/** nook's Claude theme, from its mod (src-tauri/mod/themes/nook.json), as Claude's settings name it. */
+/** nook's own theme's card picture. */
+const PREVIEW = new URL('./nook.jpg', import.meta.url).href
+/** nook's Claude theme, from its mod (mod/themes/nook.json), as Claude's settings name it. */
 const NOOK = 'custom:nook:nook'
 const label = name => name.replace(/[-_]+/g, ' ').replace(/(^|\s)\p{L}/gu, c => c.toUpperCase())
+/** A request body: `name`, a NUL, then `parts`, each text or bytes. */
+const withName = async (name, ...parts) => new Uint8Array(await new Blob([`${name}\0`, ...parts]).arrayBuffer())
 
 /** `save` patches settings.json, and `reread` applies the theme it names. */
 export function startThemes({ configDir, home, settings, save, reread, showTheme }) {
@@ -129,40 +132,19 @@ export function startThemes({ configDir, home, settings, save, reread, showTheme
     const file = picker.files[0]
     picker.value = ''
     if (!file) return
-    // `install_theme_zip` reads the name, a NUL, then the bytes.
-    const head = new TextEncoder().encode(`${file.name.replace(/\.zip$/i, '')}\0`)
-    const body = new Uint8Array(head.length + file.size)
-    body.set(head)
-    body.set(new Uint8Array(await file.arrayBuffer()), head.length)
+    const body = await withName(file.name.replace(/\.zip$/i, ''), file)
     await invoke('install_theme_zip', body).then(installed).catch(e => say(`nook can't install ${file.name}: ${e}.`))
   }
 
   // A theme to share: its folder, pictures and fonts included, as a .zip in Downloads that Install… takes.
-  async function pack(name) {
+  function pack(name) {
     say(`Packing ${label(name)}…`)
-    try {
-      const { zip } = await import('./themer.js')
-      const files = []
-      async function walk(at, inside) {
-        for (const e of await invoke('list_dir', { path: at })) {
-          const path = paths.join(at, e.name)
-          if (e.dir) await walk(path, `${inside}/${e.name}`)
-          else files.push([`${inside}/${e.name}`, new Uint8Array(await (await fetch(convertFileSrc(path))).arrayBuffer())])
-        }
-      }
-      await walk(paths.join(dir, name), name)
-      const head = new TextEncoder().encode(`${name}\0`)
-      const packed = zip(files)
-      const body = new Uint8Array(head.length + packed.length)
-      body.set(head)
-      body.set(packed, head.length)
-      say(`Saved ${label(name)} to ${await invoke('save_theme_zip', body)}. Install… in anyone's nook takes it.`)
-    } catch (e) {
-      say(`nook can't pack ${label(name)}: ${e.message ?? e}.`)
-    }
+    invoke('save_theme_zip', { name }).then(
+      at => say(`Saved ${label(name)} to ${at}. Install… in anyone's nook takes it.`),
+      e => say(`nook can't pack ${label(name)}: ${e}.`))
   }
 
-  // A theme from a picture: its palette, the picture, a soft copy and a card, packed as a .zip in the webview.
+  // A theme from a picture: its palette, the picture, a soft copy and a card, made in the webview.
   pictures.onchange = async () => {
     const file = pictures.files[0]
     pictures.value = ''
@@ -170,12 +152,9 @@ export function startThemes({ configDir, home, settings, save, reread, showTheme
     say(`Reading the colors of ${file.name}…`)
     try {
       const { fromPicture } = await import('./themer.js')
-      const { name, zip } = await fromPicture(file)
-      const head = new TextEncoder().encode(`${name}\0`)
-      const body = new Uint8Array(head.length + zip.length)
-      body.set(head)
-      body.set(zip, head.length)
-      await installed(await invoke('install_theme_zip', body))
+      const { name, files } = await fromPicture(file)
+      // Each file goes as its name, a NUL, its length, a NUL, and its bytes.
+      await installed(await invoke('install_theme_files', await withName(name, ...files.flatMap(([n, blob]) => [`${n}\0${blob.size}\0`, blob]))))
       say(`Made the ${label(name)} theme from ${file.name}. Its theme.css is yours to edit, in the themes folder.`)
     } catch (e) {
       say(`nook can't make a theme from ${file.name}: ${e.message ?? e}.`)
@@ -216,7 +195,7 @@ export function startThemes({ configDir, home, settings, save, reread, showTheme
   async function list() {
     const listed = await invoke('list_dir', { path: dir }).catch(() => [])
     const names = known = listed.filter(e => e.dir && !e.name.startsWith('.')).map(e => e.name).sort((a, b) => a.localeCompare(b))
-    return [[null, preview], ...names.map(n => [n, `${convertFileSrc(paths.join(dir, n, 'screenshot.png'))}?v=${launched}.${installs.get(n) ?? 0}`])]
+    return [[null, PREVIEW], ...names.map(n => [n, `${convertFileSrc(paths.join(dir, n, 'screenshot.png'))}?v=${launched}.${installs.get(n) ?? 0}`])]
   }
 
   /** nook's own (null) and each installed theme's name, as last listed. It lists them again, at most every few

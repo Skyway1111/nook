@@ -1,18 +1,17 @@
 // The living wallpaper behind Claude tabs, and its picker. A canvas at the bottom of #pane draws a scene from
-// wallpapers.js under the terminal, whose background is transparent. theme.css names the scene in
-// `--wallpaper`, so a theme can ship one, the user's theme.css overrides it, and every window follows a pick
-// within a second. Each role's color, the opacity, and the cell size are theme variables too. A frame copies
-// glyphs from an atlas into only the cells that changed since the last one, so a frame costs a few hundred
-// small copies, not a full redraw of text.
-import { ROLES, SCENES, paint, render, scene } from './wallpapers.js'
+// wallpapers.js, which loads with the first scene other than none, under the terminal, whose background is
+// transparent. theme.css names the scene in `--wallpaper`, so a theme can ship one, the user's theme.css overrides
+// it, and every window follows a pick within a second. Each role's color, the opacity, and the cell size are theme
+// variables too. A frame copies glyphs from an atlas into only the cells that changed since the last one, so a frame
+// costs a few hundred small copies, not a full redraw of text.
 import { bytes } from './palette.js'
 import { el } from './ui.js'
+import { SETTLE_MS } from './backdrops.js'
 
 const FRAME_MS = 100 // ten frames a second. Characters step from cell to cell, so more frames would only cost.
 const SPEEDS = [.25, 3] // --wallpaper-speed's range. Below 1 the frames slow with the scene, so a slower scene costs less.
 const ECHO_MS = 50 // after a key, a frame waits this long at most for the key's echo, and draws in the animation frame after it
 const THUMB_PX = 4 // the picker's thumbnails draw their cells this many pixels high
-const SETTLE_MS = 100 // while the pane resizes, the last bitmap stretches; it redraws at the new size once this long passes without one, as backdrops.js does
 const still = matchMedia('(prefers-reduced-motion: reduce)')
 
 /** Sizes `canvas` to a CSS box of `width` x `height` at the screen's pixel density, and fits cells to it: `size`
@@ -86,6 +85,8 @@ function atlas(w, h, font, colors) {
  * `--wallpaper` in the user's theme.css, `tune(name, value)` sets another of its variables, and `onClose`
  * hears the picker close. */
 export function startWallpaper(pane, { button, save, tune, onClose }) {
+  let art = null, loading = null // wallpapers.js, once a scene or the picker needs it
+  const load = () => (loading ??= import('./wallpapers.js').then(m => { art = m; restyle() }))
   const canvas = pane.insertBefore(el('canvas', { className: 'wallpaper', hidden: true }), pane.firstChild)
   let speed = 1, since = performance.now(), before = 0 // the scene's clock runs at `speed` from `since`, when it read `before`
   let resting = false // with `--wallpaper-motion: working`, the scene holds still, its clock stopped, while no Claude session works
@@ -113,7 +114,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
 
   const id = () => previewing ?? look.id
   let faded = false // at no strength at all, the scene isn't drawn
-  const shown = () => !!scene(id()) && showing && !faded
+  const shown = () => !!art?.scene(id()) && showing && !faded
   const live = () => shown() && focused && !document.hidden && !resting
 
   function measure() {
@@ -141,8 +142,8 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   function draw(now = performance.now()) {
     lastFrame = now
     const { ctx, w, h, cols, rows, tiles } = cells
-    const g = render(id(), cols, rows, clock(now), spare)
-    paint(ctx, g, w, h, tiles, onCanvas)
+    const g = art.render(id(), cols, rows, clock(now), spare)
+    art.paint(ctx, g, w, h, tiles, onCanvas)
     spare = onCanvas
     onCanvas = g
   }
@@ -185,6 +186,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
 
   /** Shows or hides the canvas for what's in front, and runs the loop while anything moves. */
   function update() {
+    if (!art && id() !== 'none') load()
     const rest = motion === 'working' && !working && !picker && previewing == null // a scene being picked moves
     if (rest !== resting) rebase(() => { resting = rest })
     canvas.hidden = !shown()
@@ -211,7 +213,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
       id: v('--wallpaper') || 'none',
       size: parseFloat(v('--wallpaper-font-size')) || 14,
       family: v('--font-term') || 'monospace',
-      colors: Object.fromEntries(ROLES.map(r => [r, rgba(v(`--wallpaper-${r}`) || v('--ink-3'))])),
+      colors: Object.fromEntries((art?.ROLES ?? []).map(r => [r, rgba(v(`--wallpaper-${r}`) || v('--ink-3'))])),
     }
     for (const [name, value] of held) if (v(name) === value || parseFloat(v(name)) === parseFloat(value)) held.delete(name)
     motion = held.get('--wallpaper-motion') ?? v('--wallpaper-motion')
@@ -225,6 +227,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
     picker?.restyle()
   }
 
+  // While the pane resizes, the last bitmap stretches; it redraws at the new size once SETTLE_MS passes without one.
   let settle = 0
   const resettle = () => {
     clearTimeout(settle)
@@ -245,15 +248,16 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   /** Opens the picker over the top of the pane: a live thumbnail of each scene. Arrows and the pointer
    * preview a scene in the pane, Enter or a click keeps it, and Escape puts back the one that was there. */
   function open() {
+    if (picker) return
     const kept = look.id
-    const ids = ['none', ...SCENES.map(s => s.id)]
+    const ids = ['none', ...art.SCENES.map(s => s.id)]
     let at = Math.max(0, ids.indexOf(id()))
     const box = el('div', { className: 'wallpapers', tabIndex: -1 })
     const head = el('header')
     head.append(el('b', { textContent: 'Wallpaper' }), el('span', { textContent: '← → to look · ↵ to keep · esc to close' }))
     const strip = el('div', { className: 'cards' })
     const cards = ids.map((sid, i) => {
-      const name = scene(sid)?.name ?? 'None'
+      const name = art.scene(sid)?.name ?? 'None'
       const card = el('button', { className: 'card', title: name, onclick: () => keep(i) })
       card.onpointerenter = () => point(i)
       const thumb = el('canvas')
@@ -349,8 +353,8 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
       tick(t) {
         cards.forEach(({ sid }, i) => {
           const th = thumbs[i]
-          const g = render(sid, th.cols, th.rows, t, th.spare)
-          paint(th.ctx, g, th.w, th.h, th.tiles, th.last)
+          const g = art.render(sid, th.cols, th.rows, t, th.spare)
+          art.paint(th.ctx, g, th.w, th.h, th.tiles, th.last)
           th.spare = th.last
           th.last = g
         })
@@ -376,12 +380,15 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
     }
   }
 
-  button.onclick = () => (picker ? picker.close() : open())
+  button.onclick = () => (picker ? picker.close() : load().then(open))
+  button.onpointerenter = load // the picker's scenes load as the pointer reaches its button
 
   return {
     restyle,
+    /** Loads the scenes, which `scenes` lists from then on. */
+    load,
     /** Every scene's id and name, none first. */
-    scenes: () => [['none', 'None'], ...SCENES.map(s => [s.id, s.name])],
+    scenes: () => [['none', 'None'], ...(art?.SCENES ?? []).map(s => [s.id, s.name])],
     /** Shows scene `sid` in the pane until `unpeek`, as the picker's arrows do. */
     peek(sid) {
       if (picker) return

@@ -1,5 +1,16 @@
-// What bench/linux.mjs and bench/windows.mjs share: medians, and when a change from one build to another is worse
-// than its noise.
+// What the benches share: the identity they build nook as, medians, and when a change from one build to another is
+// worse than its noise.
+import { existsSync, readFileSync } from 'fs'
+
+// Every build a bench runs is nook as dev.nook.bench, with its own settings and profile, never the user's.
+export const ID = 'dev.nook.bench'
+/** Whether `bin` is nook built as ID: it names ID, in UTF-8 or UTF-16, and not nook's own identity. */
+export function benched(bin) {
+  const bytes = existsSync(bin) && readFileSync(bin)
+  const names = id => bytes.includes(id) || bytes.includes(Buffer.from(id, 'utf16le'))
+  return !!bytes && names(ID) && !names('dev.nook.app')
+}
+
 export const sorted = xs => [...xs].filter(Number.isFinite).sort((a, b) => a - b)
 export const median = xs => { const s = sorted(xs); return s.length ? s[Math.floor(s.length / 2)] : NaN }
 export const quantile = (xs, q) => { const s = sorted(xs); return s.length ? s[Math.min(s.length - 1, Math.floor(q * s.length))] : NaN }

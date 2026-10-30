@@ -1,7 +1,6 @@
 // A theme made from a picture: the picture fills the window, a soft copy of it lies under the terminal,
-// and every color comes from the picture's own palette. `palette` finds that palette in OKLab, `css` writes
-// a theme.css from it, and `zip` packs the theme for `install_theme_zip`. `fromPicture` does it all in the
-// webview, from a picked file.
+// and every color comes from the picture's own palette. `palette` finds that palette in OKLab, and `css` writes
+// a theme.css from it. `fromPicture` does it all in the webview, from a picked file.
 
 const TAU = Math.PI * 2
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
@@ -136,63 +135,13 @@ body { background: url(${picture}) 50% 36px / cover no-repeat ${tint(0.11)}; }
 `
 }
 
-// A .zip that stores its files as they are. The picture is JPEG already, so deflate would gain nothing.
-const CRC = Array.from({ length: 256 }, (_, n) => {
-  let c = n
-  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
-  return c >>> 0
-})
-export function crc32(bytes) {
-  let c = 0xffffffff
-  for (const b of bytes) c = CRC[(c ^ b) & 0xff] ^ (c >>> 8)
-  return (c ^ 0xffffffff) >>> 0
-}
-
-/** A stored .zip of `files`, a list of [name, Uint8Array]. */
-export function zip(files) {
-  const enc = new TextEncoder()
-  const parts = [], central = []
-  let offset = 0
-  for (const [name, data] of files) {
-    const path = enc.encode(name)
-    const crc = crc32(data)
-    const head = (sig, extra) => {
-      const b = new DataView(new ArrayBuffer(extra))
-      b.setUint32(0, sig, true)
-      return b
-    }
-    const local = head(0x04034b50, 30 + path.length)
-    // version 2.0, no flags, stored, no time, crc, sizes, name length
-    local.setUint16(4, 20, true); local.setUint32(14, crc, true)
-    local.setUint32(18, data.length, true); local.setUint32(22, data.length, true); local.setUint16(26, path.length, true)
-    new Uint8Array(local.buffer).set(path, 30)
-    const dir = head(0x02014b50, 46 + path.length)
-    dir.setUint16(4, 20, true); dir.setUint16(6, 20, true); dir.setUint32(16, crc, true)
-    dir.setUint32(20, data.length, true); dir.setUint32(24, data.length, true); dir.setUint16(28, path.length, true)
-    dir.setUint32(42, offset, true)
-    new Uint8Array(dir.buffer).set(path, 46)
-    parts.push(new Uint8Array(local.buffer), data)
-    central.push(new Uint8Array(dir.buffer))
-    offset += 30 + path.length + data.length
-  }
-  const size = central.reduce((s, c) => s + c.length, 0)
-  const end = new DataView(new ArrayBuffer(22))
-  end.setUint32(0, 0x06054b50, true)
-  end.setUint16(8, files.length, true); end.setUint16(10, files.length, true)
-  end.setUint32(12, size, true); end.setUint32(16, offset, true)
-  const all = [...parts, ...central, new Uint8Array(end.buffer)]
-  const out = new Uint8Array(all.reduce((s, p) => s + p.length, 0))
-  let at = 0
-  for (const p of all) { out.set(p, at); at += p.length }
-  return out
-}
-
 /** A theme name from a file name: its stem, in plain characters a folder name takes on every system. */
 export const nameOf = file => file.replace(/\.[^.]+$/, '').replace(/[^\p{L}\p{N}_-]+/gu, ' ').trim().slice(0, 40) || 'picture'
 
-// The webview's half: decode the picture, read its palette, draw its two copies and a card, and pack them.
+// The webview's half: decode the picture, read its palette, and draw its two copies and a card.
 const canvas = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h })
-const encode = (c, type, quality) => new Promise((res, rej) => c.toBlob(b => (b ? b.arrayBuffer().then(a => res(new Uint8Array(a))) : rej(new Error('the picture would not encode'))), type, quality))
+// toDataURL encodes now; Chromium's toBlob waits for idle time, up to a second a picture.
+const encode = async (c, type, quality) => (await fetch(c.toDataURL(type, quality))).blob()
 /** `bitmap` drawn to cover a w x h canvas, as CSS's `cover` does. */
 function cover(bitmap, w, h, smooth = true) {
   const c = canvas(w, h)
@@ -204,7 +153,7 @@ function cover(bitmap, w, h, smooth = true) {
   return c
 }
 
-/** A .zip of a theme made from picture `file` (a File or Blob), and its name. */
+/** A theme made from picture `file` (a File or Blob): its name, and its files as [name, Blob]. */
 export async function fromPicture(file, fileName = file.name ?? 'picture') {
   const bitmap = await createImageBitmap(file)
   const name = nameOf(fileName)
@@ -229,11 +178,10 @@ export async function fromPicture(file, fileName = file.name ?? 'picture') {
   for (let i = 0; i < 5; i++) { ctx.fillRect(206, 144 + i * 12, 90 + ((i * 53) % 120), 3); ctx.fillRect(10, 38 + i * 12, 30 + ((i * 29) % 40), 3) }
   bitmap.close?.()
   const stem = 'picture'
-  const files = [
-    ['theme.css', new TextEncoder().encode(css(name, pal, `${stem}.jpg`, `${stem}-soft.jpg`))],
+  return { name, files: [
+    ['theme.css', new Blob([css(name, pal, `${stem}.jpg`, `${stem}-soft.jpg`)])],
     [`${stem}.jpg`, await encode(sharp, 'image/jpeg', 0.88)],
     [`${stem}-soft.jpg`, await encode(soft, 'image/jpeg', 0.85)],
     ['screenshot.png', await encode(card, 'image/png')],
-  ]
-  return { name, zip: zip(files) }
+  ] }
 }

@@ -1,0 +1,12 @@
+[package]
+name = "nook"
+version = "0.1.3"
+edition = "2021"
+description = "A Windows and Linux app for Claude Code"
+license = "MIT"
+repository = "https://github.com/Skyway1111/nook"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

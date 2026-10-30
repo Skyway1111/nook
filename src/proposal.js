@@ -1,8 +1,10 @@
 // An edit Claude proposes and waits on a yes for, shown as its editor extensions show one: what would change in
 // the file, with Accept and Reject. Claude's own prompt still takes the answer too; whichever comes first counts.
-import { invoke } from '@tauri-apps/api/core'
-import { el } from './ui.js'
+import { invoke } from './host.js'
+import { el, sheet } from './ui.js'
 import { diffRows, nearChanges } from './linediff.js'
+
+await sheet(new URL('./diff.css', import.meta.url))
 
 /** Fills `view` with the change from the file at `path` to `contents`. `answer(outcome, text)` hears Accept or
  * Reject, as Claude's `FILE_SAVED` with the contents, or `DIFF_REJECTED`. */

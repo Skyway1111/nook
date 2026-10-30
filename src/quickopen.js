@@ -2,12 +2,14 @@
 // Loaded on the first Ctrl+P, so it adds nothing to cold open or to an idle window. Typed text finds files in the active tab's repository, or its folder outside one. `>` finds commands,
 // `:` goes to a line in the open file, `@` to a symbol in it, `#` to where a name is defined anywhere in the
 // repository, and `%` finds text inside the files. Nothing is indexed until the box first opens, and each later open shows the last index at once while a fresh one builds behind it.
-import { invoke } from '@tauri-apps/api/core'
-import { $, el } from './ui.js'
+import { invoke } from './host.js'
+import { $, el, letter, sheet } from './ui.js'
 import { rank } from './fuzzy.js'
 import { kind, ICON } from './files.js'
 import { path as paths } from './paths.js'
 import { recentFiles, opened, RECENT_MAX } from './recent.js'
+
+await sheet(new URL('./quickopen.css', import.meta.url))
 
 /** An index older than this rebuilds in the background when the box opens. */
 const STALE_MS = 5000
@@ -36,7 +38,6 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openPath, ope
   document.body.append(box)
 
   const indexes = new Map() // a folder asked about → { root, files, lower, at, partial, building }
-  let results = []
   let at = 0 // the highlighted row
   let index = null // the index the box shows
   let asked = '' // the folder it was asked for
@@ -163,8 +164,9 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openPath, ope
     const li = el('li', { className: 'row symbol' })
     const badge = el('i', { className: `kind ${symbol.kind}`, textContent: letter, title: word })
     if (indent) badge.style.marginLeft = `${Math.min(symbol.depth, 8) * 14}px`
-    li.append(badge, marked(symbol.name, positions),
-      el('small', { textContent: `${symbol.container && !indent ? `${symbol.container} · ` : ''}line ${symbol.line}` }))
+    // A rendered page's heading has no line.
+    const where = [symbol.container && !indent ? symbol.container : '', symbol.line ? `line ${symbol.line}` : ''].filter(Boolean).join(' · ')
+    li.append(badge, marked(symbol.name, positions), el('small', { textContent: where }))
     return li
   }
 
@@ -235,7 +237,7 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openPath, ope
       const all = items ?? []
       // In the file's order, nested under what holds them, until a letter is typed; then best first.
       const found = text.trim()
-        ? rank(text, all, { text: s => s.name, limit: 100, boost: s => -s.line / 1e7 })
+        ? rank(text, all, { text: s => s.name, limit: 100, boost: s => -(s.line ?? 0) / 1e7 })
         : all.slice(0, 2000).map(item => ({ item, positions: [] }))
       const n = all.length
       return {
@@ -359,8 +361,8 @@ export function startQuickOpen({ dir, commands, gotoLine, outline, openPath, ope
 
   input.onkeydown = e => {
     const move = d => { e.preventDefault(); at = Math.max(0, Math.min(list.children.length - 1, at + d)); highlight(true) }
-    if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) move(1)
-    else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p' && !e.shiftKey)) move(-1)
+    if (e.key === 'ArrowDown' || (e.ctrlKey && letter(e) === 'n')) move(1)
+    else if (e.key === 'ArrowUp' || (e.ctrlKey && letter(e) === 'p' && !e.shiftKey)) move(-1)
     else if (e.key === 'PageDown') move(10)
     else if (e.key === 'PageUp') move(-10)
     else if (e.key === 'Escape') { e.preventDefault(); close() }

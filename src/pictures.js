@@ -2,12 +2,11 @@
 // `ESC _ G a=T,U=1,t=f,i=<id>,c=<columns>,r=<rows>;<base64 path> ESC \`, or sends the picture itself as
 // base64 with t=d, PNG (f=100) or raw RGB(A) pixels (f=24, f=32), split into chunks while m=1. Then it
 // fills the picture's box with U+10EEEE cells. A cell's color is the picture's id, and its two diacritics
-// are its row and column in the box. nook paints the picture over the cells on screen and hides the
-// placeholders under it as xterm draws them. A query (a=q) learns which ways of sending nook takes.
-import { convertFileSrc } from '@tauri-apps/api/core'
+// are its row and column in the box. nook paints the picture over the cells on screen, which the terminal
+// draws as blanks. A query (a=q) learns which ways of sending nook takes.
+import { convertFileSrc } from './host.js'
 import { el } from './ui.js'
 
-const PLACEHOLDER = '\u{10EEEE}'
 // kitty's row and column diacritics, in order: the nth marks row or column n.
 const MARKS = [0x305, [0x30d, 0x30e], 0x310, 0x312, [0x33d, 0x33f], 0x346, [0x34a, 0x34c], [0x350, 0x352], 0x357,
   0x35b, [0x363, 0x36f], [0x483, 0x487], [0x592, 0x595], [0x597, 0x599], [0x59c, 0x5a1], [0x5a8, 0x5a9], [0x5ab, 0x5ac],
@@ -22,15 +21,6 @@ const MARKS = [0x305, [0x30d, 0x30e], 0x310, 0x312, [0x33d, 0x33f], 0x346, [0x34
   [0x1d1aa, 0x1d1ad], [0x1d242, 0x1d244]]
 const INDEX = new Map(MARKS.flatMap(m => (typeof m === 'number' ? [m] : Array.from({ length: m[1] - m[0] + 1 }, (_, i) => m[0] + i)))
   .map((c, i) => [c, i]))
-const latin1 = new TextDecoder('latin1')
-
-/** Whether `bytes` holds ESC _, which starts a graphics command, or ends with ESC, which may. */
-function startsCommand(bytes) {
-  for (let i = bytes.indexOf(0x1b); i !== -1; i = bytes.indexOf(0x1b, i + 1)) {
-    if (i === bytes.length - 1 || bytes[i + 1] === 0x5f) return true
-  }
-  return false
-}
 const utf8 = new TextDecoder()
 
 const MAX_PICTURES = 64 // sent pictures kept, oldest dropped first
@@ -59,35 +49,31 @@ async function pictureUrl(k, base64) {
     rgba.set(bytes.subarray(j, j + 3), i * 4)
     rgba[i * 4 + 3] = step === 4 ? bytes[j + 3] : 255
   }
-  const canvas = new OffscreenCanvas(w, h)
+  const canvas = Object.assign(document.createElement('canvas'), { width: w, height: h })
   canvas.getContext('2d').putImageData(new ImageData(rgba, w, h), 0, 0)
-  return URL.createObjectURL(await canvas.convertToBlob())
+  return URL.createObjectURL(await new Promise(done => canvas.toBlob(done)))
 }
 
 /** `reply(text)` answers a query on the terminal's input, as kitty does. */
-export function startPictures(term, screen, reply = () => {}) {
-  const layer = screen.appendChild(el('div', { className: 'pictures' }))
-  const cell = term.buffer.active.getNullCell()
-  const files = new Map() // id -> { url, columns, rows, blob, page: an HTML page's folder, path: a named file's }, oldest first
+export function startPictures(term, reply = () => {}) {
+  const screen = term.screen
+  const layer = term.layer('pictures')
+  const cell = term.vt.buffer.getNullCell()
+  // id -> { url, columns, rows, blob, left, page: an HTML page's folder, path: a named file's, math: a formula's
+  // element, size: its own size in font sizes }, oldest first
+  const files = new Map()
   let sending = null // a picture arriving in chunks: { keys, parts, size }
   const shown = new Map() // id -> { el, css }
   let seen = false // whether Claude has drawn a picture yet
-  let tail = '' // the start of a command the last chunk cut off
+  let size = [0, 0] // the screen's size, kept here so fitting a formula never waits on layout
+  new ResizeObserver(([e]) => {
+    size = [e.contentRect.width, e.contentRect.height]
+    if (seen) draw()
+  }).observe(screen)
 
-  /** Takes the graphics commands from a chunk of output. xterm drops them on its own. */
-  function read(bytes) {
-    if (!tail && !startsCommand(bytes)) return
-    const text = tail + latin1.decode(bytes)
-    let at = 0
-    while ((at = text.indexOf('\x1b_G', at)) !== -1) {
-      const end = text.indexOf('\x1b\\', at)
-      if (end === -1) break
-      run(text.slice(at + 3, end))
-      at = end + 2
-    }
-    // Keep a command the chunk cut off, or an ESC or ESC _ that may start one.
-    tail = at !== -1 ? text.slice(at) : text.endsWith('\x1b_') ? '\x1b_' : text.endsWith('\x1b') ? '\x1b' : ''
-    if (tail.length > 1 << 20) tail = ''
+  /** An APC string from the terminal, in order with the output around it: a graphics command starts with G. */
+  function apc(data) {
+    if (data.charCodeAt(0) === 0x47) run(data.slice(1))
   }
 
   function run(command) {
@@ -118,11 +104,21 @@ export function startPictures(term, screen, reply = () => {}) {
     if (medium === 'f') {
       // Claude declares a PNG, but the webview decodes whatever the file holds, SVG and JPEG included.
       const path = utf8.decode(Uint8Array.from(atob(payload), c => c.charCodeAt(0)))
-      if (/\.(?:mmd|tex)$/i.test(path)) {
-        // A diagram or formula the mod saved: drawn at the box's left, since its size there is the mod's guess.
+      if (/\.tex$/i.test(path)) {
+        // A formula the mod saved, as MathML the page lays out: in the theme's ink, at the box's left, since
+        // its size there is the mod's guess.
         const [columns, rows] = [Number(k.c), Number(k.r)]
-        const made = /\.tex$/i.test(path) ? import('./math.js').then(m => m.mathUrl(path, boxSize(columns, rows)))
-          : import('./diagrams.js').then(d => d.diagramUrl(path))
+        import('./math.js').then(m => m.formula(path)).then(math => {
+          keep(id, { math, columns, rows })
+          answer('OK')
+          draw()
+        }, () => answer("EBADPNG:can't read the formula"))
+        return
+      }
+      if (/\.mmd$/i.test(path)) {
+        // A diagram the mod saved: drawn at the box's left, since its size there is the mod's guess.
+        const [columns, rows] = [Number(k.c), Number(k.r)]
+        const made = import('./diagrams.js').then(d => d.diagramUrl(path, boxSize(columns, rows)))
         made.then(url => {
           keep(id, { url, columns, rows, blob: true, left: true })
           answer('OK')
@@ -131,7 +127,7 @@ export function startPictures(term, screen, reply = () => {}) {
         return
       }
       if (/\.pdf$/i.test(path)) {
-        // A PDF Claude read or a command saved: its first page, drawn by pdf.js at the box's size.
+        // A PDF Claude read or a command saved: its first page, drawn by the OS at the box's size.
         const [columns, rows] = [Number(k.c), Number(k.r)]
         import('./pdfpage.js').then(m => m.pdfUrl(path, boxSize(columns, rows))).then(url => {
           keep(id, { url, columns, rows, blob: true, path })
@@ -160,11 +156,11 @@ export function startPictures(term, screen, reply = () => {}) {
     }, () => k.i && k.q !== '2' && reply(`\x1b_Gi=${k.i};EBADPNG:can't decode the picture\x1b\\`))
   }
 
-  /** A box of cells' size in pixels, and the terminal's font size: a formula draws at the text's size. */
+  /** A box of cells' size in pixels, and the terminal's font size, which caps a diagram's text. */
   function boxSize(columns, rows) {
-    const { fontSize } = term.options
+    const { fontSize } = term
     // A tab that isn't showing has no size yet; a cell is then about 0.6 by 1.2 of the font's size.
-    const [w, h] = screen.clientWidth ? [screen.clientWidth / term.cols, screen.clientHeight / term.rows] : [fontSize * 0.6, fontSize * 1.2]
+    const [w, h] = size[0] ? [size[0] / term.cols, size[1] / term.rows] : [fontSize * 0.6, fontSize * 1.2]
     return { width: columns * w, height: rows * h, fontSize }
   }
 
@@ -182,14 +178,15 @@ export function startPictures(term, screen, reply = () => {}) {
 
   /** Paints each picture over its cells on screen. */
   function draw() {
-    const b = term.buffer.active
+    const b = term.vt.buffer
     const boxes = new Map() // id -> the picture's first cell, and its cells on screen
     for (let y = 0; y < term.rows; y++) {
-      const line = b.getLine(b.viewportY + y)
-      if (!line?.translateToString(true).includes(PLACEHOLDER)) continue
-      for (let x = 0; x < term.cols; x++) {
-        const chars = line.getCell(x, cell).getChars()
-        if (!chars.startsWith(PLACEHOLDER)) continue
+      // A picture's cell carries its row and column as marks, so it is among the row's graphemes.
+      const line = b.getLine(b.ydisp + y)
+      if (!line?.comb) continue
+      for (const x of line.comb.keys()) {
+        const chars = x < term.cols ? line.getCell(x, cell).getChars() : ''
+        if (chars.codePointAt(0) !== 0x10eeee) continue
         const id = cell.getFgColor()
         const box = boxes.get(id)
         if (box) {
@@ -203,19 +200,27 @@ export function startPictures(term, screen, reply = () => {}) {
         }
       }
     }
-    for (const [id, pic] of shown) if (!boxes.has(id) || !files.has(id)) { pic.el.remove(); shown.delete(id) }
+    for (const [id, pic] of shown) {
+      if (boxes.has(id) && files.has(id)) continue
+      if (!pic.math || pic.math !== files.get(id)?.math) pic.el.remove(), shown.delete(id)
+      else if (pic.css) (pic.el.style.contentVisibility = 'hidden'), (pic.css = '') // a formula keeps its layout for when it scrolls back
+    }
     for (const [id, { x0, y0, left, right, top, bottom }] of boxes) {
       const file = files.get(id)
       if (!file) continue
       const { columns: c, rows: r } = file
       const pct = (n, of) => `${(n / of) * 100}%`
+      const lift = term.lift(top) // raised rows carry their pictures; one's rows are all raised or none
       const css = `left:${pct(x0, term.cols)};top:${pct(y0, term.rows)};width:${pct(c, term.cols)};height:${pct(r, term.rows)};`
-        + (file.page ? '' : `background-image:url("${file.url}");${file.left ? 'background-position:left center;' : ''}`)
+        + (lift ? `translate:0 ${-lift}px;` : '')
+        + (file.page || file.math ? '' : `background-image:url("${file.url}");${file.left ? 'background-position:left center;' : ''}`)
         + `clip-path:inset(${pct(top - y0, r)} ${pct(x0 + c - 1 - right, c)} ${pct(y0 + r - 1 - bottom, r)} ${pct(left - x0, c)})`
       const pic = shown.get(id) ?? { el: layer.appendChild(el('div')) }
       if (pic.css !== css) pic.el.style.cssText = pic.css = css
+      if (pic.math && pic.math !== file.math) pic.math.remove(), (pic.math = null), (pic.el.className = '') // the id now names another
       if (file.page) frame(pic, file, c, r)
       else if (pic.frame) pic.frame.remove(), (pic.frame = null), (pic.el.className = '') // the id now names a picture
+      if (file.math) fit(pic, file, c, r)
       shown.set(id, pic)
     }
   }
@@ -233,11 +238,31 @@ export function startPictures(term, screen, reply = () => {}) {
       pic.el.append(pic.frame)
       pic.style = ''
     }
-    const width = (screen.clientWidth * columns) / term.cols
-    const height = (screen.clientHeight * rows) / term.rows
+    const width = (size[0] * columns) / term.cols
+    const height = (size[1] * rows) / term.rows
     if (!width || !height) return
     const style = `height:${Math.round((PAGE * height) / width)}px;transform:scale(${(width / PAGE).toFixed(4)})`
     if (pic.style !== style) pic.frame.style.cssText = pic.style = style
+  }
+
+  /** A formula in its box: at its own size, or smaller to fit, from the box's left and centered top to bottom.
+   * Its own size is measured once, in the terminal's font sizes, which its text follows. */
+  function fit(pic, file, columns, rows) {
+    if (!pic.math) {
+      pic.el.className = 'math'
+      pic.el.append((pic.math = file.math))
+      pic.fit = file.math.style.cssText // a scale from a box it showed in before
+    }
+    const { fontSize } = term
+    if (!file.size) {
+      const { width, height } = file.math.getBoundingClientRect()
+      if (width) file.size = [width / fontSize, height / fontSize]
+    }
+    const [width, height] = [(size[0] * columns) / term.cols, (size[1] * rows) / term.rows]
+    if (!file.size || !width) return
+    const scale = Math.min(1, width / (file.size[0] * fontSize), height / (file.size[1] * fontSize))
+    const css = scale < 1 ? `transform:scale(${scale.toFixed(4)})` : ''
+    if (pic.fit !== css) file.math.style.cssText = pic.fit = css
   }
 
   /** Reloads each page on screen once Claude writes a file in its folder or under it, so a page written before
@@ -255,21 +280,11 @@ export function startPictures(term, screen, reply = () => {}) {
   }
 
   term.onRender(() => seen && draw())
+  term.onRaise(() => seen && draw())
   return {
-    read,
+    apc,
     wrote,
     /** The file a picture on screen was named by, or undefined for one sent whole or drawn by nook. */
     pathOf: id => files.get(id)?.path,
-    /** Blanks the placeholder cells among a row's new spans, under the picture that covers them. No font has
-     * U+10EEEE, so laid out as text, each cell sent the browser looking for one, about 37 ms a row per redraw. */
-    hide(spans) {
-      if (!seen) return
-      for (const s of spans) {
-        if (!s.textContent.startsWith(PLACEHOLDER)) continue
-        s.textContent = ' '.repeat(s.textContent.split(PLACEHOLDER).length - 1)
-        s.style.letterSpacing = '' // xterm's, which squeezed the fallback glyphs into their cells
-        s.style.visibility = 'hidden'
-      }
-    },
   }
 }

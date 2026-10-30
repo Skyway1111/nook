@@ -1,8 +1,8 @@
 // The git panel: the active tab's repository, its changes, branch, and commit box. Every action
 // is a git command run by git.rs, so hooks and credential helpers behave as in a terminal. diff.js
 // draws the diff tabs it opens, history.js the history tabs, and merge.js a conflicted file's tab.
-import { invoke, Channel } from '@tauri-apps/api/core'
-import { $, el, openMenu, openPicker, dragPath } from './ui.js'
+import { invoke, Channel } from './host.js'
+import { $, el, openMenu, openPicker, dragPath, sheet } from './ui.js'
 import { ICON, basename } from './files.js'
 import { path as paths } from './paths.js'
 import { progressOf } from './progress.js'
@@ -188,7 +188,7 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
   }
 
   function stashRow(stash, n) {
-    const li = el('li', { className: 'change stash', title: `stash@{${n}} \u00b7 ${stash.message}` })
+    const li = el('li', { className: 'change', title: `stash@{${n}} \u00b7 ${stash.message}` })
     li.dataset.stash = n
     const [where, what] = stashText(stash)
     li.innerHTML = `<i class="st stashed"></i><span class="name"></span><span class="dir"></span><span class="count"></span>`
@@ -218,7 +218,8 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
    * `onProgress`, git reports how far along it is, and each line it writes goes there as it comes.
    */
   function act(args, input, dir = s.root, onProgress) {
-    const progress = onProgress && Object.assign(new Channel(), { onmessage: onProgress })
+    // Lines that come together arrive as one text, each ending in a newline.
+    const progress = onProgress && Object.assign(new Channel(), { onmessage: text => text.split('\n').forEach(line => line && onProgress(line)) })
     const done = queue
       .then(() => (progress ? invoke('git_progress', { dir, args, progress }) : invoke('git', { dir, args, input })))
       .then(() => (say(''), true), e => (say((said = String(e))), false))
@@ -292,7 +293,7 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
     const run = args => act(args, undefined, root).then(ok => ok || said)
     const tab = openView('stash', `${basename(root)} stash`, root, view => {
       // Its head is styled like a commit's in a history tab.
-      const diff = Promise.all([import('./diff.js'), import('./history.css')]).then(([m]) => m.startDiff(view, { root, rel: '', openFile, commit: null }))
+      const diff = Promise.all([import('./diff.js'), sheet(new URL('./history.css', import.meta.url))]).then(([m]) => m.startDiff(view, { root, rel: '', openFile, commit: null }))
       return { refresh: () => diff.then(d => d.refresh()), show: next => diff.then(d => d.show(next)) }
     })
     const [where, what] = stashText(stash)

@@ -3,6 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <title>nook</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/src/theme.css" />
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <svg class="defs" aria-hidden="true">
@@ -11,15 +14,15 @@
         <path d="M4.5 5.1v5.8M11.5 6.6c0 2.8-7 1.8-7 4.3" />
       </symbol>
     </svg>
-    <header id="titlebar" data-tauri-drag-region>
-      <div class="lead" data-tauri-drag-region>
+    <header id="titlebar" data-drag-region>
+      <div class="lead" data-drag-region>
         <button id="toggle-files" class="icon" title="Toggle file browser">&#xE700;</button>
-        <span class="brand" data-tauri-drag-region>nook</span>
+        <span class="brand" data-drag-region>nook</span>
       </div>
       <div id="tabs"></div>
       <button id="new-tab" class="icon" title="New Claude session">&#xE710;</button>
       <button id="launch" class="icon" title="Resume, worktrees, quick prompts">&#xE70D;</button>
-      <div class="grow" data-tauri-drag-region></div>
+      <div class="grow" data-drag-region></div>
       <button id="focus-exit" title="Leave focus mode (F11)"><i class="icon">&#xE73F;</i>Focus</button>
       <button id="toggle-sessions" class="icon" title="Sessions (Ctrl+Shift+S)">&#xE7C4;</button>
       <button id="toggle-wallpaper" class="icon" title="Wallpaper">&#xE771;</button>

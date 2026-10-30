@@ -1,8 +1,8 @@
 // A file tab: a picture, audio or video, a PDF, or text in an editor. Markdown, CSV and TSV, SVG, and HTML
 // with no script open rendered and toggle to their source. previews.js draws all but Markdown, and loads when one first opens.
-import { invoke, convertFileSrc } from '@tauri-apps/api/core'
+import { invoke, convertFileSrc } from './host.js'
 import { IMAGE, basename } from './files.js'
-import { el, openMenu } from './ui.js'
+import { el, flag, letter, openMenu } from './ui.js'
 import { path as paths } from './paths.js'
 
 const SCHEME = /^[a-z][\w+.-]*:/i
@@ -17,7 +17,7 @@ const SANITIZE = { sanitizer: { removeElements: ['style', 'meta', 'link', 'form'
 /** `href` relative to the file at `from`, as a path. */
 const resolve = (href, from) => paths.fromUrl(new URL(href, paths.toUrl(from)).pathname)
 
-// Loaded on first use, so a Claude tab never waits on CodeMirror.
+// Loaded on first use, so a Claude tab never waits on the editor.
 const editing = () => import('./editor.js')
 const previews = () => import('./previews.js')
 
@@ -28,16 +28,16 @@ const MEDIA = /\.(mp4|webm|mov|m4v|ogv|mp3|wav|ogg|oga|flac|m4a|aac|opus)$/i
 const PDF = /\.pdf$/i
 
 async function markdown(text, path) {
-  const [{ marked }, { highlight }, { clean }] = await Promise.all([import('marked'), editing(), import('./sanitize.js')])
+  const [{ toHtml }, { highlight }, { clean }] = await Promise.all([import('./markdown.js'), import('./highlight.js'), import('./sanitize.js')])
   // An inert document: nothing loads until the relative image paths point at the disk.
-  const doc = Document.parseHTML ? Document.parseHTML(marked.parse(text), SANITIZE)
-    : clean(new DOMParser().parseFromString(marked.parse(text), 'text/html'))
+  const html = toHtml(text)
+  const doc = Document.parseHTML ? Document.parseHTML(html, SANITIZE) : clean(new DOMParser().parseFromString(html, 'text/html'))
   for (const img of doc.querySelectorAll('img[src]')) {
     const src = img.getAttribute('src')
     if (!SCHEME.test(src)) img.src = convertFileSrc(resolve(src, path))
   }
   for (const code of doc.querySelectorAll('pre > code[class^="language-"]')) {
-    const colored = await highlight(code.textContent, code.className.slice('language-'.length))
+    const colored = highlight(code.textContent, code.className.slice('language-'.length))
     if (colored) code.replaceChildren(colored)
   }
   const article = el('article')
@@ -48,11 +48,11 @@ async function markdown(text, path) {
 const button = (html, onclick) => el('button', { innerHTML: html, onclick })
 
 // Blame is on or off for every file tab at once, and stays as it was left. Alt+B, or the gutter's menu, turns it.
-const BLAME_KEY = 'nook.blame'
-let blameOn = (() => { try { return localStorage.getItem(BLAME_KEY) === '1' } catch { return false } })()
+const [blameKept, keepBlame] = flag('nook.blame')
+let blameOn = blameKept()
 function setBlameOn(on) {
   blameOn = on
-  try { localStorage.setItem(BLAME_KEY, on ? '1' : '0') } catch {}
+  keepBlame(on)
   dispatchEvent(new Event('nook-blame'))
 }
 
@@ -79,7 +79,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
   let shown, failed // on disk at the last read or write: the file's text, or why it can't be shown
   let stamp // the file's change time and size at the last read, so a poll rereads it only after a change
   let eol // the file's line ending. The editor holds \n and saves with this.
-  let editor, saved // the editor, and its text as last read or written
+  let editor // the editor, once the text has loaded
   let dirty = false
   let target // { line, col } to show once the text has loaded
   const bar = el('p', { className: 'bar', hidden: true })
@@ -117,15 +117,14 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     clearTimeout(reblame)
     const n = ++blaming
     if (!editor) return
-    const { showBlame } = await editing()
-    if (!blameOn) return showBlame(editor, null)
-    const text = editor.state.doc.toString()
+    if (!blameOn) return editor.blame(null)
+    const text = editor.text()
     const args = ['blame', '--porcelain', '--contents', '-', '--', name]
     const out = await invoke('git', { dir: paths.parent(path), args, input: text }).catch(() => null)
     if (n !== blaming || !editor) return
     const { parseBlame } = await import('./blame.js')
     // Outside a repository, or not yet committed: no gutter.
-    showBlame(editor, out && parseBlame(out), oid => dispatchEvent(new CustomEvent('nook-history', { detail: { path, oid } })))
+    editor.blame(out && parseBlame(out), oid => dispatchEvent(new CustomEvent('nook-history', { detail: { path, oid } })))
   }
   const onBlame = () => blame()
   addEventListener('nook-blame', onBlame)
@@ -151,22 +150,20 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     base = text === null ? null : text.replace(/\r\n?/g, '\n').split('\n')
     bars()
   }
-  async function bars() {
+  function bars() {
     clearTimeout(barring)
-    if (!editor) return
-    const { showChanges } = await editing()
-    if (editor) showChanges(editor, base)
+    editor?.bars(base)
   }
 
   let pending // an autosave's timer
   function changed() {
-    const now = !editor.state.doc.eq(saved)
+    const now = !editor.isClean()
     if (now !== dirty) onDirty((dirty = now))
-    onText?.(editor.state.doc.toString())
+    onText?.(editor.text())
     if (base) {
       // A pause in typing redraws them; in a long file, where that's tens of milliseconds, a longer one.
       clearTimeout(barring)
-      barring = setTimeout(bars, editor.state.doc.lines > 20_000 ? 1500 : 250)
+      barring = setTimeout(bars, editor.lineCount > 20_000 ? 1500 : 250)
     }
     if (blameOn) {
       clearTimeout(reblame)
@@ -181,14 +178,14 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
   async function render() {
     if (!previewing) return
     if (drawn !== 'markdown') {
-      const text = editor.state.doc.toString()
+      const text = editor.text()
       if (!drawing) {
         drawing = (await previews())[drawn](path)
         page.replaceChildren(drawing.el)
       }
       return drawing.update(text, name)
     }
-    const article = await markdown(editor.state.doc.toString(), path)
+    const article = await markdown(editor.text(), path)
     const top = page.scrollTop
     page.replaceChildren(article)
     page.scrollTop = top
@@ -207,15 +204,14 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     shown = text
     eol = text.includes('\r\n') ? '\r\n' : '\n'
     if (editor) {
-      const tr = editor.state.update({ changes: change(editor.state.doc.toString(), text.replace(/\r\n?/g, '\n')) })
-      saved = tr.newDoc
-      editor.dispatch(tr)
+      // one undoable change, and the text as saved before anyone hears of it, so a reload never looks unsaved
+      const c = change(editor.text(), text.replace(/\r\n?/g, '\n'))
+      editor.replace(c.from, c.to, c.insert, { clean: true })
       rebase()
       return render()
     }
     const { createEditor } = await editing()
-    editor = createEditor(name, text, changed, { picked, ...(autosave ? {} : { status: { eol: () => eol } }) })
-    saved = editor.state.doc
+    editor = createEditor(name, text, { changed, picked, ...(autosave ? {} : { status: { eol: () => eol } }) })
     changed()
     paint('text', [editor.dom, ...(page ? [page, toggle] : []), bar])
     if (blameOn) blame()
@@ -232,52 +228,58 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     if (!editor) return
     target = null
     if (previewing) preview(false)
-    const { goto } = await editing()
-    goto(editor, line, col)
+    editor.goto(line, col)
     editor.focus()
   }
 
+  /** A rendered Markdown page's outline: its own h1 to h6, each nested under the last heading of a higher level. */
+  function headings() {
+    const open = [] // [level, item]
+    const items = [...page.querySelectorAll('h1, h2, h3, h4, h5, h6')].map(el => {
+      const level = +el.tagName[1]
+      while (open.length && open.at(-1)[0] >= level) open.pop()
+      const item = { name: el.textContent.trim(), kind: 'heading', depth: open.length, container: open.at(-1)?.[1].name ?? '', el }
+      open.push([level, item])
+      return item
+    })
+    return { items, partial: false }
+  }
+
   /**
-   * For quick open's `@`: `read`, the file's outline from editor.js; `look(item)` to show one while the box rests on
-   * it, without taking the keys; `back()` to put the caret and the scroll back as they were before the first look;
-   * and `go(item)` to go there. A heading of a rendered Markdown page shows on the page.
+   * For quick open's `@`: `read`, the outline of the text in the editor, from defs.rs, or of the rendered page;
+   * `look(item)` to show one while the box rests on it, without taking the keys; `back()` to put the caret and the
+   * scroll back as they were before the first look; and `go(item)` to go there.
    */
   function outline() {
-    let items = []
-    let mod // editor.js, once loaded, so a look and a back run in the order they're asked for
     let before = null
-    const heading = item => previewing && drawn === 'markdown' && item.kind === 'heading'
-      && page.querySelectorAll('h1, h2, h3, h4, h5, h6')[items.filter(i => i.kind === 'heading').indexOf(item)]
+    // Where an item of the text's outline starts: its line and its column, counted in UTF-16 units.
+    const at = ({ line, col }) => {
+      const l = editor.line(Math.max(1, Math.min(line, editor.lineCount)))
+      return Math.min(l.to, l.from + col - 1)
+    }
     return {
-      read: editing().then(m => {
-        mod = m
-        const found = editor ? m.outline(editor) : { items: [], partial: false }
-        items = found.items
-        return found
-      }),
+      read: Promise.resolve(previewing && drawn === 'markdown' ? headings() : invoke('outline', { name, text: editor.text() })),
       look(item) {
-        if (!editor || !mod) return
-        before ??= { selection: editor.state.selection, top: editor.scrollDOM.scrollTop, page: page?.scrollTop }
-        const h = heading(item)
-        if (h) h.scrollIntoView({ block: 'start' })
-        else if (!previewing && item.from <= editor.state.doc.length) mod.show(editor, item.from)
+        if (!editor) return
+        before ??= { selection: editor.sel, top: editor.scrollTop, page: page?.scrollTop }
+        if (item.el) item.el.scrollIntoView({ block: 'start' })
+        else if (!previewing) editor.show(at(item))
       },
       back() {
         if (!before || !editor) return
         const { selection, top, page: pageTop } = before
         before = null
-        if (selection.main.to <= editor.state.doc.length) editor.dispatch({ selection })
-        editor.scrollDOM.scrollTop = top
+        if (selection.ranges.every(r => r.to <= editor.length)) editor.select(selection)
+        editor.scrollTop = top
         if (page) page.scrollTop = pageTop
       },
       go(item) {
         before = null
         if (!editor) return
-        const h = heading(item)
-        if (h) return h.scrollIntoView({ block: 'start' }), page.focus()
-        const at = Math.min(item.from, editor.state.doc.length)
-        const line = editor.state.doc.lineAt(at)
-        reveal({ line: line.number, col: at - line.from + 1 })
+        if (item.el) return item.el.scrollIntoView({ block: 'start' }), page.focus()
+        const pos = at(item)
+        const line = editor.lineAt(pos)
+        reveal({ line: line.number, col: pos - line.from + 1 })
       },
     }
   }
@@ -314,8 +316,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
   /** Writes the editor's text. False when nothing was written: an error, or the file changed since it was read. */
   const save = (force = false) => serial(async () => {
     if (!dirty) return true
-    const doc = editor.state.doc
-    const text = doc.sliceString(0, doc.length, eol)
+    const text = editor.text(eol)
     try {
       if (!(await invoke('write_text', { path, text, base: force ? null : shown }))) return conflict(), false
     } catch (e) {
@@ -323,7 +324,7 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
       return false
     }
     shown = text
-    saved = doc
+    editor.markClean()
     tell()
     changed()
     return true
@@ -335,24 +336,23 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
    * of a line leaves that line out, as a drag over whole lines does. */
   function mention() {
     if (!toPrompt) return
-    const { from, to, empty } = editor?.state.selection.main ?? { empty: true }
+    const { from, to, empty } = editor?.sel.main ?? { empty: true }
     if (empty) return toPrompt(null)
-    const doc = editor.state.doc
-    const first = doc.lineAt(from).number
-    const end = doc.lineAt(to)
+    const first = editor.lineAt(from).number
+    const end = editor.lineAt(to)
     toPrompt([first, Math.max(first, end.number - (end.from === to ? 1 : 0))])
   }
 
   /** The lines picked in the source, for Claude: `{ start, end, text }`, each end `[line, character]` counted
    * from 0. Null when nothing is picked or the page shows instead. */
   function pick() {
-    const { from, to, empty } = editor?.state.selection.main ?? { empty: true }
+    const { from, to, empty } = editor?.sel.main ?? { empty: true }
     if (empty || previewing) return null
     const at = pos => {
-      const line = editor.state.doc.lineAt(pos)
+      const line = editor.lineAt(pos)
       return [line.number - 1, pos - line.from]
     }
-    return { start: at(from), end: at(to), text: editor.state.sliceDoc(from, to) }
+    return { start: at(from), end: at(to), text: editor.slice(from, to) }
   }
   let picking // a pause in a drag or in the caret's moves tells onPick, not each step
   function picked() {
@@ -362,12 +362,13 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
 
   view.addEventListener('keydown', e => {
     // Ctrl+Alt+K, as in Claude's own editor extensions.
-    if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'k') (e.preventDefault(), mention())
-    else if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 's') save()
-    else if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === 'b' && editor) (e.preventDefault(), setBlameOn(!blameOn))
+    const k = letter(e)
+    if (e.ctrlKey && e.altKey && k === 'k') (e.preventDefault(), mention())
+    else if (e.ctrlKey && !e.altKey && k === 's') save()
+    else if (e.altKey && !e.ctrlKey && k === 'b' && editor) (e.preventDefault(), setBlameOn(!blameOn))
   })
   view.addEventListener('contextmenu', e => {
-    if (!editor || !e.target.closest('.cm-gutters')) return
+    if (!editor || !e.target.closest('.cm-gutterElement')) return
     e.preventDefault()
     openMenu(e, [[blameOn ? 'Hide blame' : 'Show blame', '\uE81C', () => setBlameOn(!blameOn)]])
   })
@@ -393,24 +394,26 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     /** F12's: the selection when it's a few words on one line, or else the word at the caret, or ''. */
     word: () => {
       if (!editor) return ''
-      const { from, to, empty } = editor.state.selection.main
-      const range = empty ? editor.state.wordAt(from) : { from, to }
-      const text = range ? editor.state.sliceDoc(range.from, range.to).trim() : ''
+      const { from, to, empty } = editor.sel.main
+      const range = empty ? editor.wordAt(from) : { from, to }
+      const text = range ? editor.slice(range.from, range.to).trim() : ''
       return text.length <= 100 && !text.includes('\n') ? text : ''
     },
     /** Where the caret is, 1-based, for going back to it; null before the text has loaded. */
     caret: () => {
       if (!editor) return null
-      const head = editor.state.selection.main.head
-      const line = editor.state.doc.lineAt(head)
+      const head = editor.sel.main.head
+      const line = editor.lineAt(head)
       return { line: line.number, col: head - line.from + 1 }
     },
     /** The text selected in the editor, or ''. */
-    selection: () => (editor ? editor.state.sliceDoc(editor.state.selection.main.from, editor.state.selection.main.to) : ''),
+    selection: () => (editor ? editor.slice(editor.sel.main.from, editor.sel.main.to) : ''),
     /** Replaces the text with `f(text)` as one edit, once the file has loaded. */
     edit: f => serial(() => {
-      const text = editor?.state.doc.toString()
-      if (editor) editor.dispatch({ changes: change(text, f(text)) })
+      if (!editor) return
+      const text = editor.text()
+      const c = change(text, f(text))
+      editor.replace(c.from, c.to, c.insert)
     }),
     focus,
     mention,

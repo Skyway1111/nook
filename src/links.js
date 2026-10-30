@@ -4,7 +4,7 @@
 // files in tool calls, `Update(src/main.js)`, in prose, `src/main.js:42`, and in grep output. `findPaths`
 // reads candidates from a row's text, and only those on disk become links, so a link provider asks Rust
 // about a row once, on hover, and costs nothing while the mouse is still.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { IMAGE } from './files.js'
 import { findPaths, candidates, diffLine, editedPath } from './linkify.js'
 import { showPreview, hidePreview, el } from './ui.js'
@@ -15,7 +15,7 @@ const hidePeek = () => peeks?.then(m => m.hidePeek())
 
 /** The text of `line` as one string, and the cell each of its UTF-16 units starts in, so a match in the
  * string maps to cells when wide characters take two. */
-function cells(line, cols, cell) {
+export function cells(line, cols, cell) {
   let text = ''
   const xs = []
   for (let x = 0; x < cols; x++) {
@@ -60,11 +60,11 @@ const PLACEHOLDER = '\u{10EEEE}' // a picture's cell, colored with its id; see p
 /** Links every path on disk in `term`'s rows, and each picture that names a file. `where()` gives
  * `{ cwd, home }`; `open(path, kind, line, col)` opens one; `pathOf(id)` is the file of picture `id`. */
 export function startLinks(term, where, open, pathOf = () => undefined) {
-  const cell = term.buffer.active.getNullCell()
+  const cell = term.vt.buffer.getNullCell()
   /** The file of the edit whose diff holds row `y`: the nearest `Update(...)` above, unless another of
    * Claude's messages starts between them. */
   function editOver(y) {
-    const b = term.buffer.active
+    const b = term.vt.buffer
     for (let i = y - 1; i >= Math.max(0, y - 400); i--) {
       const text = b.getLine(i)?.translateToString(true) ?? ''
       const path = editedPath(text)
@@ -105,7 +105,7 @@ export function startLinks(term, where, open, pathOf = () => undefined) {
 
   const provider = term.registerLinkProvider({
     async provideLinks(y, callback) {
-      const line = term.buffer.active.getLine(y - 1)
+      const line = term.vt.buffer.getLine(y - 1)
       if (!line) return callback(undefined)
       if (line.translateToString(true).includes(PLACEHOLDER)) {
         const links = pictureLinks(line, y)

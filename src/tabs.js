@@ -1,16 +1,13 @@
 // The tab strip: Claude sessions and open files. Each tab owns one view in #pane; only the active one shows.
-import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window'
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { invoke, listen, win } from './host.js'
 import { startTerminal } from './terminal.js'
 import { startViewer } from './viewer.js'
 import { path as paths } from './paths.js'
 import { ICON, kind, same, basename } from './files.js'
-import { $, el, openMenu } from './ui.js'
+import { $, el, letter, openMenu } from './ui.js'
 import { claudeWith } from './launch.js'
 import { watchSessions, wanting, notice, due, ANSWERS } from './sessions.js'
 
-const win = getCurrentWindow()
 const strip = $('tabs')
 const pane = $('pane')
 // The split's divider: drag it to share the pane, double-click to halve it again.
@@ -143,6 +140,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
   const sessions = watchSessions({
     invoke,
     tabs: () => tabs,
+    visible: tab => !tab.view.hidden,
     watched: tab => (tab === active || tab === beside) && document.hasFocus(),
     onChange: (tab, view, report) => {
       tab.el.dataset.mark = view.mark
@@ -159,7 +157,8 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
         tab.terminal?.prompt(tab.queue.shift())
       }
       tab.terminal?.wrote(report.touched ?? [])
-      if (view.attention) win.requestUserAttention(UserAttentionType.Informational).catch(() => {})
+      tab.terminal?.report(report)
+      if (view.attention) win.attention()
       // With nook's window in the background, the desktop says so too: the tab's dot shows only inside nook.
       const note = settings.notifications !== false && !document.hasFocus() && notice(view, report, tab.name)
       if (note) invoke('notify', note).catch(() => {})
@@ -304,7 +303,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     } else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'Backslash') {
       e.preventDefault()
       split(beside ? null : other())
-    } else if (e.ctrlKey && e.key.toLowerCase() === 'w' && active?.viewer) {
+    } else if (e.ctrlKey && letter(e) === 'w' && active?.viewer) {
       e.preventDefault() // in a Claude tab, Ctrl+W is Claude's
       close(active)
     }
@@ -341,7 +340,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
 
   // An edit Claude wants a yes for opens beside its tab, as in its editor extensions (ide.rs). The keys stay in
   // Claude, whose prompt answers too; once either answers, Claude closes it.
-  listen('ide-diff', async ({ payload: { id, tab: name, path, contents } }) => {
+  listen('ide-diff', async ({ id, tab: name, path, contents }) => {
     const { startProposal } = await import('./proposal.js')
     const owner = tabs.find(t => t.terminal?.id === id)
     const tab = add('diff', `${basename(path)} · proposed`, path)
@@ -354,7 +353,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     tab.viewer = { focus: () => tab.view.focus(), ...startProposal(tab.view, { path, name: basename(path), contents, answer }) }
     if (owner && owner === active) split(tab)
   })
-  listen('ide-diff-close', ({ payload: { id, tab: name } }) => {
+  listen('ide-diff-close', ({ id, tab: name }) => {
     for (const tab of tabs.filter(t => t.proposal?.key.id === id && (name === null || t.proposal.key.tab === name))) {
       tab.proposal.answered = true
       drop(tab)

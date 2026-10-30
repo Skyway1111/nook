@@ -1,9 +1,22 @@
 // The DOM helpers every view uses, and the floating UI: context menu, image preview, drag ghost.
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { convertFileSrc } from './host.js'
 import { path as paths } from './paths.js'
 
 export const $ = id => document.getElementById(id)
 export const el = (tag, props) => Object.assign(document.createElement(tag), props)
+/** A switch kept in localStorage under `key`: [get, set], where get gives `fallback` until set has run. */
+export const flag = (key, fallback = false) => [
+  () => { try { const v = localStorage.getItem(key); return v === null ? fallback : v === '1' } catch { return fallback } },
+  on => { try { localStorage.setItem(key, on ? '1' : '0') } catch {} },
+]
+const sheets = {} // href -> its load
+/** Adds the stylesheet at `url` to the page's head, after the others, once: a sheet two views load keeps the place
+ * the first gave it, so it never moves after a sheet that overrides it. Resolves once it applies. */
+export const sheet = url => (sheets[url] ??= new Promise(done => document.head.append(el('link', { rel: 'stylesheet', href: url, onload: done, onerror: done }))))
+/** The letter a key names as a shortcut, lowercased: the a-z the layout types, or where it types another script's
+ * letter (Cyrillic, Greek), the US key's in that place. '' for any other key, such as AltGr's ć. */
+export const letter = e => (/^[a-z]$/i.test(e.key) ? e.key.toLowerCase()
+  : /^\p{L}$/u.test(e.key) && !/\p{sc=Latin}/u.test(e.key) && /^Key[A-Z]$/.test(e.code) ? e.code[3].toLowerCase() : '')
 
 const menu = $('menu')
 const preview = $('preview')
@@ -88,7 +101,7 @@ export function hidePreview() {
 }
 
 /**
- * Pointer-driven drag (HTML5 drag-and-drop is unavailable while Tauri handles OS file drops). `onDrop(target,
+ * Pointer-driven drag (HTML5 drag-and-drop is unavailable while the host handles OS file drops). `onDrop(target,
  * up)` gets the element under the pointer and the pointerup. `over(target, move)` follows the pointer while
  * dragging, and gets null once the drag ends. `label` is the ghost's text.
  */

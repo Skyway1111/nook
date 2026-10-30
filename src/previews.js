@@ -1,6 +1,6 @@
 // File tabs' richer views, loaded the first time one opens: a table for CSV and TSV, a picture that zooms and
 // pans, SVG and HTML drawn from the editor's text, audio and video, and PDF.
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { convertFileSrc } from './host.js'
 import { el } from './ui.js'
 import { path as paths } from './paths.js'
 import { parse, separator, numeric, compareFields } from './delimited.js'
@@ -134,7 +134,7 @@ export function html(path) {
 const BLOB_MAX = 256 << 20
 
 /**
- * Audio or video with the webview's controls. WebKitGTK's GStreamer can't read Tauri's asset:// scheme, so on
+ * Audio or video with the webview's controls. WebKitGTK's GStreamer can't read nook's asset:// scheme, so on
  * Linux the file is read once and played from memory, up to BLOB_MAX. WebView2 plays the asset URL directly.
  */
 export function media(path) {

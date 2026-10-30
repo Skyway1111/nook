@@ -1,5 +1,5 @@
 // Markdown's sanitizer where the browser has none of its own (Document.parseHTML), as WebKitGTK on Linux hasn't.
-// viewer.js loads it with marked, so a window that never renders Markdown never loads it.
+// viewer.js loads it with markdown.js, so a window that never renders Markdown never loads it.
 
 // Markdown keeps only what it writes itself: these elements, with these attributes. Anything else goes, with
 // what's inside it.
