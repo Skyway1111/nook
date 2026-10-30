@@ -140,11 +140,15 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
     for (const show of knobs) show()
     themes.mark(theme.pack == null ? null : theme.name)
   }
-  // An edit in any app reaches every window within a second: to theme.css, to the theme in use, to a
+  // An edit in any app reaches every window on screen within a second: to theme.css, to the theme in use, to a
   // picture or font either names, or a pick of another theme. Once the editor holds theme.css, it reads it.
   let firstRun = false
+  let version // `read_theme`'s, of the theme last read: it answers null while that's still so
   async function reread() {
-    const { first, ...read } = await invoke('read_theme')
+    const got = await invoke('read_theme', { seen: version })
+    if (!got) return
+    const { first, version: now, ...read } = got
+    version = now
     firstRun ||= first
     apply({ ...read, css: (box ? null : read.css) ?? theme.css })
     box?.refresh()
@@ -165,7 +169,8 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
   }
   const themes = startThemes({ configDir, home, settings, save, reread, showTheme: preview })
   await reread()
-  setInterval(reread, 1000)
+  setInterval(() => document.hidden || reread(), 1000)
+  document.addEventListener('visibilitychange', () => document.hidden || reread())
 
   $('settings-defaults').ontoggle = async () => {
     const pre = $('settings-defaults').querySelector('pre')

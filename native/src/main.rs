@@ -26,6 +26,7 @@ mod shell;
 #[cfg(windows)]
 mod sys;
 mod theme;
+mod zip;
 
 use host::{cmd, Run};
 use json::object;
@@ -496,10 +497,11 @@ fn commands(name: &str) -> Option<(Run, host::Command)> {
         "boot" => (Thread, cmd!(boot)),
         "settings" => (Thread, cmd!(settings)),
         "update_settings" => (Thread, cmd!(update_settings, patch)),
-        "read_theme" => (Thread, cmd!(theme::read_theme)),
+        "read_theme" => (Thread, cmd!(theme::read_theme, seen)),
         "install_theme" => (Thread, cmd!(theme::install_theme, path)),
         "install_theme_zip" => (Thread, cmd!(theme::install_theme_zip, @body)),
-        "save_theme_zip" => (Thread, cmd!(theme::save_theme_zip, @body)),
+        "install_theme_files" => (Thread, cmd!(theme::install_theme_files, @body)),
+        "save_theme_zip" => (Thread, cmd!(theme::save_theme_zip, name)),
         "zip_holds_theme" => (Thread, cmd!(theme::zip_holds_theme, path)),
         "saved_backdrop" => (Thread, cmd!(theme::saved_backdrop, name)),
         "save_backdrop" => (Thread, cmd!(theme::save_backdrop, @body)),

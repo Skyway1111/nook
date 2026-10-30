@@ -2,13 +2,13 @@
 //! is a folder in `themes` beside settings.json: a theme.css, and the pictures and fonts it names.
 use std::{
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
-    process::Command,
-    sync::Once,
+    sync::{Mutex, Once},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{config_dir, decode, err, host::Bytes, json::object, read_settings};
+use crate::{config_dir, decode, err, host::Bytes, json::object, read_settings, zip};
 
 /// A new theme.css. nook applies it over its defaults in `src/theme.css` and the installed theme in use.
 const THEME_SEED: &str = "/* Your CSS, applied over nook's defaults and the theme in use.
@@ -29,11 +29,14 @@ pub struct Theme {
     stamp: u64,
     /// Whether this read seeded theme.css: nook's first run, when it shows its welcome.
     first: bool,
+    /// Changes when any of the above does, from the files' stats alone.
+    version: u64,
 }
 
-object!(Theme { css, name, pack, stamp, first });
+object!(Theme { css, name, pack, stamp, first, version });
 
-pub fn read_theme() -> Theme {
+/// The theme, or None when its version is still `seen`: the page asks every second, and then only stats are read.
+pub fn read_theme(seen: Option<u64>) -> Option<Theme> {
     let dir = config_dir();
     let path = dir.join("theme.css");
     let first = !path.exists();
@@ -55,35 +58,77 @@ pub fn read_theme() -> Theme {
     if first {
         let _ = fs::create_dir_all(&dir).and_then(|()| fs::write(&path, THEME_SEED));
     }
-    let read = |p: &Path| fs::read(p).ok().map(decode);
-    let name = read_settings().ok().and_then(|s| s.theme);
+    let settings = fs::metadata(dir.join("settings.json")).ok();
+    let name = theme_name(settings.as_ref());
     let pack_dir = name.as_ref().map(|n| dir.join("themes").join(n));
-    let pack = pack_dir.as_ref().and_then(|d| read(&d.join("theme.css")));
-    let stamp = changes(&dir, pack_dir.map_or(0, |d| changes(&d, 0))) >> 11; // a JSON number holds 53 bits
-    Theme { css: read(&path), name, pack, stamp, first }
+    let stamp = changes(&dir, pack_dir.as_ref().map_or(0, |d| changes(d, 0)));
+    let pack_css = pack_dir.map(|d| d.join("theme.css"));
+    let files = [settings, fs::metadata(&path).ok(), pack_css.as_ref().and_then(|p| fs::metadata(p).ok())];
+    let version = files.iter().fold(stamp, |h, m| stat(h, m.as_ref())) >> 11; // a JSON number holds 53 bits
+    if seen == Some(version) && !files.iter().flatten().any(fresh) {
+        return None;
+    }
+    let read = |p: &Path| fs::read(p).ok().map(decode);
+    Some(Theme { css: read(&path), name, pack: pack_css.and_then(|p| read(&p)), stamp: stamp >> 11, first, version })
 }
 
-/// `seed` hashed with each entry of `dir`'s modified time and a file's size, so it changes even when a copy of
-/// an older file replaces one: the copy keeps its source's modified time, and on Windows its change time too.
-/// On Linux a file's change time, which every write sets, goes in as well. settings.json and theme.css
-/// don't count.
+/// Whether a file was written in the last two seconds: a second write within its time's resolution keeps its stats.
+fn fresh(m: &fs::Metadata) -> bool {
+    m.modified().is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() < 2))
+}
+
+/// The installed theme settings.json names. It's parsed again only when its stats change, or are fresh.
+fn theme_name(settings: Option<&fs::Metadata>) -> Option<String> {
+    static LAST: Mutex<Option<(u64, Option<String>)>> = Mutex::new(None);
+    let now = stat(0, settings);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if settings.is_some_and(fresh) || last.as_ref().is_none_or(|(was, _)| *was != now) {
+        *last = Some((now, read_settings().ok().and_then(|s| s.theme)));
+    }
+    last.as_ref().and_then(|(_, name)| name.clone())
+}
+
+/// `seed` hashed with each entry of `dir`'s stats, so it changes even when a copy of an older file replaces one.
+/// settings.json and theme.css don't count.
 fn changes(dir: &Path, seed: u64) -> u64 {
     let entries = fs::read_dir(dir).into_iter().flatten().flatten();
     let entries = entries.filter(|e| !matches!(e.file_name().to_str(), Some("theme.css" | "settings.json")));
-    entries.filter_map(|e| e.metadata().ok()).fold(seed, |h, m| {
+    entries.fold(seed, |h, e| stat(h, e.metadata().ok().as_ref()))
+}
+
+/// `h` hashed with a file's modified time and size, or a folder's modified time. A copy keeps its source's modified
+/// time, and on Windows its change time too, so the size goes in; on Linux the change time, which every write
+/// sets, goes in as well. A missing file counts as zeros.
+fn stat(h: u64, m: Option<&fs::Metadata>) -> u64 {
+    let parts = m.map_or([0; 3], |m| {
         let time = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as u64);
         #[cfg(unix)]
         let changed = { use std::os::unix::fs::MetadataExt; (m.ctime() as u64) << 30 | m.ctime_nsec() as u64 };
         #[cfg(windows)]
         let changed = 0;
-        let file = if m.is_dir() { [0, 0] } else { [m.len(), changed] };
-        [time, file[0], file[1]].into_iter().fold(h, |h, x| (h ^ x).wrapping_mul(0x100_0000_01b3))
-    })
+        if m.is_dir() { [time, 0, 0] } else { [time, m.len(), changed] }
+    });
+    parts.into_iter().fold(h, |h, x| (h ^ x).wrapping_mul(0x100_0000_01b3))
 }
 
 /// `install` for a folder or a .zip on disk.
 pub fn install_theme(path: String) -> Result<String, String> {
-    install(&config_dir().join("themes"), Path::new(&path), None)
+    install_from(&config_dir().join("themes"), Path::new(&path))
+}
+
+/// `install` for the folder or .zip `src`, named by itself unless a folder inside it holds theme.css.
+fn install_from(themes: &Path, src: &Path) -> Result<String, String> {
+    let zipped = src.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+    let name = if zipped { src.file_stem() } else { src.file_name() };
+    install(themes, name.map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), &|stage| {
+        if zipped {
+            zip::extract(&mut fs::File::open(src).map_err(err)?, stage)
+        } else if src.is_dir() {
+            copy_dir(src, stage)
+        } else {
+            Err("it isn't a folder or a .zip".into())
+        }
+    })
 }
 
 /// A request body that is a name, a NUL, then bytes.
@@ -96,51 +141,80 @@ fn named(body: &[u8]) -> Result<(String, &[u8]), String> {
 /// then its bytes.
 pub fn install_theme_zip(body: &[u8]) -> Result<String, String> {
     let (name, bytes) = named(body)?;
-    let themes = config_dir().join("themes");
-    fs::create_dir_all(&themes).map_err(err)?;
-    let zip = themes.join(format!(".{}.zip", unique()));
-    fs::write(&zip, bytes).map_err(err)?;
-    let installed = install(&themes, &zip, Some(name));
-    let _ = fs::remove_file(zip);
-    installed
+    install(&config_dir().join("themes"), name, &|stage| zip::extract(&mut Cursor::new(bytes), stage))
 }
 
-/// Saves a theme the webview packed as `<name>.zip` in Downloads, or `<name> (2).zip` and on when that's
-/// taken, and returns where. The body is the theme's name, a NUL, then the bytes.
-pub fn save_theme_zip(body: &[u8]) -> Result<String, String> {
-    let (name, bytes) = named(body)?;
+/// `install_theme` for a theme the page made, such as one from a picture. The body is its name, a NUL, then each
+/// file as its name, a NUL, its length in decimal, a NUL, and its bytes.
+pub fn install_theme_files(body: &[u8]) -> Result<String, String> {
+    let (name, files) = named(body)?;
+    install(&config_dir().join("themes"), name, &|stage| {
+        let mut rest = files;
+        while !rest.is_empty() {
+            let (file, after) = named(rest)?;
+            let (len, after) = named(after)?;
+            let len = len.parse().ok().filter(|&n| n <= after.len()).ok_or("a file is cut short")?;
+            let path = stage.join(zip::path(&file).filter(|p| !p.is_empty()).ok_or(format!("{file} would land outside the theme"))?);
+            fs::create_dir_all(path.parent().unwrap()).and_then(|()| fs::write(&path, &after[..len])).map_err(err)?;
+            rest = &after[len..];
+        }
+        Ok(())
+    })
+}
+
+/// Saves the installed theme `name`, its folder whole, as `<name>.zip` in Downloads, or `<name> (2).zip` and on
+/// when that's taken, and returns where.
+pub fn save_theme_zip(name: String) -> Result<String, String> {
     if Path::new(&name).file_name().and_then(|n| n.to_str()) != Some(&name) || name.starts_with('.') {
         return Err(format!("{name} isn't a theme's name"));
     }
+    let mut files = Vec::new();
+    list_files(&config_dir().join("themes").join(&name), &name, &mut files)?;
     let downloads = crate::downloads_dir();
     fs::create_dir_all(&downloads).map_err(err)?;
-    let path = (1..)
+    let (path, mut file) = (1..)
         .map(|n| downloads.join(if n == 1 { format!("{name}.zip") } else { format!("{name} ({n}).zip") }))
-        .find(|p| !p.exists())
-        .unwrap();
-    fs::write(&path, bytes).map_err(err)?;
+        .find_map(|p| match fs::File::create_new(&p) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
+            made => Some(made.map(|f| (p, f))),
+        })
+        .unwrap()
+        .map_err(err)?;
+    zip::write(&mut file, &files).inspect_err(|_| drop(fs::remove_file(&path)))?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Each file in `dir` and the folders in it, as its path in a .zip under `inside` and on disk. What the file browser
+/// hides stays out.
+fn list_files(dir: &Path, inside: &str, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
+    for e in fs::read_dir(dir).map_err(err)?.flatten() {
+        let Some(is_dir) = crate::shown_dir(&e) else { continue };
+        let name = format!("{inside}/{}", e.file_name().to_string_lossy());
+        if is_dir {
+            list_files(&e.path(), &name, out)?;
+        } else {
+            out.push((name, e.path()));
+        }
+    }
+    Ok(())
 }
 
 /// Whether a .zip holds a theme: a theme.css at its top or in one folder inside.
 pub fn zip_holds_theme(path: String) -> bool {
-    let Ok(list) = list_zip(Path::new(&path)) else { return false };
-    list.lines().any(|entry| {
-        let parts: Vec<_> = entry.trim_end_matches('/').split('/').collect();
-        parts.len() <= 2 && parts.last().is_some_and(|p| p.eq_ignore_ascii_case("theme.css"))
-    })
+    let Ok(entries) = fs::File::open(path).map_err(err).and_then(|mut f| zip::entries(&mut f)) else { return false };
+    let top = |e: &&zip::Entry| !e.dir && e.name.split('/').count() <= 2;
+    entries.iter().filter(top).any(|e| e.name.rsplit('/').next().is_some_and(|p| p.eq_ignore_ascii_case("theme.css")))
 }
 
-/// Installs a theme as `themes\<name>`, over any theme of that name. The folder that holds theme.css
-/// names it; at the top of a .zip, `name` or the .zip's own name does. It unpacks into a hidden folder,
-/// then swaps in with two renames, so a window reading the theme finds the old or the new, never half.
-fn install(themes: &Path, src: &Path, name: Option<String>) -> Result<String, String> {
+/// Installs a theme as `themes\<name>`, over any theme of that name. `fill` puts its files in a hidden folder, and
+/// the folder in there that holds theme.css names it, or `name` when theme.css is at the top. The theme then
+/// swaps in with two renames, so a window reading it finds the old or the new, never half.
+fn install(themes: &Path, name: String, fill: &dyn Fn(&Path) -> Result<(), String>) -> Result<String, String> {
     let stage = themes.join(format!(".{}", unique()));
     fs::create_dir_all(&stage).map_err(err)?;
-    let installed = unpack(src, &stage).and_then(|()| {
+    let installed = fill(&stage).and_then(|()| {
         let root = theme_root(&stage).ok_or("it holds no theme.css")?;
-        let label = |p: &Path| (if zipped(p) { p.file_stem() } else { p.file_name() }).map(|s| s.to_string_lossy().into_owned());
-        let name = if root == stage { name.or_else(|| label(src)) } else { label(&root) }.unwrap_or_default();
+        let name = if root == stage { name } else { root.file_name().unwrap_or_default().to_string_lossy().into_owned() };
         if name.is_empty() || name.starts_with('.') || Path::new(&name).file_name() != Some(name.as_ref()) {
             return Err(format!("“{name}” can't name a theme"));
         }
@@ -161,20 +235,6 @@ fn install(themes: &Path, src: &Path, name: Option<String>) -> Result<String, St
 fn unique() -> String {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     format!("{}-{nanos}", std::process::id())
-}
-
-fn zipped(path: &Path) -> bool {
-    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"))
-}
-
-fn unpack(src: &Path, to: &Path) -> Result<(), String> {
-    if zipped(src) {
-        extract_zip(src, to)
-    } else if src.is_dir() {
-        copy_dir(src, to)
-    } else {
-        Err("it isn't a folder or a .zip".into())
-    }
 }
 
 /// Copies each theme in `bundled` into `themes` once: `themes/.bundled` lists those already offered, so a
@@ -239,35 +299,6 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The paths in a .zip, one a line. Windows' own tar reads .zip files; Git's GNU tar, which may come
-/// first on PATH, doesn't, so nook names System32's. Err is what it said went wrong.
-#[cfg(windows)]
-fn list_zip(zip: &Path) -> Result<String, String> {
-    crate::run(Command::new(windows_tar()).arg("-tf").arg(zip), None)
-}
-
-#[cfg(windows)]
-fn extract_zip(zip: &Path, into: &Path) -> Result<(), String> {
-    crate::run(Command::new(windows_tar()).arg("-xf").arg(zip).arg("-C").arg(into), None).map(drop)
-}
-
-#[cfg(windows)]
-fn windows_tar() -> PathBuf {
-    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
-    Path::new(&root).join("System32").join("tar.exe")
-}
-
-/// The paths in a .zip, one a line, through Info-ZIP's unzip, which every desktop Linux ships.
-#[cfg(not(windows))]
-fn list_zip(zip: &Path) -> Result<String, String> {
-    crate::run(Command::new("unzip").arg("-Z1").arg(zip), None)
-}
-
-#[cfg(not(windows))]
-fn extract_zip(zip: &Path, into: &Path) -> Result<(), String> {
-    crate::run(Command::new("unzip").args(["-q", "-o"]).arg(zip).arg("-d").arg(into), None).map(drop)
-}
-
 /// Where an element's baked backdrop waits for the next start: `body`, `pane`, and the like, in the cache folder.
 fn backdrop_file(name: &str) -> Result<PathBuf, String> {
     if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase()) {
@@ -294,7 +325,7 @@ pub fn save_backdrop(body: &[u8]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{changes, install, list_zip, offer_bundled};
+    use super::{changes, install_from, list_files, offer_bundled, zip_holds_theme};
     use std::{
         fs,
         time::{Duration, UNIX_EPOCH},
@@ -330,24 +361,23 @@ mod tests {
         fs::create_dir_all(src.join("fonts")).unwrap();
         fs::write(src.join("theme.css"), b":root { --h: 250; }").unwrap();
         fs::write(src.join("fonts").join("a.woff2"), b"font").unwrap();
-        assert_eq!(install(&themes, &src, None), Ok("dark-moon".into()));
+        assert_eq!(install_from(&themes, &src), Ok("dark-moon".into()));
         assert!(themes.join("dark-moon").join("fonts").join("a.woff2").is_file());
 
         // A zipped folder, downloaded twice: the folder inside names it, not "dark-moon (1)".
         fs::write(src.join("theme.css"), b":root { --h: 200; }").unwrap();
         let zip = dir.join("dark-moon (1).zip");
-        #[cfg(windows)]
-        let made = std::process::Command::new(super::windows_tar()).current_dir(&dir).args(["-a", "-cf"]).arg(&zip).arg("dark-moon").status();
-        #[cfg(not(windows))]
-        let made = std::process::Command::new("zip").current_dir(&dir).args(["-qr"]).arg(&zip).arg("dark-moon").status();
-        assert!(made.unwrap().success());
-        assert_eq!(install(&themes, &zip, Some("ignored".into())), Ok("dark-moon".into()));
+        let mut files = Vec::new();
+        list_files(&src, "dark-moon", &mut files).unwrap();
+        crate::zip::write(&mut fs::File::create(&zip).unwrap(), &files).unwrap();
+        assert!(zip_holds_theme(zip.to_string_lossy().into_owned()));
+        assert_eq!(install_from(&themes, &zip), Ok("dark-moon".into()));
         assert_eq!(fs::read_to_string(themes.join("dark-moon").join("theme.css")).unwrap(), ":root { --h: 200; }");
+        assert!(themes.join("dark-moon").join("fonts").join("a.woff2").is_file());
         assert_eq!(fs::read_dir(&themes).unwrap().count(), 1); // nothing staged is left behind
-        assert!(list_zip(&zip).unwrap().contains("dark-moon/theme.css"));
 
         fs::remove_file(src.join("theme.css")).unwrap();
-        assert!(install(&themes, &src, None).is_err());
+        assert!(install_from(&themes, &src).is_err());
         assert!(themes.join("dark-moon").join("theme.css").is_file()); // a failed install leaves the theme it would replace
         fs::remove_dir_all(dir).unwrap();
     }
