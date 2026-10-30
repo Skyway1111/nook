@@ -134,7 +134,7 @@ export function html(path) {
 const BLOB_MAX = 256 << 20
 
 /**
- * Audio or video with the webview's controls. WebKitGTK's GStreamer can't read Tauri's asset:// scheme, so on
+ * Audio or video with the webview's controls. WebKitGTK's GStreamer can't read nook's asset:// scheme, so on
  * Linux the file is read once and played from memory, up to BLOB_MAX. WebView2 plays the asset URL directly.
  */
 export function media(path) {

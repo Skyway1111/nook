@@ -1,6 +1,6 @@
 //! COM by hand: calls through vtable slots, an owning pointer, and the one callback object every WebView2
-//! completion and event handler shares. Slots are numbered as windows-0.62.2's bindings number them: IUnknown's
-//! three from 0, then IInspectable's three for a WinRT interface.
+//! completion and event handler shares. Slots are numbered in the interface's declaration order: IUnknown's three
+//! from 0, then IInspectable's three for a WinRT interface.
 use crate::sys::{CoTaskMemAlloc, CoTaskMemFree};
 use std::ffi::c_void;
 use std::ptr::null_mut;

@@ -90,7 +90,7 @@ export function hidePreview() {
 }
 
 /**
- * Pointer-driven drag (HTML5 drag-and-drop is unavailable while Tauri handles OS file drops). `onDrop(target,
+ * Pointer-driven drag (HTML5 drag-and-drop is unavailable while the host handles OS file drops). `onDrop(target,
  * up)` gets the element under the pointer and the pointerup. `over(target, move)` follows the pointer while
  * dragging, and gets null once the drag ends. `label` is the ghost's text.
  */

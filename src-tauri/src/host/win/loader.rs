@@ -1,4 +1,4 @@
-//! Finds the WebView2 runtime and starts an environment from it, as Microsoft's WebView2Loader does.
+//! Finds the WebView2 runtime and starts an environment from it, as the WebView2 SDK's loader does.
 use crate::com::{self, add_ref, guid, handler, hresult, task_string, Com, Guid, E_NOINTERFACE, E_NOTIMPL, S_OK};
 use crate::sys::*;
 use std::ffi::c_void;
