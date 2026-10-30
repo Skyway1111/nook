@@ -110,7 +110,8 @@ function simplex(n, from, to, len, weight) {
     cut[e] = cv
   }
   let scan = 0
-  for (let iter = 0, cap = 4 * n + 100; iter < cap; iter++) {
+  // Each pass costs up to a walk of the tree, so a huge graph stops early, on a feasible layout.
+  for (let iter = 0, cap = Math.min(4 * n + 100, Math.max(400, 4e6 / n)); iter < cap; iter++) {
     // Leave: the most negative cut value among the next few negative ones.
     let leave = -1, found = 0
     for (let k = 0; k < edges && found < 30; k++) {
