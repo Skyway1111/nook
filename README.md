@@ -116,7 +116,7 @@ On Windows, close a debug nook before you rebuild it: Windows locks the exe it r
 
 - [Libron](https://github.com/nicoverbruggen/libron), the interface font, is under the SIL Open Font License.
 - On Linux, the icons are Microsoft's [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons), under the MIT License.
-- `conpty.dll` and `OpenConsole.exe` come from Microsoft's `Microsoft.Windows.Console.ConPTY` package, under the MIT License.
+- nook's console server follows Microsoft's OpenConsole, from [Windows Terminal](https://github.com/microsoft/terminal), under the MIT License.
 - Parts of the terminal come from [xterm.js](https://github.com/xtermjs/xterm.js), and the Markdown grammar from [marked](https://github.com/markedjs/marked), both under the MIT License.
 - Twilight's picture is *Twilight in the Wilderness* (1860) by Frederic Edwin Church. The Cleveland Museum of Art released its photograph under [CC0](https://clevelandart.org/art/1965.233).
 
