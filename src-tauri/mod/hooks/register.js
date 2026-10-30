@@ -440,22 +440,35 @@ export function runnable({ code, lang }) {
   return command && !command.startsWith('#') ? command : null
 }
 
-/** About how many rows a display formula takes at the terminal's own text size, a row being about an em:
- * an em a line, more for a fraction, a nested one, or a big operator with limits. nook fits the drawing
- * inside the box, so a guess too small only draws it smaller. */
+/** About how many rows a display formula takes at the terminal's own text size, as nook's MathML lays it
+ * out: a row a line, more for a fraction, a nested one, a big operator with limits, an arrow with a label,
+ * a matrix or cases as tall as their rows, and a row and a half for each line of aligned math. nook fits the
+ * formula inside the box, so a guess too small only draws it smaller. */
 export function mathBox(source, room) {
-  const lines = source.split(/\\\\(?!\w)/).filter(l => l.replace(/\\(?:begin|end)\{[^}]*\}|&|\s/g, ''))
-  const tall = line => {
-    let h = 1
-    if (/\\(?:[dt]?frac|cfrac|binom|over\b)/.test(line)) h = /\\[dt]?frac\s*\{[^{}]*\\[dt]?frac|\\[dt]?frac\s*\{[^{}]*\}\s*\{[^{}]*\\[dt]?frac/.test(line) ? 2.6 : 2.4
-    const limits = names => new RegExp(`\\\\(?:${names})(?![a-zA-Z])(?:\\s*\\\\limits)?\\s*[_^]`).test(line)
-    if (limits('sum|prod|coprod|bigcup|bigcap|bigoplus|bigotimes')) h = Math.max(h, 2.8)
-    else if (limits('int|iint|iiint|oint')) h = Math.max(h, 2.4)
-    else if (limits('lim|max|min|sup|inf|argmax|argmin')) h = Math.max(h, 2)
-    return h
+  const blocks = [] // the heights of the matrices, cases and arrays, each stood in for by \block<n>
+  const BLOCK = /\\begin\{((?:small|[pbBvV])?matrix|[dr]?cases|d?array)\*?\}((?:(?!\\begin\{)[\s\S])*?)\\end\{\1\*?\}(\s*\^)?/
+  let text = source.replace(/\\substack\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, body) => ' \\stack'.repeat(body.split('\\\\').length - 1))
+  for (let m; (m = BLOCK.exec(text));) {
+    const rows = m[2].split(/\\\\(?![a-zA-Z])/)
+    const h = m[1] === 'smallmatrix' ? 0.8 * rows.length : rows.reduce((h, row) => h + Math.max(1.4, tall(row)), 0.1)
+    blocks.push(h + (m[3] ? 0.3 : 0))
+    text = `${text.slice(0, m.index)} \\block${blocks.length - 1} ${m[3] ?? ''}${text.slice(m.index + m[0].length)}`
   }
-  const em = lines.length > 1 ? lines.reduce((sum, l) => sum + tall(l) * 1.2, 0) : tall(lines[0] ?? '')
-  return [Math.max(20, Math.min(room, 100)), Math.max(2, Math.min(MATH_ROWS, Math.ceil(em + 0.3)))]
+  function tall(line) {
+    const op = (names, both = '') => new RegExp(String.raw`\\(?:${names})(?![a-zA-Z])(?:\s*\\limits)?\s*[_^]${both}`).test(line)
+    const twice = String.raw`\s*(?:\{(?:[^{}]|\{[^{}]*\})*\}|\\[a-zA-Z]+|.)\s*[_^]`
+    const big = 'sum|prod|coprod|bigcup|bigcap|bigvee|bigwedge|bigoplus|bigotimes|bigodot|biguplus|bigsqcup'
+    let h = 1
+    if (/\\(?:[cdt]?frac|binom|over\b)/.test(line)) h = /\\[cdt]?frac\s*\{[^{}]*\\[cdt]?frac|\\[cdt]?frac\s*\{[^{}]*\}\s*\{[^{}]*\\[cdt]?frac/.test(line) ? 3.6 : 2.7
+    if (op(big, twice)) h = Math.max(h, 3.7)
+    else if (op(big) || op('int|iint|iiint|oint') || /\\Bigg[lrm]?(?![a-zA-Z])/.test(line)) h = Math.max(h, 2.7)
+    else if (op('lim|liminf|limsup|max|min|sup|inf') || /\\(?:x[a-zA-Z]*arrow|xmapsto|overset|underset|stackrel|bigg[lrm]?)(?![a-zA-Z])/.test(line)) h = Math.max(h, 2.3)
+    for (const [, n] of line.matchAll(/\\block(\d+)/g)) h = Math.max(h, blocks[n])
+    return h + 0.85 * (line.match(/\\stack/g)?.length ?? 0) + 0.7 * (line.match(/\\(?:over|under)brace\s*\{(?:[^{}]|\{[^{}]*\})*\}\s*[_^]/g)?.length ?? 0)
+  }
+  const lines = text.split(/\\\\(?![a-zA-Z])/).filter(l => l.replace(/\\(?:begin|end)\{[^}]*\}|&|\s/g, ''))
+  const rows = lines.length > 1 ? lines.reduce((sum, l) => sum + Math.max(1.55, tall(l)), 0) : tall(lines[0] ?? '')
+  return [Math.max(20, Math.min(room, 100)), Math.max(2, Math.min(MATH_ROWS, Math.ceil(rows)))]
 }
 
 /** The picture files a reply links that exist, LINKED at most: each target -> [path, size]. */

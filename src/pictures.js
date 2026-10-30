@@ -73,6 +73,11 @@ export function startPictures(term, screen, reply = () => {}) {
   const shown = new Map() // id -> { el, css }
   let seen = false // whether Claude has drawn a picture yet
   let tail = '' // the start of a command the last chunk cut off
+  let size = [0, 0] // the screen's size, kept here so fitting a formula never waits on layout
+  new ResizeObserver(([e]) => {
+    size = [e.contentRect.width, e.contentRect.height]
+    if (seen) draw()
+  }).observe(screen)
 
   /** Takes the graphics commands from a chunk of output. xterm drops them on its own. */
   function read(bytes) {
@@ -118,11 +123,21 @@ export function startPictures(term, screen, reply = () => {}) {
     if (medium === 'f') {
       // Claude declares a PNG, but the webview decodes whatever the file holds, SVG and JPEG included.
       const path = utf8.decode(Uint8Array.from(atob(payload), c => c.charCodeAt(0)))
-      if (/\.(?:mmd|tex)$/i.test(path)) {
-        // A diagram or formula the mod saved: drawn at the box's left, since its size there is the mod's guess.
+      if (/\.tex$/i.test(path)) {
+        // A formula the mod saved, as MathML the page lays out: in the theme's ink, at the box's left, since
+        // its size there is the mod's guess.
         const [columns, rows] = [Number(k.c), Number(k.r)]
-        const made = /\.tex$/i.test(path) ? import('./math.js').then(m => m.mathUrl(path, boxSize(columns, rows)))
-          : import('./diagrams.js').then(d => d.diagramUrl(path))
+        import('./math.js').then(m => m.formula(path)).then(math => {
+          keep(id, { math, columns, rows })
+          answer('OK')
+          draw()
+        }, () => answer("EBADPNG:can't read the formula"))
+        return
+      }
+      if (/\.mmd$/i.test(path)) {
+        // A diagram the mod saved: drawn at the box's left, since its size there is the mod's guess.
+        const [columns, rows] = [Number(k.c), Number(k.r)]
+        const made = import('./diagrams.js').then(d => d.diagramUrl(path))
         made.then(url => {
           keep(id, { url, columns, rows, blob: true, left: true })
           answer('OK')
@@ -210,12 +225,14 @@ export function startPictures(term, screen, reply = () => {}) {
       const { columns: c, rows: r } = file
       const pct = (n, of) => `${(n / of) * 100}%`
       const css = `left:${pct(x0, term.cols)};top:${pct(y0, term.rows)};width:${pct(c, term.cols)};height:${pct(r, term.rows)};`
-        + (file.page ? '' : `background-image:url("${file.url}");${file.left ? 'background-position:left center;' : ''}`)
+        + (file.page || file.math ? '' : `background-image:url("${file.url}");${file.left ? 'background-position:left center;' : ''}`)
         + `clip-path:inset(${pct(top - y0, r)} ${pct(x0 + c - 1 - right, c)} ${pct(y0 + r - 1 - bottom, r)} ${pct(left - x0, c)})`
       const pic = shown.get(id) ?? { el: layer.appendChild(el('div')) }
       if (pic.css !== css) pic.el.style.cssText = pic.css = css
+      if (pic.math && pic.math !== file.math) pic.math.remove(), (pic.math = null), (pic.el.className = '') // the id now names another
       if (file.page) frame(pic, file, c, r)
       else if (pic.frame) pic.frame.remove(), (pic.frame = null), (pic.el.className = '') // the id now names a picture
+      if (file.math) fit(pic, file, c, r)
       shown.set(id, pic)
     }
   }
@@ -238,6 +255,26 @@ export function startPictures(term, screen, reply = () => {}) {
     if (!width || !height) return
     const style = `height:${Math.round((PAGE * height) / width)}px;transform:scale(${(width / PAGE).toFixed(4)})`
     if (pic.style !== style) pic.frame.style.cssText = pic.style = style
+  }
+
+  /** A formula in its box: at its own size, or smaller to fit, from the box's left and centered top to bottom.
+   * Its own size is measured once, in the terminal's font sizes, which its text follows. */
+  function fit(pic, file, columns, rows) {
+    if (!pic.math) {
+      pic.el.className = 'math'
+      pic.el.append((pic.math = file.math))
+      pic.fit = ''
+    }
+    const { fontSize } = term.options
+    if (!file.size) {
+      const { width, height } = file.math.getBoundingClientRect()
+      if (width) file.size = [width / fontSize, height / fontSize]
+    }
+    const [width, height] = [(size[0] * columns) / term.cols, (size[1] * rows) / term.rows]
+    if (!file.size || !width) return
+    const scale = Math.min(1, width / (file.size[0] * fontSize), height / (file.size[1] * fontSize))
+    const css = scale < 1 ? `transform:scale(${scale.toFixed(4)})` : ''
+    if (pic.fit !== css) file.math.style.cssText = pic.fit = css
   }
 
   /** Reloads each page on screen once Claude writes a file in its folder or under it, so a page written before
