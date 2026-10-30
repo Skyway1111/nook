@@ -143,7 +143,10 @@ pub fn pty_spawn(
             let _ = exited.send(InvokeResponseBody::Raw(Vec::new()));
         }
     });
-    let _ = crate::update_settings(app, [("lastDir".into(), cwd.into())].into_iter().collect()); // the next launch opens here
+    let _ = crate::edit_settings(&app, |s| {
+        s.last_dir = cwd; // the next launch opens here
+        Ok(())
+    });
     Ok(id)
 }
 
@@ -176,8 +179,8 @@ pub fn pty_command(id: u64, command: String, args: String) -> Result<(), String>
     let file = state_file(id).with_extension("cmd");
     std::fs::create_dir_all(file.parent().unwrap()).map_err(err)?;
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
-    let request = serde_json::json!({ "command": command, "args": args, "at": at }); // `at` tells repeats apart
-    std::fs::write(file, request.to_string()).map_err(err)
+    let request = crate::json::to_string(&crate::json::obj! { "args": args, "at": at, "command": command }); // `at` tells repeats apart
+    std::fs::write(file, request).map_err(err)
 }
 
 /// What nook's mod last reported for session `id`, as JSON; `None` until it reports.
@@ -196,8 +199,8 @@ pub fn pty_states(ids: Vec<u64>) -> Vec<Option<String>> {
 /// The `n`th image pasted into session `id`, in the folder nook's mod reports; `None` until Claude saves it.
 #[tauri::command(async)]
 pub fn session_image(id: u64, n: u32) -> Option<PathBuf> {
-    let state: serde_json::Value = serde_json::from_str(&pty_state(id)?).ok()?;
-    let path = PathBuf::from(state["images"].as_str()?).join(format!("{n}.png"));
+    let state = pty_state(id)?;
+    let path = PathBuf::from(crate::json::parse(&state).ok()?["images"].as_str()?).join(format!("{n}.png"));
     path.is_file().then_some(path)
 }
 

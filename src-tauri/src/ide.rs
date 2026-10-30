@@ -8,7 +8,7 @@
 //! Claude as the prompt's own keys do.
 //!
 //! The lockfile lists no workspace folders, so a Claude outside nook never takes it for its own editor.
-use serde_json::{json, Value};
+use crate::json::{self, obj, Out, Raw, J, W};
 use std::{
     collections::HashMap,
     hash::{BuildHasher, RandomState},
@@ -26,12 +26,13 @@ use tauri::{AppHandle, Emitter};
 type Writer = Arc<Mutex<TcpStream>>;
 
 /// What a Claude has been told, kept for a Claude that connects after the viewer spoke.
-/// The edits shown, by Claude's name for each, wait on the call to answer when one is accepted or rejected.
+/// The edits shown, by Claude's name for each, wait on the call to answer, by its id's JSON, when one is
+/// accepted or rejected.
 #[derive(Default)]
 struct Shared {
     peers: Vec<Writer>,
     told: Option<String>,
-    diffs: HashMap<String, (Writer, Value)>,
+    diffs: HashMap<String, (Writer, String)>,
 }
 
 struct Link {
@@ -73,8 +74,8 @@ fn listen(id: u64, tell: Arc<dyn Fn(Event) + Send + Sync>) -> Option<u16> {
     let dir = lock_dir();
     std::fs::create_dir_all(&dir).ok()?;
     let lock = dir.join(format!("{}.lock", addr.port()));
-    let about = json!({ "pid": std::process::id(), "workspaceFolders": [], "ideName": "nook", "transport": "ws", "authToken": auth });
-    std::fs::write(&lock, about.to_string()).ok()?;
+    let about = obj! { "authToken": auth, "ideName": "nook", "pid": std::process::id(), "transport": "ws", "workspaceFolders": Raw("[]") };
+    std::fs::write(&lock, json::to_string(&about)).ok()?;
     let shared = Arc::new(Mutex::new(Shared::default()));
     let closed = Arc::new(AtomicBool::new(false));
     let (s, c) = (shared.clone(), closed.clone());
@@ -106,19 +107,30 @@ pub fn close(id: u64) {
 /// `end`, each `[line, character]` counted from 0, with their `text`. No path tells it nothing is shown.
 #[tauri::command]
 pub async fn ide_selection(id: u64, path: Option<String>, start: [u32; 2], end: [u32; 2], text: Option<String>) {
-    let at = |[line, character]: [u32; 2]| json!({ "line": line, "character": character });
-    let mut params = json!({ "selection": { "start": at(start), "end": at(end) } });
-    if let Some(path) = path {
-        params["filePath"] = path.into();
+    let (start, end) = (At(start), At(end));
+    let selection = obj! { "end": end, "start": start };
+    let mut params: Vec<(&str, &dyn W)> = vec![("selection", &selection)];
+    if let Some(path) = &path {
+        params.insert(0, ("filePath", path));
     }
-    if let Some(text) = text {
-        params["text"] = text.into();
+    if let Some(text) = &text {
+        params.push(("text", text));
     }
-    let note = json!({ "jsonrpc": "2.0", "method": "selection_changed", "params": params }).to_string();
+    let note = json::to_string(&obj! { "jsonrpc": "2.0", "method": "selection_changed", "params": json::Obj(&params) });
     let Some(shared) = links().lock().unwrap().get(&id).map(|l| l.shared.clone()) else { return };
     let mut shared = shared.lock().unwrap();
     shared.peers.retain(|peer| send(&mut peer.lock().unwrap(), &note).is_ok());
     shared.told = Some(note);
+}
+
+/// `[line, character]` in a selection.
+struct At([u32; 2]);
+
+impl W for At {
+    fn w(&self, o: &mut Out) {
+        let [line, character] = self.0;
+        obj! { "character": character, "line": line }.w(o);
+    }
 }
 
 /// What a Claude asked nook to show or close, for the page.
@@ -130,8 +142,10 @@ enum Event {
 impl Event {
     fn emit(self, app: &AppHandle, id: u64) {
         let _ = match self {
-            Event::Diff { tab, path, contents } => app.emit("ide-diff", json!({ "id": id, "tab": tab, "path": path, "contents": contents })),
-            Event::Close { tab } => app.emit("ide-diff-close", json!({ "id": id, "tab": tab })),
+            Event::Diff { tab, path, contents } => {
+                app.emit_str("ide-diff", json::to_string(&obj! { "contents": contents, "id": id, "path": path, "tab": tab }))
+            }
+            Event::Close { tab } => app.emit_str("ide-diff-close", json::to_string(&obj! { "id": id, "tab": tab })),
         };
     }
 }
@@ -145,11 +159,24 @@ pub async fn ide_diff_answer(id: u64, tab: String, outcome: String, contents: Op
     let _ = settle(&writer, &call, &outcome, contents);
 }
 
-fn settle(writer: &Writer, call: &Value, outcome: &str, contents: Option<String>) -> std::io::Result<()> {
-    let mut content = vec![json!({ "type": "text", "text": outcome })];
-    content.extend(contents.map(|c| json!({ "type": "text", "text": c })));
-    let reply = json!({ "jsonrpc": "2.0", "id": call, "result": { "content": content } }).to_string();
-    send(&mut writer.lock().unwrap(), &reply)
+/// Answers the call whose id is the JSON `call` with `outcome`, and the `contents` to write.
+fn settle(writer: &Writer, call: &str, outcome: &str, contents: Option<String>) -> std::io::Result<()> {
+    let content: Vec<Text> = std::iter::once(outcome).chain(contents.as_deref()).map(Text).collect();
+    send(&mut writer.lock().unwrap(), &reply(call, &obj! { "content": content }))
+}
+
+/// A tool result's text part.
+struct Text<'a>(&'a str);
+
+impl W for Text<'_> {
+    fn w(&self, o: &mut Out) {
+        obj! { "text": self.0, "type": "text" }.w(o);
+    }
+}
+
+/// The JSON-RPC reply to the call whose id is the JSON `call`.
+fn reply(call: &str, result: &dyn W) -> String {
+    json::to_string(&obj! { "id": Raw(call), "jsonrpc": "2.0", "result": result })
 }
 
 /// Settles the edits shown named `tab`, or all of them, as closed: Claude's prompt answered first.
@@ -210,7 +237,8 @@ fn serve(stream: TcpStream, auth: &str, shared: &Mutex<Shared>, tell: &dyn Fn(Ev
                 if !fin {
                     continue;
                 }
-                let m: Value = serde_json::from_slice(&std::mem::take(&mut message)).unwrap_or_default();
+                let text = std::mem::take(&mut message);
+                let m = std::str::from_utf8(&text).ok().and_then(|t| json::parse(t).ok()).unwrap_or(J::Null);
                 answer(&m, &writer, shared, tell)?;
             }
             _ => {}
@@ -218,7 +246,7 @@ fn serve(stream: TcpStream, auth: &str, shared: &Mutex<Shared>, tell: &dyn Fn(Ev
     }
 }
 
-fn answer(m: &Value, writer: &Writer, shared: &Mutex<Shared>, tell: &dyn Fn(Event)) -> Option<()> {
+fn answer(m: &J, writer: &Writer, shared: &Mutex<Shared>, tell: &dyn Fn(Event)) -> Option<()> {
     let method = m["method"].as_str().unwrap_or_default();
     if method == "ide_connected" {
         let mut shared = shared.lock().unwrap();
@@ -231,15 +259,16 @@ fn answer(m: &Value, writer: &Writer, shared: &Mutex<Shared>, tell: &dyn Fn(Even
     if m["id"].is_null() || method.is_empty() {
         return Some(()); // a note, or an answer to nothing nook asked
     }
+    let call = json::to_string(&m["id"]);
     let args = &m["params"]["arguments"];
     if method == "tools/call" {
         let tab = args["tab_name"].as_str().map(str::to_owned);
         match m["params"]["name"].as_str().unwrap_or_default() {
             "openDiff" => {
                 let (Some(tab), Some(path), Some(contents)) = (tab, args["new_file_path"].as_str(), args["new_file_contents"].as_str()) else {
-                    return settle(writer, &m["id"], "TAB_CLOSED", None).ok();
+                    return settle(writer, &call, "TAB_CLOSED", None).ok();
                 };
-                shared.lock().unwrap().diffs.insert(tab.clone(), (writer.clone(), m["id"].clone()));
+                shared.lock().unwrap().diffs.insert(tab.clone(), (writer.clone(), call));
                 tell(Event::Diff { tab, path: path.to_owned(), contents: contents.to_owned() });
                 return Some(()); // answered once the edit is accepted, rejected, or closed
             }
@@ -254,18 +283,17 @@ fn answer(m: &Value, writer: &Writer, shared: &Mutex<Shared>, tell: &dyn Fn(Even
             _ => {}
         }
     }
-    let result = match method {
-        "initialize" => json!({
+    let out = match method {
+        "initialize" => reply(&call, &obj! {
+            "capabilities": obj! { "tools": obj! {} },
             "protocolVersion": m["params"]["protocolVersion"],
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "nook", "version": env!("CARGO_PKG_VERSION") },
+            "serverInfo": obj! { "name": "nook", "version": env!("CARGO_PKG_VERSION") },
         }),
-        "tools/list" => json!({ "tools": [] }),
-        "tools/call" => json!({ "content": [] }),
-        _ => json!({}),
+        "tools/list" => reply(&call, &obj! { "tools": Raw("[]") }),
+        "tools/call" => reply(&call, &obj! { "content": Raw("[]") }),
+        _ => reply(&call, &obj! {}),
     };
-    let reply = json!({ "jsonrpc": "2.0", "id": m["id"], "result": result }).to_string();
-    send(&mut writer.lock().unwrap(), &reply).ok()
+    send(&mut writer.lock().unwrap(), &out).ok()
 }
 
 fn send(stream: &mut TcpStream, text: &str) -> std::io::Result<()> {
@@ -399,9 +427,10 @@ mod tests {
         let shown = Arc::new(Mutex::new(Vec::new()));
         let seen = shown.clone();
         let port = listen(7_000_001, Arc::new(move |e| if let Event::Diff { tab, .. } = e { seen.lock().unwrap().push(tab) })).unwrap();
-        let lock: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(format!("ide/{port}.lock"))).unwrap()).unwrap();
+        let lock = std::fs::read_to_string(dir.join(format!("ide/{port}.lock"))).unwrap();
+        let lock = json::parse(&lock).unwrap();
         assert_eq!(lock["transport"], "ws");
-        assert_eq!(lock["workspaceFolders"], json!([]));
+        assert_eq!(lock["workspaceFolders"], J::Arr(Vec::new()));
 
         let mut claude = TcpStream::connect(("127.0.0.1", port)).unwrap();
         let auth = lock["authToken"].as_str().unwrap();
@@ -413,17 +442,18 @@ mod tests {
         while { let mut l = String::new(); reader.read_line(&mut l).unwrap(); l != "\r\n" } {}
         send(&mut claude, r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#).unwrap();
         let (_, _, init) = frame(&mut reader).unwrap();
-        let init: Value = serde_json::from_slice(&init).unwrap();
-        assert_eq!(init["result"]["serverInfo"]["name"], "nook");
+        let version = env!("CARGO_PKG_VERSION");
+        let server = format!(r#""serverInfo":{{"name":"nook","version":"{version}"}}"#);
+        let want = format!(r#"{{"id":0,"jsonrpc":"2.0","result":{{"capabilities":{{"tools":{{}}}},"protocolVersion":"2025-11-25",{server}}}}}"#);
+        assert_eq!(String::from_utf8(init).unwrap(), want);
         send(&mut claude, r#"{"jsonrpc":"2.0","method":"ide_connected","params":{"pid":1}}"#).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         tauri::async_runtime::block_on(ide_selection(7_000_001, Some("/a/b.txt".into()), [1, 0], [2, 5], Some("beta\ngamma".into())));
         let (_, _, note) = frame(&mut reader).unwrap();
-        let note: Value = serde_json::from_slice(&note).unwrap();
-        assert_eq!(note["method"], "selection_changed");
-        assert_eq!(note["params"]["selection"]["end"], json!({ "line": 2, "character": 5 }));
-        assert_eq!(note["params"]["text"], "beta\ngamma");
+        let selection = r#""selection":{"end":{"character":5,"line":2},"start":{"character":0,"line":1}}"#;
+        let want = format!(r#"{{"jsonrpc":"2.0","method":"selection_changed","params":{{"filePath":"/a/b.txt",{selection},"text":"beta\ngamma"}}}}"#);
+        assert_eq!(String::from_utf8(note).unwrap(), want);
 
         // An edit to show waits for its answer, which carries the contents to write.
         send(&mut claude, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"openDiff","arguments":{"old_file_path":"/a/b.txt","new_file_path":"/a/b.txt","new_file_contents":"new","tab_name":"t1"}}}"#).unwrap();
@@ -431,16 +461,14 @@ mod tests {
         assert_eq!(*shown.lock().unwrap(), ["t1"]);
         tauri::async_runtime::block_on(ide_diff_answer(7_000_001, "t1".into(), "FILE_SAVED".into(), Some("new!".into())));
         let (_, _, saved) = frame(&mut reader).unwrap();
-        let saved: Value = serde_json::from_slice(&saved).unwrap();
-        assert_eq!(saved["id"], 5);
-        assert_eq!(saved["result"]["content"], json!([{ "type": "text", "text": "FILE_SAVED" }, { "type": "text", "text": "new!" }]));
+        let want = r#"{"id":5,"jsonrpc":"2.0","result":{"content":[{"text":"FILE_SAVED","type":"text"},{"text":"new!","type":"text"}]}}"#;
+        assert_eq!(saved, want.as_bytes());
 
         // One Claude's prompt answered first: closing the tab settles it as closed.
         send(&mut claude, r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"openDiff","arguments":{"new_file_path":"/a/b.txt","new_file_contents":"x","tab_name":"t2"}}}"#).unwrap();
         send(&mut claude, r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"close_tab","arguments":{"tab_name":"t2"}}}"#).unwrap();
         let (_, _, closed) = frame(&mut reader).unwrap();
-        let closed: Value = serde_json::from_slice(&closed).unwrap();
-        assert_eq!((closed["id"].clone(), closed["result"]["content"][0]["text"].clone()), (json!(6), json!("TAB_CLOSED")));
+        assert_eq!(closed, br#"{"id":6,"jsonrpc":"2.0","result":{"content":[{"text":"TAB_CLOSED","type":"text"}]}}"#);
 
         close(7_000_001);
         assert!(!dir.join(format!("ide/{port}.lock")).exists());
