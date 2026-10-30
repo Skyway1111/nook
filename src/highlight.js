@@ -20,10 +20,24 @@ export const className = id => (names[id] ??= [...FLAGS.filter(([f]) => id & f).
 
 /** Whether class number `id` marks a comment or a string, whose brackets don't pair with code's. */
 export const inText = id => (id & 31) === COMMENT || (id & 31) === STRING || (id & 31) === STRING2
+/** 1 when a bracket of `text` sits in one of its tokens `out` that is a string or a comment, else 0. */
+export function textBracket(text, out) {
+  for (let t = 0; t < out.length; t += 3) {
+    if (!inText(out[t + 2])) continue
+    for (let k = out[t]; k < out[t + 1]; k++) {
+      const c = text.charCodeAt(k)
+      if (c === 40 || c === 41 || c === 91 || c === 93 || c === 123 || c === 125) return 1
+    }
+  }
+  return 0
+}
 /** Whether class number `id` marks a heading. */
 export const inHeading = id => (id & HEADING) !== 0
+/** Whether class number `id` is Markdown's plain text, emphasized or not: no link, URL, code or markup. */
+export const plain = id => !(id & (31 | LINK))
 
 const MAX_LINE = 10_000 // characters of a line colored at most: a minified file can be one 4 MB line
+const DEEP = 64 // brackets and nested comments tracked at most, so a state stays small
 
 // States: a stack's frames joined by \0, numbered as first seen. 0 is the empty stack.
 const STATES = ['']
@@ -535,7 +549,7 @@ function code(L, s, i, end, st, base, out) {
       } else if (c === 40) kind = head === 'p' || head === 'v' ? head : head === 'T' ? 't' : js && arrowAhead(s, i, end) ? 'p' : 'e'
       else if (c === 91) kind = ctx === 'p' || pattern || (js && prev === 3 && /^(const|let|var)$/.test(lastKw)) ? 'p' : 'e'
       head = ''
-      if (track || inside) st.push(BRACKET[c] + kind)
+      if ((track || inside) && st.length < DEEP) st.push(BRACKET[c] + kind)
       if (!(c === 91 && s[i] === ']')) typed = false
       depth++
       prev = 0
@@ -806,7 +820,7 @@ function frame(L, P, s, i, end, st, base, out, top) {
     const close = top.slice(1)
     let k = i
     while (k < end) {
-      if (L.nest && s.startsWith(P.open, k)) { st.push(top); k += P.open.length; continue }
+      if (L.nest && s.startsWith(P.open, k)) { if (st.length < DEEP) st.push(top); k += P.open.length; continue }
       if (s.startsWith(close, k)) {
         st.pop()
         k += close.length
@@ -1717,9 +1731,7 @@ function yaml(L, s, i, end, st, base, out) {
       key = false
       continue
     }
-    let ve = e
-    while (ve > i && isSpace(s.charCodeAt(ve - 1))) ve--
-    i = e
+    i = Math.max(e, i + 1) // a colon after a quoted key, an alias or a flow collection is stepped over
     key = false
   }
 }

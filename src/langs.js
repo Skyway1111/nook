@@ -113,9 +113,6 @@ const SH_KW = `
   if then else elif fi case esac for select while until do done in function time coproc return exit break continue local
   export readonly declare typeset unset shift source alias set eval exec trap
 `
-const SH_BUILTIN = `
-  echo printf read cd pwd test true false kill wait cat ls grep sed awk find mkdir rm cp mv chmod chown touch
-`
 const PS_KW = `
   begin break catch class continue data define do dynamicparam else elseif end enum exit filter finally for foreach from
   function hidden if in param process return static switch throw trap try until using var while workflow parallel
@@ -177,7 +174,7 @@ export const LANGS = [
   { name: 'Plain text', lex: '', names: 'txt text plain plaintext', prose: 1 },
   { ...clike, name: 'JavaScript', names: 'js mjs cjs javascript node ecmascript', ml: '`', q: '"\'`', interp: '`j',
     re: 1, track: 1, kw: JS_KW, soft: 'async static get set of from as', bool: 'true false', defs: JS_DEFS, word: '$',
-    close: '()[]{}\'\'""``', meta: '@', dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
+    close: '()[]{}\'\'""``', meta: '@', indent: /(?:[{([]|=>)\s*$/, dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
   { ...clike, name: 'TypeScript', names: 'ts mts cts typescript', ml: '`', q: '"\'`', interp: '`j', re: 1, track: 1,
     kw: TS_KW,
     soft: `
@@ -185,17 +182,17 @@ export const LANGS = [
       keyof infer is satisfies unique asserts accessor private protected public
     `,
     bool: 'true false', types: TS_TYPES, ts: 1, defs: TS_DEFS, word: '$', close: '()[]{}\'\'""``', meta: '@',
-    dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
+    indent: /(?:[{([]|=>)\s*$/, dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
   { ...clike, name: 'JSX', names: 'jsx', ml: '`', q: '"\'`', interp: '`j', re: 1, track: 1, jsx: 1, kw: JS_KW,
     soft: 'async static get set of from as', bool: 'true false', defs: JS_DEFS, word: '$', close: '()[]{}\'\'""``',
-    meta: '@', dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
+    meta: '@', indent: /(?:[{([]|=>)\s*$/, dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
   { ...clike, name: 'TSX', names: 'tsx', ml: '`', q: '"\'`', interp: '`j', re: 1, track: 1, jsx: 1, kw: TS_KW,
     soft: `
       async static get set of from as type interface namespace module declare abstract implements readonly override
       keyof infer is satisfies unique asserts accessor private protected public
     `,
     bool: 'true false', types: TS_TYPES, ts: 1, defs: TS_DEFS, word: '$', close: '()[]{}\'\'""``', meta: '@',
-    dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
+    indent: /(?:[{([]|=>)\s*$/, dedent: /^\s*(?:case |default:|\{|\}|<\/)$/ },
   { name: 'JSON', names: 'json json5 map jsonld webmanifest', files: /^\.?(babelrc|eslintrc|prettierrc|swcrc)$/, q: '"',
     keys: 2, bool: 'true false', kw: 'null', fold: 'brace', indent: /[{[]\s*$/, dedent: BRACE },
   { name: 'JSON with comments', names: 'jsonc code-workspace', files: /^(tsconfig|jsconfig)(\..+)?\.json$/, line: '//',
@@ -334,7 +331,7 @@ export const LANGS = [
     `,
     bool: 'true false', caps: 1, defs: 'def=d defp=d defmodule=t defmacro=d defprotocol=t', prop: 1, vars: '@',
     fold: 'indent', indent: /\bdo\s*$|->\s*$/, dedent: /^\s*(?:end|else|after|rescue|catch)$/ },
-  { name: 'Erlang', names: 'erl hrl', line: '%', q: '"',
+  { name: 'Erlang', names: 'erl hrl erlang', line: '%', q: '"',
     kw: `
       after and andalso band begin bnot bor bsl bsr bxor case catch cond div end fun if let not of or orelse receive rem
       try when xor
@@ -388,7 +385,7 @@ export const LANGS = [
     `,
     bool: 'true false', defs: 'proc=d func=d method=d iterator=d template=d macro=d type=t', fold: 'indent',
     indent: /[:=]\s*$/ },
-  { name: 'Pascal', names: 'pas pp dpr lpr', line: '//', block: '(* *)', rq: '\'', ci: 1,
+  { name: 'Pascal', names: 'pas pp dpr lpr pascal delphi', line: '//', block: '(* *)', rq: '\'', ci: 1,
     kw: `
       and array as asm begin case class const constructor destructor div do downto else end except exports file
       finalization finally for function goto if implementation in inherited initialization inline interface is label
@@ -396,14 +393,14 @@ export const LANGS = [
       shr string then threadvar to try type unit until uses var while with xor
     `,
     bool: 'true false', defs: 'function=d procedure=d', fold: 'indent' },
-  { name: 'Fortran', names: 'f f90 f95 f03 f08 for f77', line: '!', q: '"\'', ci: 1,
+  { name: 'Fortran', names: 'f f90 f95 f03 f08 for f77 fortran', line: '!', q: '"\'', ci: 1,
     kw: `
       program end subroutine function module use implicit none integer real double precision complex logical character
       parameter dimension allocatable intent in out inout if then else elseif endif do enddo while call return stop
       contains type select case default print write read open close allocate deallocate
     `,
     bool: '.true. .false.', fold: 'indent' },
-  { name: 'Visual Basic', names: 'vb vbs bas cls frm vba vbscript', line: '\' rem', q: '"', ci: 1,
+  { name: 'Visual Basic', names: 'vb vbs bas frm vba vbscript', line: '\' rem', q: '"', ci: 1,
     kw: `
       addhandler addressof alias and andalso as boolean byref byte byval call case catch cbool cbyte cchar cdate cdbl
       cdec char cint class clng cobj const continue csbyte cshort csng cstr ctype cuint culng cushort date decimal
@@ -446,7 +443,7 @@ export const LANGS = [
     `,
     bool: 'true false', types: 'address bool string bytes uint int uint256 int256 uint8 bytes32',
     defs: 'contract=t interface=t library=t function=d modifier=d event=d struct=t enum=t' },
-  { name: 'Verilog', names: 'v sv svh vh', ...clike, pp: 1,
+  { name: 'Verilog', names: 'v sv svh vh verilog systemverilog', ...clike, pp: 1,
     kw: `
       module endmodule input output inout wire reg logic always always_ff always_comb assign begin end if else case
       endcase for while parameter localparam integer function endfunction task endtask initial posedge negedge generate
@@ -462,7 +459,7 @@ export const LANGS = [
   { name: 'Assembly', names: 'asm s nasm', line: '; #', q: '"\'', fold: 'indent' },
   { name: 'AutoHotkey', names: 'ahk', line: ';', block: '/* */', q: '"', ci: 1,
     kw: 'if else loop while return break continue global local static class extends new', fold: 'brace' },
-  { name: 'LaTeX', lex: 'tex', names: 'tex latex ltx sty cls bib', line: '%', prose: 1, fold: 'indent' },
+  { name: 'LaTeX', lex: 'tex', names: 'tex latex ltx sty cls bib', line: '%', fold: 'indent' },
   { name: 'Gitignore', names: 'gitignore dockerignore npmignore eslintignore prettierignore gitattributes hgignore',
     files: /^\.(gitignore|dockerignore|npmignore|eslintignore|prettierignore|gitattributes)$/, line: '#' },
 ]
