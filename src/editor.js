@@ -53,7 +53,9 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   const rowsBox = el('div', { className: 'cm-rows' })
   const selLayer = el('div', { className: 'cm-selectionLayer' })
   const curLayer = el('div', { className: 'cm-cursorLayer' })
-  const probe = el('span', { className: 'cm-probe', textContent: 'x'.repeat(32) })
+  const probe = el('div', { className: 'cm-probe' })
+  const probeText = el('span', { textContent: 'x'.repeat(32) })
+  probe.append(probeText)
   const ta = el('textarea', { className: 'cm-input', spellcheck: false, autocomplete: 'off', tabIndex: 0 })
   ta.setAttribute('autocorrect', 'off')
   ta.setAttribute('autocapitalize', 'off')
@@ -65,14 +67,15 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   dom.classList.toggle('cm-lineWrapping', wrap)
 
   // ---- Metrics, measured while the editor shows; a hidden one is never measured
-  let lh = 21, cw = 8, padTop = 16, padBottom = 24, padLeft = 6, padRight = 2, lineLeft = 0, textWidth = 600
+  let lh = 21, cw = 8, th = 16, padTop = 16, padBottom = 24, padLeft = 6, padRight = 2, lineLeft = 0, textWidth = 600
   let metrics = true // measure again before the next draw
   let leftDirty = true // the gutters changed width
   function measure() {
-    const r = probe.getBoundingClientRect()
+    const r = probe.getBoundingClientRect(), t = probeText.getBoundingClientRect()
     if (!r.height) return false
     lh = r.height
-    cw = r.width / 32
+    cw = t.width / 32
+    th = t.height
     const cs = getComputedStyle(content)
     padTop = parseFloat(cs.paddingTop)
     padBottom = parseFloat(cs.paddingBottom)
@@ -197,10 +200,10 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   let closed = [] // offsets of closers closeBrackets typed, which typing over skips
 
   /** Applies a change: `changes` (a change list), then `sel` ({ ranges, main }), as user action `kind`. */
-  function dispatch({ changes, sel, kind = 'other', scroll = true, history = true, assoc = -1 }) {
+  function dispatch({ changes, sel, kind = 'other', scroll = true, history = true, assoc = -1, clean: c, done = false }) {
     const before = snapshot()
     const had = ranges
-    let docChanged = false
+    let docChanged = done
     if (changes?.length) {
       const { inverse, edits } = doc.apply(changes)
       for (const e of edits) follow(e)
@@ -223,9 +226,10 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     const moved = ranges !== had && !same(had, ranges)
     if (moved && !docChanged && history && kind !== 'undo') recordSel(before, kind)
     if (scroll && (docChanged || moved)) want = { pos: ranges[main].head }
+    if (c) markClean()
     dirty()
     if (docChanged) changed?.()
-    if (moved || docChanged) {
+    if (moved) {
       if (!docChanged) complete.moved()
       picked?.()
     }
@@ -324,8 +328,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     version++
     onto.push({ inv: back, sel: now, sels: [], touched: [] })
     hist.sealed = true
-    dispatch({ sel: ev.sel ?? mapped(now, ev.inv), kind: 'undo', history: false })
-    changed?.()
+    dispatch({ sel: ev.sel ?? mapped(now, ev.inv), kind: 'undo', history: false, done: true })
     return true
   }
   const mapped = (s, invs) => ({ ranges: s.ranges.map(r => sel1(invs.reduce((p, c) => mapPos(p, c), r.anchor), invs.reduce((p, c) => mapPos(p, c), r.head))), main: s.main })
@@ -677,7 +680,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     const sels = []
     const cur = []
     const lo = doc.start(first), hi = doc.start(Math.min(last, doc.count - 1)) + doc.lines[Math.min(last, doc.count - 1)].length
-    find.matches(lo, hi, (a, b, selected) => rects(a, b, selected ? 'cm-searchMatch cm-searchMatch-selected' : 'cm-searchMatch', sels))
+    find.matches(lo, hi, (a, b, selected) => rects(a, b, selected ? 'cm-searchMatch cm-searchMatch-selected' : 'cm-searchMatch', sels, true))
     selectionMatches(lo, hi, sels)
     brackets(sels)
     for (const r of ranges) if (r.anchor !== r.head) rects(from(r), to(r), 'cm-selectionBackground', sels)
@@ -685,11 +688,11 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       const i = doc.lineOf(r.head)
       if (!rows.has(i)) continue
       const c = coords(r.head)
-      cur.push([c.x, c.y, 0, c.h, k === main ? 'cm-cursor cm-cursor-primary' : 'cm-cursor'])
+      cur.push([c.x, c.y + (lh - th) / 2, 0, th, k === main ? 'cm-cursor cm-cursor-primary' : 'cm-cursor'])
     }
     if (drop_ != null && rows.has(doc.lineOf(drop_))) {
       const c = coords(drop_)
-      cur.push([c.x, c.y, 0, c.h, 'cm-dropCursor'])
+      cur.push([c.x, c.y + (lh - th) / 2, 0, th, 'cm-dropCursor'])
     }
     selKey = put(selLayer, sels, selKey)
     const k = put(curLayer, cur, curKey)
@@ -699,8 +702,10 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     }
     placeInput()
   }
-  /** Boxes over characters a to b: one per row, those that run past a line's end reaching the right edge. */
-  function rects(a, b, cls, list) {
+  /** Boxes over characters a to b: one per row, those that run past a line's end reaching the right edge. An
+   * `inline` box is as tall as the text, as a highlight on the text itself would be; else the whole row. */
+  function rects(a, b, cls, list, inline) {
+    const dy = inline ? (lh - th) / 2 : 0, h = inline ? th : lh
     const la = Math.max(doc.lineOf(a), first), lb = Math.min(doc.lineOf(b), last)
     for (let i = la; i <= lb; i++) {
       const r = rows.get(i)
@@ -712,14 +717,14 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       if (!wrap && r.simple) {
         const x1 = lineLeft + column(text, f) * cw
         const x2 = past ? 1e6 : lineLeft + column(text, t) * cw
-        if (x2 > x1) list.push([x1, y, x2 - x1, lh, cls])
+        if (x2 > x1) list.push([x1, y + dy, x2 - x1, h, cls])
         continue
       }
       const c = contentBox()
       const rs = t > f ? [...domRects(r, f, t)] : []
       const line = r.line.getBoundingClientRect()
       if (!rs.length) {
-        if (past) { const p = coords(start + f); list.push([p.x, p.y, 1e6, lh, cls]) }
+        if (past) { const p = coords(start + f); list.push([p.x, p.y + dy, 1e6, h, cls]) }
         continue
       }
       // one box per visual row
@@ -733,7 +738,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       byRow.forEach((q, n) => {
         const left = n ? line.left + padLeft : q.left
         const right = n < byRow.length - 1 || past ? line.right + 1e6 : q.right
-        list.push([left - c.left, q.top - c.top + (q.h - lh) / 2, right - left, lh, cls])
+        list.push([left - c.left, q.top - c.top + (q.h - lh) / 2 + dy, right - left, h, cls])
       })
     }
   }
@@ -764,15 +769,15 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
         if (found.length > 100) return
       }
     }
-    for (const p of found) rects(p, p + q.length, 'cm-selectionMatch', list)
+    for (const p of found) rects(p, p + q.length, 'cm-selectionMatch', list, true)
   }
   function brackets(list) {
     for (const r of ranges) {
       if (r.anchor !== r.head) continue
       const m = cursor.bracket(view, r.head)
       if (!m) continue
-      rects(m.at, m.at + 1, m.to == null ? 'cm-nonmatchingBracket' : 'cm-matchingBracket', list)
-      if (m.to != null) rects(m.to, m.to + 1, 'cm-matchingBracket', list)
+      rects(m.at, m.at + 1, m.to == null ? 'cm-nonmatchingBracket' : 'cm-matchingBracket', list, true)
+      if (m.to != null) rects(m.to, m.to + 1, 'cm-matchingBracket', list, true)
     }
   }
   function placeInput() {
@@ -1136,21 +1141,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     replace(a, b, insert, { clean: c } = {}) {
       insert = split(insert).join('\n')
       if (c) hist.sealed = true
-      if (a !== b || insert) {
-        const changes = [{ from: a, to: b, insert }]
-        const { inverse, edits } = doc.apply(changes)
-        for (const e of edits) follow(e)
-        version++
-        closed = []
-        record(inverse, changes, 'other', snapshot())
-        const s = { ranges: ranges.map(r => sel1(mapPos(r.anchor, changes), mapPos(r.head, changes))), main }
-        if (c) markClean()
-        dispatch({ sel: s, kind: 'undo', history: false, scroll: false })
-        changed?.()
-      } else if (c) {
-        markClean()
-        changed?.()
-      }
+      dispatch({ changes: a !== b || insert ? [{ from: a, to: b, insert }] : null, kind: 'other', scroll: false, clean: c, done: c })
     },
     /** Takes the text as it is now for the text as saved. */
     markClean,

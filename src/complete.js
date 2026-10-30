@@ -87,7 +87,7 @@ export function startComplete(v) {
     const items = []
     for (const label of list.all) {
       const r = rank(label, q)
-      if (r && label !== q) items.push({ label, score: r[0], hits: r[1] })
+      if (r) items.push({ label, score: r[0], hits: r[1] })
     }
     if (!items.length) return close()
     items.sort((x, y) => y.score - x.score || (x.label < y.label ? -1 : x.label > y.label ? 1 : 0))

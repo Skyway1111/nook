@@ -497,6 +497,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 :is(.knob .hue, .strength)::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--line); }
 #settings .css-box { position: relative; height: clamp(220px, 42vh, 520px); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--term-bg); }
 #settings-css .cm-content { padding: 10px 0 16px; }
+#settings-css .cm-gutterElement.cm-lineNumbers { padding: 0 10px 0 12px; min-width: calc(var(--digits, 1) * 1ch + 22px); }
 #settings summary { color: var(--ink-2); }
 #settings summary:hover { color: var(--ink-1); }
 #settings pre {
@@ -607,8 +608,8 @@ svg.defs { position: absolute; width: 0; height: 0; }
   opacity: 0; white-space: pre; font: var(--term-font-size)/1.5 var(--font-term); pointer-events: none;
 }
 .cm-editor .cm-gutterElement { flex: none; box-sizing: border-box; color: var(--ink-3); cursor: default; }
-.cm-editor .cm-gutterElement.cm-lineNumbers { min-width: max(20px, calc(var(--digits, 1) * 1ch + 8px)); padding: 0 3px 0 5px; text-align: right; white-space: nowrap; }
-.cm-editor .cm-gutterElement.cm-foldGutter { width: .7em; cursor: pointer; text-align: center; }
+.cm-editor .cm-gutterElement.cm-lineNumbers { min-width: calc(var(--digits, 1) * 1ch + 32px); padding: 0 8px 0 24px; text-align: right; white-space: nowrap; }
+.cm-editor .cm-gutterElement.cm-foldGutter { width: calc(.7em + 12px); padding: 0 12px 0 0; cursor: pointer; text-align: center; }
 .cm-editor .fold { font-size: .7em; color: var(--ink-3); opacity: 0; transition: opacity .15s; }
 .cm-editor.cm-gutterHover .fold, .cm-editor .fold.shut { opacity: 1; }
 .cm-editor .cm-foldGutter:hover > .fold { color: var(--accent); }
@@ -618,7 +619,7 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .cm-editor .cm-selectionLayer > div, .cm-editor .cm-cursorLayer > div { position: absolute; }
 .cm-editor .cm-cursorLayer { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; display: none; }
 .cm-editor.cm-focused .cm-cursorLayer { display: block; animation: cm-blink 1.2s steps(1) infinite; }
-.cm-editor .cm-cursor, .cm-editor .cm-dropCursor { margin-left: -1px; border-left: 2px solid var(--cursor); }
+.cm-editor .cm-cursor, .cm-editor .cm-dropCursor { margin-left: -.6px; border-left: 2px solid var(--cursor); }
 .cm-editor .cm-dropCursor { display: block; }
 @keyframes cm-blink { 50% { opacity: 0; } }
 @keyframes cm-blink2 { 50% { opacity: 0; } }
@@ -636,11 +637,11 @@ svg.defs { position: absolute; width: 0; height: 0; }
 .cm-editor .cm-status .fill { flex: 1; }
 .cm-editor .cm-status button { padding: 0; color: inherit; background: none; }
 .cm-editor .cm-status button:hover { color: var(--accent); }
-.cm-editor .cm-search { position: relative; padding: 2px 6px 4px; font-size: .8rem; }
+.cm-editor .cm-search { position: relative; padding: 2px 6px 4px; }
 .cm-editor .cm-search + .cm-status { border-top: 1px solid var(--line); }
 .cm-editor .cm-search :is(input, button, label) { margin: .2em .6em .2em 0; vertical-align: middle; }
 .cm-editor .cm-search input[type=checkbox] { margin-right: .2em; }
-.cm-editor .cm-search label { white-space: pre; color: var(--ink-2); }
+.cm-editor .cm-search label { font-size: 80%; white-space: pre; }
 .cm-editor .cm-search [name=close] { position: absolute; top: 0; right: 4px; padding: 0; margin: 0; border: 0; background: inherit; color: var(--ink-2); font: inherit; font-size: 1rem; cursor: pointer; }
 .cm-editor :is(.cm-textfield, .cm-button) { font: inherit; padding: 2px 8px; color: var(--ink-1); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; }
 .cm-editor .cm-button { cursor: pointer; }

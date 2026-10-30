@@ -64,7 +64,9 @@ export function startFind(v) {
   function step(dir) {
     if (!re) return open(false)
     const r = v.ranges[v.main]
-    return select(find(dir > 0 ? to(r) : from(r), dir < 0)) || true
+    select(find(dir > 0 ? to(r) : from(r), dir < 0))
+    if (document.activeElement === fields.search) fields.search.select()
+    return true
   }
   function selectAll() {
     const ranges = []
