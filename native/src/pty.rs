@@ -56,8 +56,8 @@ fn writer(pty: Arc<os::Pty>, queue: Receiver<Input>) {
 }
 
 /// Closing the console ends every process attached to it, and can block meanwhile.
-fn end(session: Session) {
-    thread::spawn(move || session.pty.close());
+fn end(session: Session) -> thread::JoinHandle<()> {
+    thread::spawn(move || session.pty.close())
 }
 
 /// One pseudoconsole per Claude tab, keyed by the id `pty_spawn` returns.
@@ -73,13 +73,16 @@ impl Sessions {
         session.map(end).is_some()
     }
 
-    /// The window closed or its page reloaded: no tab is left to own a session.
-    pub fn close_all(&self) {
+    /// The window closed or its page reloaded: no tab is left to own a session. Each ends on a thread of its own,
+    /// to join before nook exits: on Windows nook serves the consoles, and their processes would outlive it.
+    pub fn close_all(&self) -> Vec<thread::JoinHandle<()>> {
         let all = std::mem::take(&mut *self.0.lock().unwrap());
-        for (id, s) in all {
-            forget(id);
-            end(s);
-        }
+        all.into_iter()
+            .map(|(id, s)| {
+                forget(id);
+                end(s)
+            })
+            .collect()
     }
 
     /// Queues `m` for session `id`'s PTY. A session that ended takes no more: its tab is closing, and the

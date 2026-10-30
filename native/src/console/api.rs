@@ -897,8 +897,8 @@ impl State {
         }
     }
 
-    /// Writes `len` bytes of message `id`'s input from `offset` on to buffer `buf`, a piece at a time: UTF-16 text
-    /// when `unicode`, else bytes in the output code page.
+    /// Writes `len` bytes of message `id`'s input from `offset` on to buffer `buf`, a piece at a time, each sent to
+    /// the terminal as it's done: UTF-16 text when `unicode`, else bytes in the output code page.
     fn write_from(&mut self, id: [u32; 2], offset: u32, len: u32, unicode: bool, buf: usize) -> bool {
         if buf != self.active_id() {
             return true; // a buffer not on screen: nothing shows
@@ -945,6 +945,7 @@ impl State {
                 mb_to_wide(self.cp_out, &data, &mut text);
             }
             self.write_text(&text);
+            self.flush();
             at += n;
         }
         self.data = data;

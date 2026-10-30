@@ -454,7 +454,10 @@ fn main() {
     if let Err(e) = host::run(cfg, commands) {
         eprintln!("{e}");
     }
-    pty::SESSIONS.close_all(); // the window is gone, and no tab is left to own a session
+    // The window is gone, and no tab is left to own a session.
+    for end in pty::SESSIONS.close_all() {
+        let _ = end.join();
+    }
 }
 
 /// Every command the page calls, and where it runs. A command that reads or writes a file or waits on a process
