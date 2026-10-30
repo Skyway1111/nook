@@ -169,7 +169,6 @@ export class Term {
 
   get cols() { return this.vt.cols }
   get rows() { return this.vt.rows }
-  get buffer() { return this.vt.buffer }
 
   emit(kind, ...args) { for (const fn of this.listeners[kind]) fn(...args) }
   onData(fn) { return on(this.listeners.data, fn) }
@@ -998,24 +997,21 @@ export class Term {
 
   mousedown = e => {
     if (this.bar.contains(e.target)) return
-    this.downLink = this.link
     this.selectDown(e)
     e.preventDefault()
     this.focus()
     if (this.vt.mouse === 'none' || e.shiftKey) return
     this.report(e, 'down')
-    this.listen(document, 'mouseup', this.reportUp)
-    this.listen(document, 'mousemove', this.reportDrag)
-    cancel(e)
+    // The press goes on outside the terminal.
+    document.addEventListener('mouseup', this.reportUp)
+    document.addEventListener('mousemove', this.reportDrag)
   }
 
   reportUp = e => {
     this.report(e, 'up')
-    if (!e.buttons) {
-      this.unlisten(document, 'mouseup', this.reportUp)
-      this.unlisten(document, 'mousemove', this.reportDrag)
-    }
-    cancel(e)
+    if (e.buttons) return
+    document.removeEventListener('mouseup', this.reportUp)
+    document.removeEventListener('mousemove', this.reportDrag)
   }
 
   reportDrag = e => { if (e.buttons) this.report(e, 'move') }
@@ -1023,9 +1019,6 @@ export class Term {
   mousemove = e => {
     if (this.vt.mouse === 'any' && !e.buttons) this.report(e, 'move')
   }
-
-  listen(target, type, fn) { target.addEventListener(type, fn) }
-  unlisten(target, type, fn) { target.removeEventListener(type, fn) }
 
   // ---- selection
 
@@ -1134,15 +1127,15 @@ export class Term {
         if (line && at[0] < line.length && line.getCell(at[0]).getWidth() === 0) at[0]++
       }
     }
-    this.listen(document, 'mousemove', this.selectMove)
-    this.listen(document, 'mouseup', this.selectUp)
+    document.addEventListener('mousemove', this.selectMove)
+    document.addEventListener('mouseup', this.selectUp)
     this.dragTimer = setInterval(this.selectScroll, 50)
     this.refresh()
   }
 
   stopSelecting() {
-    this.unlisten(document, 'mousemove', this.selectMove)
-    this.unlisten(document, 'mouseup', this.selectUp)
+    document.removeEventListener('mousemove', this.selectMove)
+    document.removeEventListener('mouseup', this.selectUp)
     clearInterval(this.dragTimer)
     this.dragTimer = 0
   }
@@ -1560,8 +1553,8 @@ export class Term {
   dispose() {
     this.disposed = true
     this.stopSelecting()
-    this.unlisten(document, 'mouseup', this.reportUp)
-    this.unlisten(document, 'mousemove', this.reportDrag)
+    document.removeEventListener('mouseup', this.reportUp)
+    document.removeEventListener('mousemove', this.reportDrag)
     clearTimeout(this.holdTimer)
     clearTimeout(this.barTimer)
     cancelAnimationFrame(this.frame)
