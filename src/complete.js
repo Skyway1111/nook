@@ -64,6 +64,7 @@ export function startComplete(v) {
   const words = new RegExp(word.source + '+', 'gu')
   const keywords = [...new Set(`${v.L.kw ?? ''} ${v.L.bool ?? ''} ${v.L.atom ?? ''} ${v.L.types ?? ''}`.split(/\s+/).filter(Boolean))]
   let list = null // { from, at, items, picked, shown, dom, ul, explicit }
+  let none = null // { from, q }: a word 3 or more long that matched nothing, so typing on in it matches nothing either
 
   /** Where the word before the main caret starts. */
   function wordStart() {
@@ -98,6 +99,7 @@ export function startComplete(v) {
     const head = v.ranges[v.main].head
     const q = v.doc.slice(a, head)
     if (!q && !explicit && !list?.explicit) return close()
+    if (!explicit && none?.from === a && q.startsWith(none.q)) return close()
     if (!list || list.from !== a) {
       list?.dom.remove()
       list = { from: a, items: null, picked: 0, shown: list?.from === a ? list.shown : Date.now(), dom: null, explicit, all: candidates(a) }
@@ -107,7 +109,10 @@ export function startComplete(v) {
       const r = rank(label, q)
       if (r) items.push({ label, score: r[0], hits: r[1] })
     }
-    if (!items.length) return close()
+    if (!items.length) {
+      if (q.length > 2) none = { from: a, q }
+      return close()
+    }
     items.sort((x, y) => y.score - x.score || (x.label < y.label ? -1 : x.label > y.label ? 1 : 0))
     list.items = items.slice(0, SHOWN)
     list.picked = 0
@@ -125,6 +130,7 @@ export function startComplete(v) {
         if (li) accept(+li.dataset.n)
       })
       v.dom.append(list.dom)
+      addEventListener('scroll', follow, true)
     }
     list.ul.replaceChildren(...list.items.map((it, n) => {
       const li = el('li', { role: 'option' })
@@ -151,7 +157,11 @@ export function startComplete(v) {
     d.style.left = `${Math.max(0, Math.min(x - 4, innerWidth - d.offsetWidth - 4))}px`
     const below = y + c.h + d.offsetHeight + 4 <= innerHeight
     d.style.top = `${below ? y + c.h + 2 : Math.max(0, y - d.offsetHeight - 2)}px`
+    const s = v.scroller.getBoundingClientRect()
+    d.style.visibility = y + c.h <= s.top || y >= s.bottom ? 'hidden' : ''
   }
+  /** The list stays under its word as the editor or a box around it scrolls, and hides while the word is out of view. */
+  const follow = e => { if (list && !list.dom.contains(e.target)) place() }
   function pick(n) {
     const lis = list.ul.children
     lis[list.picked]?.removeAttribute('aria-selected')
@@ -182,6 +192,7 @@ export function startComplete(v) {
   function close() {
     list?.dom?.remove()
     list = null
+    removeEventListener('scroll', follow, true)
   }
 
   return {
@@ -200,6 +211,7 @@ export function startComplete(v) {
     },
     /** After the caret moves without typing: the list goes unless the caret stays in its word. */
     moved() {
+      none = null
       if (!list) return
       const r = v.ranges[v.main]
       if (r.anchor !== r.head || r.head < list.from || wordStart() !== list.from) close()

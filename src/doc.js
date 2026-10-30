@@ -114,9 +114,14 @@ export function mapPos(pos, changes, assoc = -1) {
   return pos + shift
 }
 
+// The last line searched for a tab and where its first one is, so a long line is searched once per change.
+let tabText = '', tabAt = -1
+const firstTab = text => (text === tabText ? tabAt : (tabAt = (tabText = text).indexOf('\t')))
+
 /** The visual column of offset `ch` in `text`, tabs stopping every 4. */
 export function column(text, ch) {
-  if (text.indexOf('\t') < 0 || text.indexOf('\t') >= ch) return ch
+  const t = firstTab(text)
+  if (t < 0 || t >= ch) return ch
   let c = 0
   for (let k = 0; k < ch; k++) c = text.charCodeAt(k) === 9 ? c + 4 - (c % 4) : c + 1
   return c
@@ -125,7 +130,8 @@ export function column(text, ch) {
 /** The offset in `text` nearest visual column `col`. */
 export function offsetAt(text, col) {
   if (col <= 0) return 0
-  if (text.indexOf('\t') < 0) return Math.min(Math.round(col), text.length)
+  const t = firstTab(text)
+  if (t < 0 || t > col) return Math.min(Math.round(col), text.length)
   let c = 0
   for (let k = 0; k < text.length; k++) {
     const next = text.charCodeAt(k) === 9 ? c + 4 - (c % 4) : c + 1
