@@ -20,23 +20,42 @@ function cssProperties() {
   return (properties = [...all])
 }
 
-/** How well `label` matches typed `q`: a score, higher better, and the matched spans as [from, to] pairs; or null. */
+/** How well `label` matches typed `q`, scored as CodeMirror does: a score, higher better, and the matched spans as
+ * [from, to] pairs; or null. A prefix beats word starts (fooBar for fb), which beat a case-folded prefix, then a
+ * substring, then any characters in order. */
 function rank(label, q) {
-  if (!q) return [0, []]
-  if (label.startsWith(q)) return [label.length === q.length ? 100 : 0, [0, q.length]]
-  const l = label.toLowerCase(), t = q.toLowerCase()
-  if (l.startsWith(t)) return [-200, [0, q.length]]
-  const at = l.indexOf(t)
-  if (at > 0) return [-700 - at, [at, at + q.length]]
-  const hits = []
-  let k = 0
-  for (let n = 0; n < l.length && k < t.length; n++) {
-    if (l[n] !== t[k]) continue
-    if (hits.at(-1) === n) hits[hits.length - 1] = n + 1
-    else hits.push(n, n + 1)
-    k++
+  if (!q) return [-100, []]
+  if (label.length < q.length) return null
+  const fold = c => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())
+  const same = (c, k) => c === q[k] || c === fold(q[k])
+  if (q.length === 1) return label[0] === q ? [label.length === 1 ? 0 : -100, [0, 1]] : same(label[0], 0) ? [-300, [0, 1]] : null
+  const direct = label.indexOf(q)
+  if (direct === 0) return [label.length === q.length ? 0 : -100, [0, q.length]]
+  const n = q.length, lower = /[a-z]/.test(label)
+  let byWord = [], folded = false, adjacent = true, run = 0, runStart = -1, runEnd = -1, prevType = 0
+  for (let i = 0; i < Math.min(label.length, 200); i++) {
+    const c = label[i]
+    if (direct < 0 && run < n) {
+      if (same(c, run)) { if (!run) runStart = i; runEnd = i + 1; run++ } else run = 0
+    }
+    const type = /[a-z0-9]/.test(c) || (c !== c.toUpperCase()) ? 2 : c !== c.toLowerCase() ? 1 : 0
+    if (byWord.length < n && (!i || (type === 1 && lower) || (prevType === 0 && type !== 0))) {
+      if (c === q[byWord.length] || (fold(c) === q[byWord.length] && (folded = true))) byWord.push(i)
+      else if (byWord.length) adjacent = false
+    }
+    prevType = type
   }
-  return k < t.length ? null : [-1100 - hits.length, hits]
+  const spans = at => at.flatMap(k => [k, k + 1])
+  const word = (score, at) => [score + (folded ? -200 : 0), spans(at)]
+  if (byWord.length === n && byWord[0] === 0 && adjacent) return word(-100, byWord)
+  if (run === n && runStart === 0) return [-200 - label.length + (runEnd === label.length ? 0 : -100), [0, runEnd]]
+  if (direct > 0) return [-700 - label.length, [direct, direct + n]]
+  if (run === n) return [-900 - label.length, [runStart, runEnd]]
+  if (byWord.length === n) return word(-800 + (adjacent ? 0 : -1100), byWord)
+  if (n === 2) return null
+  const any = []
+  for (let i = 0, k = 0; i < Math.min(label.length, 200) && k < n; i++) if (same(label[i], k)) { any.push(i); k++ }
+  return any.length < n ? null : [(any[0] ? -700 : 0) - 1300, spans(any)]
 }
 
 export function startComplete(v) {
