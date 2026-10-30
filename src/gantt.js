@@ -50,8 +50,8 @@ export function draw(src, c) {
     else if ((m = /^title\s+(.+)$/.exec(line))) title = m[1]
     else if ((m = /^excludes\s+(.+)$/.exec(line))) excludes.push(...m[1].toLowerCase().split(/[\s,]+/).filter(Boolean))
     else if ((m = /^section\s+(.*)$/.exec(line))) sections.push(label(m[1], false, 180)), (section = sections.length - 1)
-    else if (/^(?:todayMarker|tickInterval|weekday|weekend|includes|inclusiveEndDates|topAxis|displayMode|click|vert|accTitle|accDescr)\b/.test(line)) continue
-    else if ((m = /^([^:]+?)\s*:\s*(.*)$/.exec(line))) {
+    else if (/^(?:todayMarker|tickInterval|weekday|weekend|includes|inclusiveEndDates|topAxis|displayMode|click|vert)\b/.test(line)) continue
+    else if ((m = /^([^:]*[^:\s])\s*:\s*(.*)$/.exec(line))) {
       const parts = m[2].split(',').map(s => s.trim())
       const t = { name: m[1], section, tags: new Set() }
       while (parts.length > 1 && /^(?:done|active|crit|milestone)$/.test(parts[0])) t.tags.add(parts.shift())
@@ -65,15 +65,16 @@ export function draw(src, c) {
   }
   if (!tasks.length) throw new Error('no tasks')
 
-  // Excluded days: weekends, weekday names, and dates; a task measured in time stretches over them.
-  const off = new Set(excludes.flatMap(x => (x === 'weekends' ? ['saturday', 'sunday'] : [x])))
-  const skipped = t => {
-    const d = new Date(t)
-    return off.has(DAYS[d.getUTCDay()].toLowerCase()) || off.has(new Date(t - (t % DAY)).toISOString().slice(0, 10))
-  }
+  // Excluded days, as day numbers since 1970 (a Thursday): weekends, weekday names, and dates. A task
+  // measured in time stretches over them, unless every weekday is off.
+  const weekdays = DAYS.map(d => excludes.includes(d.toLowerCase())), dates = new Set()
+  if (excludes.includes('weekends')) weekdays[0] = weekdays[6] = true
+  for (const t of excludes.map(read)) if (Number.isFinite(t)) dates.add(Math.floor(t / DAY))
+  const off = weekdays.includes(true) || dates.size > 0
+  const skipped = d => weekdays[(((d + 4) % 7) + 7) % 7] || dates.has(d)
   const stretch = (start, end) => {
-    if (!off.size || end - start > 3650 * DAY) return end
-    for (let d = start - (start % DAY); d < end; d += DAY) if (skipped(d)) end += DAY
+    if (!off || !weekdays.includes(false) || end - start > 3650 * DAY) return end
+    for (let d = Math.floor(start / DAY); d * DAY < end; d++) if (skipped(d)) end += DAY
     return end
   }
   // Each task's start and end, in passes, since `after` and `until` can name a task further down.
@@ -103,6 +104,7 @@ export function draw(src, c) {
   const shown = tasks.filter(t => t.end !== undefined && Number.isFinite(t.start))
   if (!shown.length) throw new Error('no dates')
   const t0 = Math.min(...shown.map(t => t.start)), t1 = Math.max(...shown.map(t => t.end), t0 + 36e5)
+  if (!(Math.abs(t0) <= 8.64e15 && Math.abs(t1) <= 8.64e15)) throw new Error('dates past what a Date holds')
   const span = t1 - t0, area = Math.min(960, Math.max(560, (span / DAY) * 30)), x = t => ((t - t0) / span) * area
 
   // Across: a column of section names, then the time area. Down: the title, a row a task, the axis.
@@ -110,8 +112,9 @@ export function draw(src, c) {
   const head = title ? label(title, false, left + area) : null, top = head ? head.h + 14 : 0
   const bottom = top + shown.length * ROW
   let back = '', bars = '', words = ''
-  // Ticks: the finest spacing that leaves each label room.
-  const [step, fmt] = STEPS.find(([s]) => (s > 0 ? s : -s * 30.4 * DAY) * (area / span) >= 96) ?? STEPS[STEPS.length - 1]
+  // Ticks: the finest spacing that leaves each label room; past a year, a round number of years.
+  const room = (96 * span) / area, years = room / (365.25 * DAY), p = 10 ** Math.floor(Math.log10(years))
+  const [step, fmt] = STEPS.find(([s]) => (s > 0 ? s : -s * 30.4 * DAY) >= room) ?? [-12 * p * [1, 2, 5, 10].find(f => f * p >= years), '%Y']
   const ticks = []
   if (step > 0) {
     // Days and longer align to midnight, weeks to Monday.
@@ -119,14 +122,15 @@ export function draw(src, c) {
     if (step === 7 * DAY || step === 14 * DAY) while (new Date(t).getUTCDay() !== 1) t += DAY
     for (; t <= t1; t += step) ticks.push(t)
   } else {
+    // Months since year 0, from the first whole step after t0's month (Date.UTC reads a year under 100 as 19xx).
     const d = new Date(t0)
-    for (let k = 1; ; k++) {
-      const t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + k, 1)
-      if (t > t1) break
-      if ((d.getUTCMonth() + k) % -step === 0) ticks.push(t)
+    for (let k = Math.ceil((d.getUTCFullYear() * 12 + d.getUTCMonth() + 1) / -step) * -step, t; (t = Date.UTC(2000, k - 24000, 1)) <= t1; k -= step) ticks.push(t)
+  }
+  if (off && span <= 400 * DAY) {
+    for (let d = Math.floor(t0 / DAY); d * DAY < t1; d++) {
+      if (skipped(d)) back += `<rect class="off" x="${r(left + Math.max(0, x(d * DAY)))}" y="${top}" width="${r(Math.min(x((d + 1) * DAY), area) - Math.max(0, x(d * DAY)))}" height="${shown.length * ROW}"/>`
     }
   }
-  if (off.size && span <= 400 * DAY) for (let d = t0 - (t0 % DAY); d < t1; d += DAY) if (skipped(d)) back += `<rect class="off" x="${r(left + Math.max(0, x(d)))}" y="${top}" width="${r(Math.min(x(d + DAY), area) - Math.max(0, x(d)))}" height="${shown.length * ROW}"/>`
   for (const t of ticks) back += `<path class="grid" d="M${r(left + x(t))},${top}V${bottom + 4}"/><text class="tick" x="${r(left + x(t))}" y="${bottom + 22}" text-anchor="middle">${esc(strftime(t, axis || fmt))}</text>`
   // Section bands and names, each section in its color.
   sections.forEach((s, k) => {
