@@ -1,4 +1,3 @@
-node_modules/
 dist/
 native/target/
 # Claude Code writes this beside a mod it loads, for its own types
