@@ -32,7 +32,7 @@ pub fn open_path(path: String, verb: Option<String>) {
 
 pub fn reveal(path: String) {
     use std::os::windows::process::CommandExt;
-    let _ = std::process::Command::new("explorer").raw_arg(format!("/select,\"{path}\"")).spawn();
+    let _ = crate::spawning(|| std::process::Command::new("explorer").raw_arg(format!("/select,\"{path}\"")).spawn());
 }
 
 /// One of Explorer's file operations, with its progress, conflict, and error dialogs. True when it

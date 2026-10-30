@@ -565,6 +565,106 @@ extern "system" {
 
 #[link(name = "shcore.dll", kind = "raw-dylib", modifiers = "+verbatim")]
 extern "system" {
-    pub fn CreateRandomAccessStreamOnFile(path: PCWSTR, mode: u32, iid: *const Guid, out: *mut HANDLE) -> i32;
+    pub fn CreateRandomAccessStreamOverStream(stream: HANDLE, options: u32, iid: *const Guid, out: *mut HANDLE) -> i32;
     pub fn SHCreateMemStream(init: *const u8, len: u32) -> HANDLE;
+}
+
+// The PDF worker's sandbox: its token, its job, and what it may inherit
+pub const TOKEN_ASSIGN_PRIMARY: u32 = 0x1;
+pub const TOKEN_DUPLICATE: u32 = 0x2;
+pub const TOKEN_QUERY: u32 = 0x8;
+pub const TOKEN_ADJUST_DEFAULT: u32 = 0x80;
+pub const TOKEN_ALL_ACCESS: u32 = 0xF01FF;
+pub const DISABLE_MAX_PRIVILEGE: u32 = 0x1;
+pub const HANDLE_FLAG_INHERIT: u32 = 0x1;
+pub const DETACHED_PROCESS: u32 = 0x8;
+pub const WAIT_TIMEOUT: u32 = 0x102;
+pub const STD_INPUT_HANDLE: u32 = -10i32 as u32;
+pub const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+pub const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: usize = 0x2_0002;
+pub const PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY: usize = 0x2_0007;
+pub const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x2_000D;
+pub const PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY: usize = 0x2_000E;
+pub const PROCESS_CREATION_CHILD_PROCESS_RESTRICTED: u32 = 0x1;
+pub const JOB_OBJECT_LIMIT_ACTIVE_PROCESS: u32 = 0x8;
+pub const JOB_OBJECT_LIMIT_PROCESS_MEMORY: u32 = 0x100;
+pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: u32 = 0x400;
+pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+pub const JOB_OBJECT_UILIMIT_ALL: u32 = 0x3FF;
+pub const JobObjectBasicUIRestrictions: i32 = 4;
+pub const JobObjectExtendedLimitInformation: i32 = 9;
+
+#[repr(C)]
+pub struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+    pub PerProcessUserTimeLimit: i64,
+    pub PerJobUserTimeLimit: i64,
+    pub LimitFlags: u32,
+    pub MinimumWorkingSetSize: usize,
+    pub MaximumWorkingSetSize: usize,
+    pub ActiveProcessLimit: u32,
+    pub Affinity: usize,
+    pub PriorityClass: u32,
+    pub SchedulingClass: u32,
+    pub IoInfo: [u64; 6],
+    pub ProcessMemoryLimit: usize,
+    pub JobMemoryLimit: usize,
+    pub PeakProcessMemoryUsed: usize,
+    pub PeakJobMemoryUsed: usize,
+}
+const _: () = assert!(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() == 144);
+zeroed!(JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
+
+#[link(name = "kernel32.dll", kind = "raw-dylib", modifiers = "+verbatim")]
+extern "system" {
+    pub fn GetCurrentProcess() -> HANDLE;
+    pub fn GetStdHandle(which: u32) -> HANDLE;
+    pub fn SetHandleInformation(handle: HANDLE, mask: u32, flags: u32) -> BOOL;
+    pub fn CreateJobObjectW(attributes: *const c_void, name: PCWSTR) -> HANDLE;
+    pub fn SetInformationJobObject(job: HANDLE, class: i32, info: *const c_void, len: u32) -> BOOL;
+}
+
+#[link(name = "advapi32.dll", kind = "raw-dylib", modifiers = "+verbatim")]
+extern "system" {
+    pub fn OpenProcessToken(process: HANDLE, access: u32, token: *mut HANDLE) -> BOOL;
+    pub fn CreateRestrictedToken(
+        token: HANDLE,
+        flags: u32,
+        disable_count: u32,
+        disable: *const c_void,
+        delete_count: u32,
+        delete: *const c_void,
+        restrict_count: u32,
+        restrict: *const c_void,
+        out: *mut HANDLE,
+    ) -> BOOL;
+    pub fn CreateProcessAsUserW(
+        token: HANDLE,
+        application: PCWSTR,
+        command_line: PWSTR,
+        process_attributes: *const c_void,
+        thread_attributes: *const c_void,
+        inherit: BOOL,
+        flags: u32,
+        environment: *const c_void,
+        directory: PCWSTR,
+        startup: *const STARTUPINFOEXW,
+        info: *mut PROCESS_INFORMATION,
+    ) -> BOOL;
+}
+
+#[link(name = "ntdll.dll", kind = "raw-dylib", modifiers = "+verbatim")]
+extern "system" {
+    /// An AppContainer token from `token`, with no profile behind it: what CreateProcess's own AppContainer path
+    /// would look up in the registry.
+    pub fn NtCreateLowBoxToken(
+        out: *mut HANDLE,
+        token: HANDLE,
+        access: u32,
+        attributes: *const c_void,
+        package: *const u8,
+        capability_count: u32,
+        capabilities: *const c_void,
+        handle_count: u32,
+        handles: *const HANDLE,
+    ) -> i32;
 }

@@ -18,6 +18,7 @@ mod pdf;
 mod priority;
 mod pty;
 mod replace;
+mod sandbox;
 mod search;
 mod settings;
 #[cfg_attr(not(windows), path = "shell_unix.rs")]
@@ -51,6 +52,14 @@ pub fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
+/// Starts processes one at a time. On Windows, std's Command lets a child inherit every inheritable handle nook
+/// holds, and a PDF worker's pipe ends are inheritable while it starts (sandbox.rs).
+pub fn spawning<T>(start: impl FnOnce() -> T) -> T {
+    static ONE: Mutex<()> = Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    start()
+}
+
 /// Runs a console tool, feeding it `input`, with no console window: without the flag, the release
 /// build flashes one for each. Ok is its output; Err is what it said went wrong.
 pub fn run(cmd: &mut Command, input: Option<&str>) -> Result<String, String> {
@@ -60,11 +69,7 @@ pub fn run(cmd: &mut Command, input: Option<&str>) -> Result<String, String> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = cmd
-        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let mut child = spawning(|| cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn())
         .map_err(|e| format!("can't run {}: {e}", Path::new(cmd.get_program()).file_stem().unwrap_or_default().to_string_lossy()))?;
     if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
         let _ = stdin.write_all(input.as_bytes()); // a tool that quit early says why below
@@ -419,6 +424,10 @@ fn bench(event: String, ms: Option<f64>) {
 }
 
 fn main() {
+    // Started by nook as its sandboxed PDF worker: nothing else of nook runs.
+    if std::env::var_os(sandbox::WORKER).is_some() {
+        return sandbox::serve(pdf::answer);
+    }
     STARTED.get_or_init(Instant::now);
     for key in INHERITED_SESSION_MARKERS {
         std::env::remove_var(key); // before any thread exists
