@@ -16,7 +16,7 @@ const CELL = [7, 14] // a cell's size in px while the terminal has none
 const VT340 = [0, 0, 0, 20, 20, 80, 80, 13, 13, 20, 80, 20, 80, 20, 80, 20, 80, 80, 80, 80, 20, 53, 53, 53,
   26, 26, 26, 33, 33, 60, 60, 26, 26, 33, 60, 33, 60, 33, 60, 33, 60, 60, 60, 60, 33, 80, 80, 80]
 const pack = (r, g, b) => (r | g << 8 | b << 16 | 0xff000000) >>> 0 // RGBA bytes as one little-endian word
-const pct = v => Math.round(Math.min(v, 100) * 2.55)
+const pct = v => Math.round((Math.min(v, 100) / 100) * 255)
 function defaults() {
   const p = new Uint32Array(256)
   for (let i = 0; i < 16; i++) p[i] = pack(pct(VT340[i * 3]), pct(VT340[i * 3 + 1]), pct(VT340[i * 3 + 2]))
@@ -47,13 +47,15 @@ class Sixel {
   constructor(palette, fill) {
     this.palette = palette
     this.fill = fill
-    this.color = palette[0]
+    this.color = 0xffffffff // white until a color is picked
     this.x = 0
     this.band = 0
-    this.width = 0 // the widest a row reached
+    this.width = 0 // the furthest a sixel reached
+    this.height = 0 // below the lowest pixel set
     this.bands = [] // Uint32Array(cap * 6) each, 0 where unset
     this.cap = 0
-    this.rw = 0 // the raster attributes' size, which the picture is cut to
+    this.raster = false // whether raster attributes gave the picture's size, which cuts what's past it
+    this.rw = 0
     this.rh = 0
     this.state = 0 // 0 data, or the command whose numbers are coming: # ! "
     this.params = []
@@ -84,9 +86,9 @@ class Sixel {
         p.length = 0
         p.push(0)
       } else if (c === 36) this.x = 0 // $: back to the band's start
-      else if (c === 45) { // -: the next band
+      else if (c === 45) { // -: the next band, and the picture is at least as tall as this one
         this.x = 0
-        this.band++
+        if (++this.band * 6 > this.height) this.height = this.band * 6
       }
     }
   }
@@ -98,10 +100,12 @@ class Sixel {
       const n = p[0] % 256
       if (p.length >= 5 && (p[1] === 1 || p[1] === 2)) this.palette[n] = p[1] === 1 ? hls(p[2], p[3], p[4]) : pack(pct(p[2]), pct(p[3]), pct(p[4]))
       this.color = this.palette[n]
-    } else if (!this.bands.length && p[2] > 0 && p[3] > 0 && p[2] * p[3] <= MAX_PIXELS) {
+    } else if (!this.bands.length && p.length >= 4) {
+      this.raster = true
       this.rw = p[2]
       this.rh = p[3]
-      this.grow(p[2])
+      if (p[2] * p[3] > MAX_PIXELS) this.failed = true
+      else if (p[2]) this.grow(p[2])
     }
     this.state = 0
   }
@@ -109,17 +113,19 @@ class Sixel {
   /** One sixel, `repeat` times: bit n paints row n of the band. */
   six(bits) {
     const x0 = this.x
-    const x1 = this.rw ? Math.min(x0 + this.repeat, this.rw) : x0 + this.repeat
+    const x1 = this.raster ? Math.min(x0 + this.repeat, this.rw) : x0 + this.repeat
     this.x += this.repeat
     this.repeat = 1
-    if (!bits || x1 <= x0 || this.failed || (this.rh && this.band * 6 >= this.rh)) return
+    if (x1 > this.width) this.width = x1
+    if (!bits || x1 <= x0 || this.failed || (this.raster && this.band * 6 >= this.rh)) return
     if (x1 > this.cap && !this.grow(x1)) return
     let band = this.bands[this.band]
     if (!band) {
       if (this.cap * (this.band + 1) * 6 > MAX_PIXELS) return void (this.failed = true)
       band = this.bands[this.band] = new Uint32Array(this.cap * 6)
     }
-    if (x1 > this.width) this.width = x1
+    const bottom = this.band * 6 + 32 - Math.clz32(bits)
+    if (bottom > this.height) this.height = bottom
     for (let r = 0; r < 6; r++) if (bits & 1 << r) band.fill(this.color, r * this.cap + x0, r * this.cap + x1)
   }
 
@@ -142,9 +148,9 @@ class Sixel {
   end() {
     if (this.state) this.command()
     const last = this.bands.length
-    const w = this.rw || this.width
-    const h = this.rh || last * 6
-    if (this.failed || !w || !h) return { height: this.failed ? 0 : h }
+    const w = this.raster ? this.rw : this.width
+    const h = this.raster ? this.rh : this.height
+    if (this.failed || w * h > MAX_PIXELS || !w || !h) return { height: this.failed ? 0 : h }
     const out = new Uint32Array(w * h)
     if (this.fill) out.fill(this.fill)
     for (let b = 0; b < last; b++) {

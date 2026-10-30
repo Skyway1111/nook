@@ -7,16 +7,16 @@ import { wcwidth } from './wcwidth.js'
 // right half of a wide character width 0. fg: color | color mode | flags. bg: color | color mode | flags.
 export const CP = 0x1fffff
 export const COMBINED = 0x200000 // the cell's text is in its line's `comb`: a base and the marks joined to it
-export const CONTENT = 0x3fffff
+const CONTENT = 0x3fffff
 const W1 = 1 << 22 // an empty cell
 export const CM = 0x3000000
-export const P16 = 0x1000000
-export const P256 = 0x2000000
+const P16 = 0x1000000
+const P256 = 0x2000000
 export const RGB = 0x3000000
 export const INVERSE = 0x4000000 // fg
 export const BOLD = 0x8000000 // fg
 export const UNDERLINE = 0x10000000 // fg
-export const BLINK = 0x20000000 // fg
+const BLINK = 0x20000000 // fg
 export const INVISIBLE = 0x40000000 // fg
 export const STRIKE = 0x80000000 // fg
 export const ITALIC = 0x4000000 // bg
@@ -220,31 +220,18 @@ export class Cell {
   comb = ''
   ext = NO_EXT
   getChars() { return this.content & COMBINED ? this.comb : this.content & CP ? String.fromCodePoint(this.content & CP) : '' }
-  getCode() { return this.content & COMBINED ? this.comb.charCodeAt(this.comb.length - 1) : this.content & CP }
   getWidth() { return this.content >>> 22 }
-  isCombined() { return this.content & COMBINED }
   isBold() { return this.fg & BOLD }
   isInverse() { return this.fg & INVERSE }
-  isBlink() { return this.fg & BLINK }
-  isInvisible() { return this.fg & INVISIBLE }
-  isStrikethrough() { return this.fg & STRIKE }
   isItalic() { return this.bg & ITALIC }
   isDim() { return this.bg & DIM }
-  isOverline() { return this.bg & OVERLINE }
   isUnderline() { return this.bg & EXT && this.ext.style ? 1 : this.fg & UNDERLINE }
-  getUnderlineStyle() { return this.fg & UNDERLINE ? (this.bg & EXT ? this.ext.style : 1) : 0 }
-  /** The underline's color word, or the foreground's when it has none. */
-  getUnderlineColorWord() { return this.bg & EXT && this.ext.ulc ? this.ext.ulc : this.fg & COLOR }
   /** The OSC 8 link id, 0 for none. */
   getLink() { return this.bg & EXT ? this.ext.url : 0 }
-  getFgColorMode() { return this.fg & CM }
-  getBgColorMode() { return this.bg & CM }
   isFgDefault() { return (this.fg & CM) === 0 }
   isBgDefault() { return (this.bg & CM) === 0 }
   isFgRGB() { return (this.fg & CM) === RGB }
   isBgRGB() { return (this.bg & CM) === RGB }
-  isFgPalette() { const m = this.fg & CM; return m === P16 || m === P256 }
-  isBgPalette() { const m = this.bg & CM; return m === P16 || m === P256 }
   getFgColor() { const m = this.fg & CM; return m === RGB ? this.fg & 0xffffff : m ? this.fg & 0xff : -1 }
   getBgColor() { const m = this.bg & CM; return m === RGB ? this.bg & 0xffffff : m ? this.bg & 0xff : -1 }
   isAttributeDefault() { return this.fg === 0 && this.bg === 0 }

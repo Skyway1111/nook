@@ -1081,14 +1081,6 @@ export class Term {
     return out.map(l => l.replace(/\xa0/g, ' ')).join(WINDOWS ? '\r\n' : '\n')
   }
 
-  /** The selection in buffer lines, end exclusive, as xterm's getSelectionPosition. */
-  getSelectionPosition() {
-    const s = this.selRange()
-    if (!s) return undefined
-    const t = this.vt.buffer.trimmed
-    return { start: { x: s[0], y: s[1] - t }, end: { x: s[2], y: s[3] - t } }
-  }
-
   /** Selects `len` cells from cell `col` of buffer line `row`, running on across rows. */
   select(col, row, len) {
     this.stopSelecting()
