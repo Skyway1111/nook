@@ -4,8 +4,8 @@
 // or mirror the result.
 
 /** The values minimizing Σ weight × (rank[to] - rank[from]) with each edge at least `len` long, by network
- * simplex, for an acyclic graph whose edges join a pair of nodes at most once. Lengths are integers, so
- * slack compares exactly. A disconnected part keeps its longest-path start. */
+ * simplex with graphviz's incremental updates, for an acyclic graph whose edges join a pair of nodes at most
+ * once. Lengths are integers, so slack compares exactly. A disconnected part keeps its longest-path start. */
 function simplex(n, from, to, len, weight) {
   const m = from.length, rank = new Float64Array(n)
   const start = new Int32Array(n + 1)
@@ -15,23 +15,33 @@ function simplex(n, from, to, len, weight) {
   for (let e = 0; e < m; e++) adj[fill[from[e]]++] = e, adj[fill[to[e]]++] = e
   const slack = e => rank[to[e]] - rank[from[e]] - len[e]
   // Longest path from the sources, in topological order: a feasible start.
-  const indeg = new Int32Array(n), queue = new Int32Array(n)
+  const indeg = new Int32Array(n), stack = new Int32Array(n)
   for (let e = 0; e < m; e++) indeg[to[e]]++
   let qn = 0
-  for (let v = 0; v < n; v++) if (!indeg[v]) queue[qn++] = v
+  for (let v = 0; v < n; v++) if (!indeg[v]) stack[qn++] = v
   for (let qi = 0; qi < qn; qi++) {
-    const u = queue[qi]
+    const u = stack[qi]
     for (let i = start[u]; i < start[u + 1]; i++) {
       const e = adj[i], v = to[e]
       if (from[e] !== u) continue
       if (rank[u] + len[e] > rank[v]) rank[v] = rank[u] + len[e]
-      if (--indeg[v] === 0) queue[qn++] = v
+      if (--indeg[v] === 0) stack[qn++] = v
     }
   }
+  // Each source moves to just short of its nearest successor, so one of its edges starts tight.
+  const fed = new Uint8Array(n)
+  for (let e = 0; e < m; e++) fed[to[e]] = 1
+  for (let v = 0; v < n; v++) {
+    if (fed[v] || start[v] === start[v + 1]) continue
+    let least = Infinity
+    for (let i = start[v]; i < start[v + 1]; i++) least = Math.min(least, rank[to[adj[i]]] - len[adj[i]])
+    rank[v] = least
+  }
   // A tight spanning tree, grown from node 0, shifting the tree onto the nearest node outside it.
-  const inTree = new Uint8Array(n), tree = new Uint8Array(m), stack = new Int32Array(n)
-  let size = 1
+  const inTree = new Uint8Array(n), tree = new Uint8Array(m), list = new Int32Array(Math.max(1, n - 1)), at = new Int32Array(m).fill(-1)
+  let size = 1, edges = 0
   inTree[0] = 1
+  const join = e => { tree[e] = 1; at[e] = edges; list[edges++] = e }
   const grow = s => {
     let sp = 0
     stack[sp++] = s
@@ -39,7 +49,7 @@ function simplex(n, from, to, len, weight) {
       const x = stack[--sp]
       for (let i = start[x]; i < start[x + 1]; i++) {
         const e = adj[i], y = from[e] === x ? to[e] : from[e]
-        if (!inTree[y] && slack(e) === 0) inTree[y] = tree[e] = 1, size++, (stack[sp++] = y)
+        if (!inTree[y] && slack(e) === 0) inTree[y] = 1, join(e), size++, (stack[sp++] = y)
       }
     }
   }
@@ -47,88 +57,124 @@ function simplex(n, from, to, len, weight) {
   while (size < n) {
     let best = -1, least = Infinity
     for (let e = 0; e < m; e++) if (inTree[from[e]] !== inTree[to[e]] && slack(e) < least) least = slack(e), (best = e)
-    if (best < 0) break
+    if (best < 0) return rank
     const delta = inTree[from[best]] ? least : -least
     for (let v = 0; v < n; v++) if (inTree[v]) rank[v] += delta
     const y = inTree[from[best]] ? to[best] : from[best]
-    inTree[y] = tree[best] = 1
+    inTree[y] = 1
+    join(best)
     size++
     grow(y)
   }
-  if (size < n) return rank
-  // Postorder numbers from node 0: x's subtree holds the nodes whose lim is in low[x]..lim[x].
-  const low = new Int32Array(n), lim = new Int32Array(n), up = new Int32Array(n), at = new Int32Array(n)
-  const pre = new Int32Array(n), post = new Int32Array(n), cut = new Float64Array(m)
-  const number = () => {
-    let next = 1, np = 0, nq = 0, sp = 0
-    up[0] = -1
-    stack[sp++] = 0
-    at[0] = start[0]
-    low[0] = 1
-    pre[np++] = 0
+  // Postorder numbers: x's subtree holds the nodes whose lim is in low[x]..lim[x]; up[x] is its tree edge
+  // to its parent.
+  const low = new Int32Array(n), lim = new Int32Array(n), up = new Int32Array(n), next = new Int32Array(n)
+  const post = new Int32Array(n), cut = new Float64Array(m)
+  const range = (root, parent, first) => {
+    let sp = 0, number = first, k = 0
+    up[root] = parent
+    low[root] = first
+    next[root] = start[root]
+    stack[sp++] = root
     while (sp) {
       const x = stack[sp - 1]
       let e = -1
-      while (at[x] < start[x + 1]) {
-        const f = adj[at[x]++]
+      while (next[x] < start[x + 1]) {
+        const f = adj[next[x]++]
         if (tree[f] && f !== up[x]) { e = f; break }
       }
-      if (e < 0) { lim[x] = next++; post[nq++] = x; sp--; continue }
+      if (e < 0) { lim[x] = number++; post[k++] = x; sp--; continue }
       const y = from[e] === x ? to[e] : from[e]
       up[y] = e
-      low[y] = next
-      at[y] = start[y]
+      low[y] = number
+      next[y] = start[y]
       stack[sp++] = y
-      pre[np++] = y
     }
   }
+  const inside = (x, root) => low[root] <= lim[x] && lim[x] <= lim[root]
+  range(0, -1, 1)
   // A tree edge's cut value: the weight of the edges crossing from its tail's side to its head's side, less
   // those crossing back. Children before parents, so each reuses the cut values below it.
-  const cutValues = () => {
-    for (let k = 0; k < n; k++) {
-      const child = post[k], e = up[child]
-      if (e < 0) continue
-      const tail = from[e] === child, parent = tail ? to[e] : from[e]
-      let cv = weight[e]
-      for (let i = start[child]; i < start[child + 1]; i++) {
-        const f = adj[i]
-        const out = from[f] === child, other = out ? to[f] : from[f]
-        if (other === parent) continue
-        const head = out === tail
-        cv += head ? weight[f] : -weight[f]
-        if (tree[f]) cv += head ? -cut[f] : cut[f]
-      }
-      cut[e] = cv
+  for (let k = 0; k < n; k++) {
+    const child = post[k], e = up[child]
+    if (e < 0) continue
+    const tail = from[e] === child, parent = tail ? to[e] : from[e]
+    let cv = weight[e]
+    for (let i = start[child]; i < start[child + 1]; i++) {
+      const f = adj[i], out = from[f] === child, other = out ? to[f] : from[f]
+      if (other === parent) continue
+      const head = out === tail
+      cv += head ? weight[f] : -weight[f]
+      if (tree[f]) cv += head ? -cut[f] : cut[f]
     }
+    cut[e] = cv
   }
-  number()
-  cutValues()
-  const below = (x, root) => low[root] <= lim[x] && lim[x] <= lim[root]
   let scan = 0
   for (let iter = 0, cap = 4 * n + 100; iter < cap; iter++) {
-    let leave = -1
-    for (let k = 0; k < m; k++) {
-      const e = (scan + k) % m
-      if (tree[e] && cut[e] < 0) { leave = e; break }
+    // Leave: the most negative cut value among the next few negative ones.
+    let leave = -1, found = 0
+    for (let k = 0; k < edges && found < 30; k++) {
+      const e = list[(scan + k) % edges]
+      if (cut[e] < 0) {
+        if (leave < 0 || cut[e] < cut[leave]) leave = e
+        if (++found === 1) scan = (scan + k) % edges
+      }
     }
     if (leave < 0) break
-    scan = leave + 1
-    const flip = lim[from[leave]] > lim[to[leave]], tail = flip ? to[leave] : from[leave]
-    let enter = -1, least = Infinity
-    for (let f = 0; f < m; f++) {
-      if (tree[f] || flip !== below(from[f], tail) || flip === below(to[f], tail)) continue
-      const s = slack(f)
-      if (s < least) least = s, (enter = f)
+    // Enter: the tightest edge from the leaving edge's head side to its tail side, searched from whichever
+    // side is the subtree below it.
+    const sub = lim[from[leave]] < lim[to[leave]] ? from[leave] : to[leave], out = sub === to[leave]
+    let enter = -1, least = Infinity, sp = 0
+    stack[sp++] = sub
+    while (sp) {
+      const x = stack[--sp]
+      for (let i = start[x]; i < start[x + 1]; i++) {
+        const f = adj[i]
+        if (tree[f]) {
+          const y = from[f] === x ? to[f] : from[f]
+          if (lim[y] < lim[x]) stack[sp++] = y
+        } else if (out ? from[f] === x && !inside(to[f], sub) : to[f] === x && !inside(from[f], sub)) {
+          const s = slack(f)
+          if (s < least) least = s, (enter = f)
+        }
+      }
     }
     if (enter < 0) break
+    // Shift the subtree so the entering edge is tight, fix the cut values on the cycle it closes, swap.
+    if (least > 0) {
+      const d = sub === from[leave] ? -least : least
+      sp = 0
+      stack[sp++] = sub
+      while (sp) {
+        const x = stack[--sp]
+        rank[x] += d
+        for (let i = start[x]; i < start[x + 1]; i++) {
+          const f = adj[i]
+          if (!tree[f]) continue
+          const y = from[f] === x ? to[f] : from[f]
+          if (lim[y] < lim[x]) stack[sp++] = y
+        }
+      }
+    }
+    const cv = cut[leave]
+    const climb = (v, w, dir) => {
+      while (!inside(w, v)) {
+        const e = up[v]
+        cut[e] += (v === from[e]) === dir ? cv : -cv
+        v = lim[from[e]] > lim[to[e]] ? from[e] : to[e]
+      }
+      return v
+    }
+    const lca = climb(from[enter], to[enter], true)
+    climb(to[enter], from[enter], false)
+    cut[enter] = -cv
+    cut[leave] = 0
     tree[leave] = 0
     tree[enter] = 1
-    number()
-    cutValues()
-    for (let k = 1; k < n; k++) {
-      const v = pre[k], e = up[v]
-      rank[v] = from[e] === v ? rank[to[e]] - len[e] : rank[from[e]] + len[e]
-    }
+    list[at[leave]] = enter
+    at[enter] = at[leave]
+    at[leave] = -1
+    range(lca, up[lca], low[lca])
   }
   return rank
 }
@@ -300,13 +346,18 @@ function place(g) {
   for (let v = 0; v < V; v++) least.set(find(v), Math.min(least.get(find(v)) ?? Infinity, raw[v]))
   const rank = []
   for (let v = 0; v < V; v++) rank.push(raw[v] - least.get(find(v)))
+  // Only ranks with a node, a border, or a label stay; edges just pass through the others.
+  const mids = routes.map((r, i) => (r && g.edges[i].label ? rank[r.a] + ((rank[r.b] - rank[r.a]) >> 1) : -1))
+  const kept = [...new Set([...rank, ...mids.filter(m => m >= 0)])].sort((a, b) => a - b)
+  const squeeze = new Map(kept.map((k, i) => [k, i]))
+  for (let v = 0; v < V; v++) rank[v] = squeeze.get(rank[v])
 
   // Dummies along each edge longer than one rank, the label's at its middle. A dummy sits in the
   // subgraphs its edge passes through at that rank: up out of its tail's, then down into its head's.
   const chains = routes.map((r, i) => {
     if (!r) return null
     const chain = [r.a], ra = rank[r.a], rb = rank[r.b], label = g.edges[i].label
-    const mid = ra + ((rb - ra) >> 1)
+    const mid = label ? squeeze.get(mids[i]) : -1
     const ups = cl[r.a] >= 0 ? path[cl[r.a]] : [], downs = cl[r.b] >= 0 ? path[cl[r.b]] : []
     let common = 0
     while (common < ups.length && common < downs.length && ups[common] === downs[common]) common++
@@ -484,10 +535,19 @@ function place(g) {
   }
   const x = simplex(a, Int32Array.from(xf), Int32Array.from(xt), Float64Array.from(xl), Float64Array.from(xw))
 
-  // y from the ranks' heights, nodes in ranks `span` apart about rankSep apart, a little more for a label.
-  const sep = Math.max(8, (g.rankSep * (labels ? 1.3 : 1)) / span), height = new Float64Array(R), y = new Float64Array(R)
-  for (let v = 0; v < V; v++) height[rank[v]] = Math.max(height[rank[v]], H[v])
-  for (let r = 1; r < R; r++) y[r] = y[r - 1] + height[r - 1] / 2 + sep + height[r] / 2
+  // y from the ranks' heights. Ranks of nodes are rankSep apart, a label's a little closer; a rank of
+  // borders sits a box's padding away, or room for an arrow when an edge ends across the gap.
+  const height = new Float64Array(R), y = new Float64Array(R), kind = new Uint8Array(R), ends = new Uint8Array(R)
+  for (let v = 0; v < V; v++) {
+    height[rank[v]] = Math.max(height[rank[v]], H[v])
+    kind[rank[v]] |= v < N ? 2 : dummy[v] === 2 ? 1 : 0
+  }
+  for (const chain of chains) if (chain) for (let k = 1; k < chain.length; k++) if (!dummy[chain[k - 1]] || !dummy[chain[k]]) ends[rank[chain[k - 1]]] = 1
+  for (let r = 1; r < R; r++) {
+    const a = kind[r - 1], b = kind[r]
+    const gap = a && b ? (a & b & 2 ? g.rankSep : g.rankSep * 0.65) : Math.max(g.pad, ends[r - 1] ? 24 : 0)
+    y[r] = y[r - 1] + height[r - 1] / 2 + gap + height[r] / 2
+  }
 
   // Back to the drawing's own axes, from the top left.
   const boxes = g.clusters.map((cluster, c) => {
