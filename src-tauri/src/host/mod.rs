@@ -37,6 +37,8 @@ pub struct Config {
     pub browser_args: String,
     /// Runs before the page's own scripts, in every frame.
     pub init_script: String,
+    /// Runs once the webview exists and has been asked for the page.
+    pub on_webview: fn(),
     /// The window icon, a PNG. Windows takes resource 32512 of the exe instead.
     #[cfg(target_os = "linux")]
     pub icon: &'static [u8],

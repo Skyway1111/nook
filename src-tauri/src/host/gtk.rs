@@ -439,6 +439,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         // frame. Should the page never load, it shows anyway.
         g_timeout_add(3000, show_late, null_mut());
         webkit_web_view_load_uri(wv, cstring(&assets::page()).as_ptr());
+        (cfg.on_webview)();
         g_bus_get(G_BUS_TYPE_SESSION, null_mut(), bus_ready, null_mut());
         gtk_main();
     }

@@ -236,6 +236,7 @@ fn set_up(controller: *mut c_void, cfg: Config) {
     }
     window::webview_ready();
     drop::register(window::hwnd());
+    (cfg.on_webview)();
     // Shown before the webview was ready, the window took the focus the webview should have.
     if unsafe { GetFocus() } == window::hwnd() {
         focus();

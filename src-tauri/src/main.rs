@@ -43,7 +43,7 @@ const ID: &str = env!("NOOK_ID");
 /// The window's title.
 const NAME: &str = env!("NOOK_NAME");
 
-/// Browser arguments replace WebView2's defaults, which turn these off.
+/// Edge features the webview keeps off: out-of-process UI for pages and PDFs, and SmartScreen's checks.
 #[cfg(windows)]
 const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
 
@@ -445,14 +445,12 @@ fn main() {
         #[cfg(windows)]
         browser_args: format!("{BROWSER_ARGS}{}", if settings.gpu { "" } else { " --disable-gpu" }),
         init_script: format!("window.NOOK_CWD = {}; window.NOOK_REOPEN = {reopen}; window.NOOK_BENCH = {bench};", json::to_string(&start)),
+        on_webview: if bench { || self::bench("mark:window".into(), None) } else { || {} },
         #[cfg(target_os = "linux")]
         icon: include_bytes!("../icons/32x32.png"),
         #[cfg(debug_assertions)]
         watch: &["src", "index.html", "src-tauri/mod/themes"],
     };
-    if bench {
-        self::bench("mark:window".into(), None);
-    }
     if let Err(e) = host::run(cfg, commands) {
         eprintln!("{e}");
     }
