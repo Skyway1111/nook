@@ -21,27 +21,29 @@ pub fn pdf_page(path: String, width: u32, height: u32) -> Result<Bytes, String> 
     message.extend_from_slice(&width.to_le_bytes());
     message.extend_from_slice(&height.to_le_bytes());
     file.read_to_end(&mut message).map_err(|e| fail(&e))?;
-    let reply = sandbox::ask(message).map_err(|e| fail(&e))?;
-    match reply.split_first() {
-        Some((0, png)) => Ok(Bytes(png.to_vec())),
-        Some((_, why)) => Err(fail(&String::from_utf8_lossy(why))),
+    let mut reply = sandbox::ask(message).map_err(|e| fail(&e))?;
+    match reply.pop() {
+        Some(0) => Ok(Bytes(reply)),
+        Some(_) => Err(fail(&String::from_utf8_lossy(&reply))),
         None => Err(fail(&"the sandbox said nothing")),
     }
 }
 
-/// The worker's answer to `pdf_page`'s message: 0 and the PNG, or 1 and why not.
+/// The worker's answer to `pdf_page`'s message: the PNG and 0, or why not and 1.
 pub fn answer(message: Vec<u8>) -> Vec<u8> {
-    let Some((size, pdf)) = message.split_first_chunk::<8>() else { return b"\x01a short request".to_vec() };
+    let Some((size, pdf)) = message.split_first_chunk::<8>() else { return b"a short request\x01".to_vec() };
     let [width, height] = [0, 4].map(|i| u32::from_le_bytes(size[i..i + 4].try_into().unwrap()));
     let fit = |w: f64, h: f64| {
         let s = (width as f64 / w).min(height as f64 / h).min(4096. / w.max(h));
         let px = |v: f64| (v * s).round().max(1.) as u32;
         (px(w), px(h))
     };
-    match os::first_page(pdf, fit) {
-        Ok(png) => [&[0][..], &png].concat(),
-        Err(e) => [&[1][..], e.as_bytes()].concat(),
-    }
+    let (mut reply, status) = match os::first_page(pdf, fit) {
+        Ok(png) => (png, 0),
+        Err(e) => (e.into_bytes(), 1),
+    };
+    reply.push(status);
+    reply
 }
 
 #[cfg(windows)]

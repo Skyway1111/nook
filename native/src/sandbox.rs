@@ -19,8 +19,8 @@ use std::{
 pub const WORKER: &str = "NOOK_WORKER";
 const TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE: Duration = Duration::from_secs(60);
-/// The longest answer nook takes: a 4096-pixel square page as a PNG that didn't compress.
-const MAX_REPLY: u32 = 64 << 20;
+/// The longest answer nook takes: a 4096-pixel square page as an RGB PNG that didn't compress is 48 MiB.
+const MAX_REPLY: u32 = 50 << 20;
 /// Workers at once: a burst of 50 pages takes 0.47 s with 4, 0.36 s with 8, and 0.56 s drawn in nook itself.
 const MAX: usize = 4;
 
