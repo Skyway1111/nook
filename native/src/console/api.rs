@@ -928,12 +928,17 @@ impl State {
                 }
             } else if self.cp_out == UTF8 {
                 let mut bytes = &data[..];
-                if !self.carry.is_empty() {
-                    let need = utf8_end(&[self.carry[0], 0x80, 0x80, 0x80]).max(1);
-                    let k = need.saturating_sub(self.carry.len()).min(bytes.len());
+                // The character the last write or piece cut off takes the bytes it lacks.
+                if let Some(&lead) = self.carry.first() {
+                    let need = match lead {
+                        0xf0.. => 4,
+                        0xe0.. => 3,
+                        _ => 2,
+                    };
+                    let k = (need - self.carry.len().min(need)).min(bytes.len());
                     self.carry.extend_from_slice(&bytes[..k]);
                     bytes = &bytes[k..];
-                    if self.carry.len() >= need || bytes.is_empty() && at + n >= len {
+                    if self.carry.len() >= need {
                         utf8_lossy(&self.carry, &mut text);
                         self.carry.clear();
                     }
