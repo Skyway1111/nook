@@ -7,9 +7,11 @@
 // every ticked session at once, which starts ticked when it sits between turns, queues it for each to take when
 // its turn ends, or starts it in several new sessions, each in a git worktree of its own. A card for a session in a worktree says how much it changed
 // there, and between turns offers to keep it: its changes staged in the main checkout.
-import { el, letter } from './ui.js'
+import { el, sheet } from './ui.js'
 import { ago, modelName, summary, cannotSend, pickedAtFirst, asking, planLine, fill, FULL, money, limits } from './sessions.js'
 import { isWorktree, changeLine } from './keep.js'
+
+await sheet(new URL('./dashboard.css', import.meta.url))
 
 const FILES = 4 // the files a card lists
 const STEPS = 12 // the most steps a plan draws
@@ -17,8 +19,8 @@ const SURE = 4000 // how long Discard waits for its second press, in ms
 const WORDS = { working: 'Working', waiting: 'Waiting on you', done: 'Done', '': 'Idle' }
 
 /** `list()` gives `[{ tab, view, report }]` for every Claude tab, `open(tab)` shows one, `newSession()`
- * starts another, `send(tab, text)` sends one a prompt, `queue(tab, text)` sends it when its turn ends, `unqueue(tab)` drops those, and `review(session)` opens all it changed. `button` toggles the dashboard; `onClose` hears
- * it close. `worktree.stat(root)` says what a worktree changed, `worktree.keep(tab, report)` stages that in its
+ * starts another, `send(tab, text)` sends one a prompt, `queue(tab, text)` sends it when its turn ends, `unqueue(tab)` drops those, and `review(session)` opens all it changed. `button` shows that the dashboard is open; `onClose`
+ * hears it close. `worktree.stat(root)` says what a worktree changed, `worktree.keep(tab, report)` stages that in its
  * main checkout, and `worktree.discard(tab, report)` ends the session and deletes its worktree. */
 export function startDashboard(pane, { button, list, open, newSession, showChanges, review, send, queue, unqueue, answer, fanOut, worktree, onClose }) {
   let box = null
@@ -311,18 +313,9 @@ export function startDashboard(pane, { button, list, open, newSession, showChang
     onClose?.()
   }
 
-  if (button) button.onclick = () => (box ? close() : show())
-  addEventListener('keydown', e => {
-    if (e.ctrlKey && e.shiftKey && !e.altKey && letter(e) === 's') {
-      e.preventDefault()
-      box ? close() : show()
-    }
-  })
-
   return {
     /** Draws again, when a session's report changed. */
     refresh: render,
-    close,
-    get open() { return !!box },
+    toggle: () => (box ? close() : show()),
   }
 }

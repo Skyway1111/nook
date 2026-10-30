@@ -9,8 +9,10 @@ export const flag = (key, fallback = false) => [
   () => { try { const v = localStorage.getItem(key); return v === null ? fallback : v === '1' } catch { return fallback } },
   on => { try { localStorage.setItem(key, on ? '1' : '0') } catch {} },
 ]
-/** Adds the stylesheet at `url` to the page's head, after the others; resolves once it applies. */
-export const sheet = url => new Promise(done => document.head.append(el('link', { rel: 'stylesheet', href: url, onload: done, onerror: done })))
+const sheets = {} // href -> its load
+/** Adds the stylesheet at `url` to the page's head, after the others, once: a sheet two views load keeps the place
+ * the first gave it, so it never moves after a sheet that overrides it. Resolves once it applies. */
+export const sheet = url => (sheets[url] ??= new Promise(done => document.head.append(el('link', { rel: 'stylesheet', href: url, onload: done, onerror: done }))))
 /** The letter a key names as a shortcut, lowercased: the a-z the layout types, or where it types another script's
  * letter (Cyrillic, Greek), the US key's in that place. '' for any other key, such as AltGr's ć. */
 export const letter = e => (/^[a-z]$/i.test(e.key) ? e.key.toLowerCase()

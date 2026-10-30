@@ -29,16 +29,18 @@ const bg = cell => color(cell.isBgDefault(), cell.isBgRGB(), cell.getBgColor()) 
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi)
 const same = (a, b) => a?.from === b?.from && a?.to === b?.to && a?.px === b?.px
 
-/** The model and effort menus and the context ring, from what nook's mod reports (`mod`). */
+/** The model and effort menus and the context ring, from what nook's mod reports (`mod`). The report is a file on
+ * disk, so any value in it makes plain text, never markup or a throw. */
 function chipsHtml({ model, effort, context }) {
-  if (!model) return ''
+  if (typeof model !== 'string' || !model) return ''
   const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(model) // claude-opus-5-5[1m] is Opus 5.5
   const name = m ? `${capital(m[1])} ${m[2]}${m[3] ? `.${m[3]}` : ''}` : model
-  const words = `<button data-menu="model">${esc(name)}</button><button data-menu="effort">${esc(effort ?? 'effort')}</button>`
-  if (!context?.window) return words
-  const { tokens = 0, percent = 0 } = context // a new or cleared session has no tokens yet
+  const words = `<button data-menu="model">${esc(name)}</button><button data-menu="effort">${esc(String(effort ?? 'effort'))}</button>`
+  const size = +context?.window
+  if (!size) return words
+  const tokens = +context.tokens || 0, percent = +context.percent || 0 // a new or cleared session has no tokens yet
   const arc = percent ? `<circle cx="10" cy="10" r="7.5" pathLength="100" stroke-dasharray="${percent} 100"/>` : ''
-  const title = `${tokens.toLocaleString()} of ${context.window.toLocaleString()} tokens`
+  const title = `${tokens.toLocaleString()} of ${size.toLocaleString()} tokens`
   return words + `<svg class="ring" viewBox="0 0 20 20"><title>${title}</title>`
     + `<circle cx="10" cy="10" r="7.5"/>${arc}</svg>`
 }
@@ -65,8 +67,7 @@ export function startComposer(term, host, id) {
   let tall = 0 // the card's height as last laid out, 0 while it or its tab is hidden
   let taller = false // whether the card is taller than Claude's prompt block
   let gap = null // blank rows under the transcript that take the card instead of the transcript's top: { from, to, top }
-  let report = '' // the mod's last report, as JSON
-  let state = {} // ...and parsed
+  let state = null // the mod's last report, which sessions.js reads
   let chips = ''
 
   /** The cell after the last one that draws anything: a character, or unless `text`, a styled blank. */
@@ -422,43 +423,30 @@ export function startComposer(term, host, id) {
       : (state.efforts ?? []).map(l => [l, l === state.effort ? CHECK : '', pick('effort', l)]))
   })
 
-  // A Run pressed under a shell block in Claude's reply: typed as Claude's ! command, without Enter. One the
-  // tab reported before this poll first read it is old, and isn't typed again; nor is an old Review.
-  let ran
-  let reviewed
-  const poll = setInterval(async () => {
-    if (!host.offsetWidth) return
-    const text = await invoke('pty_state', { id })
-    if (!text || text === report) return
-    try {
-      state = JSON.parse(text)
-      chips = chipsHtml(state)
-    } catch {
-      return // caught mid-write; the next poll reads it whole
-    }
-    const run = state.run
-    if (report && run?.at && run.at !== ran && typeof run.command === 'string') {
-      term.input('!')
-      term.paste(run.command)
-      term.focus()
-    }
-    ran = run?.at
-    // The band's Review, after a turn that edited files: nook opens those files' changes.
-    const review = state.review
-    if (report && review?.at && review.at !== reviewed && Array.isArray(review.files)) {
-      dispatchEvent(new CustomEvent('nook-review', { detail: { root: state.root, files: review.files } }))
-    }
-    reviewed = review?.at
-    report = text
-    render()
-  }, 500)
-
   return {
     /** The terminal holds its last frame, `n` rows tall, until Claude redraws for the new size. */
     hold(n) {
       held = n
       layout()
     },
-    close: () => clearInterval(poll),
+    /** Takes the mod's newest report: the menus and ring, and a Run or Review pressed in the transcript. What the
+     * first report holds is old, and isn't run again. */
+    report(next) {
+      const was = state
+      state = next
+      chips = chipsHtml(next)
+      // A Run pressed under a shell block in Claude's reply: typed as Claude's ! command, without Enter.
+      const { run, review } = next
+      if (was && run?.at && run.at !== was.run?.at && typeof run.command === 'string') {
+        term.input('!')
+        term.paste(run.command)
+        term.focus()
+      }
+      // The band's Review, after a turn that edited files: nook opens those files' changes.
+      if (was && review?.at && review.at !== was.review?.at && Array.isArray(review.files)) {
+        dispatchEvent(new CustomEvent('nook-review', { detail: { root: next.root, files: review.files } }))
+      }
+      render()
+    },
   }
 }

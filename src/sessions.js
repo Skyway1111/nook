@@ -1,6 +1,6 @@
 // What each Claude tab's session is doing, from what nook's mod reports: the dot on its tab, the count in
 // the window's title, and when to ask for the user's attention. `follow` is pure, so `sessions.test.js`
-// checks it without a window; `watchSessions` polls every tab's report in one IPC call a second.
+// checks it without a window; `watchSessions` polls the tabs' reports in one IPC call at a time.
 
 /** A session's mark on its tab: working, waiting (on the user), done (finished while the user looked
  * elsewhere), or '' while it idles with nothing new. */
@@ -125,13 +125,15 @@ export function summary(marks) {
   return parts.length ? parts.map(([c, w]) => `${c} ${w}`).join(' · ') : `${marks.length} idle`
 }
 
-/** Polls the reports of every tab `tabs()` lists that has a session (`tab.terminal.id`), each second.
- * `onChange(tab, view, report)` hears each tab whose view or report changed. Costs one IPC call a second
- * while any Claude tab is open, and nothing else while their reports stay the same. */
-export function watchSessions({ invoke, tabs, watched, onChange }) {
+/** Polls the reports of the tabs `tabs()` lists that have a session (`tab.terminal.id`): those `visible(tab)` every
+ * 500 ms, so a composer's menus follow a pick, and the rest each second. `onChange(tab, view, report)` hears each tab
+ * whose view or report changed. Costs one IPC call each 500 ms while a Claude tab shows, each second while they're all
+ * hidden, and nothing else while their reports stay the same. */
+export function watchSessions({ invoke, tabs, visible, watched, onChange }) {
   const seen = new WeakMap() // tab -> { view, text }
-  async function poll() {
-    const live = tabs().filter(t => t.terminal?.id != null)
+  let ticks = 0
+  async function poll(all = true) {
+    const live = tabs().filter(t => t.terminal?.id != null && (all || visible(t)))
     if (!live.length) return
     const texts = await invoke('pty_states', { ids: live.map(t => t.terminal.id) })
     live.forEach((tab, i) => {
@@ -152,7 +154,7 @@ export function watchSessions({ invoke, tabs, watched, onChange }) {
       if (changed) onChange(tab, view, shown)
     })
   }
-  const timer = setInterval(() => poll().catch(() => {}), 1000)
+  const timer = setInterval(() => poll(++ticks % 2 === 0).catch(() => {}), 500)
   return {
     /** Looks again now, as when the user switches tabs or focuses the window. */
     poll: () => poll().catch(() => {}),

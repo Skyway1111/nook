@@ -10,7 +10,7 @@ const COMMENT = 1, KEYWORD = 2, BOOL = 3, ATOM = 4, STRING = 5, STRING2 = 6, NUM
 // Markdown's styles, combined with one of the above.
 const HEADING = 32, STRONG = 64, EMPHASIS = 128, LINK = 256
 const BASE = ['', 'comment', 'keyword', 'bool', 'atom', 'string', 'string2', 'number', 'literal', 'meta',
-  'variableName tok-definition', 'typeName', 'className', 'namespace', 'variableName2', 'propertyName',
+  'definition', 'typeName', 'className', 'namespace', 'variableName2', 'propertyName',
   'propertyName tok-definition', 'url', 'inserted', 'deleted']
 const FLAGS = [[HEADING, 'tok-heading'], [STRONG, 'tok-strong'], [EMPHASIS, 'tok-emphasis'], [LINK, 'tok-link']]
 const names = []

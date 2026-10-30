@@ -7,7 +7,7 @@
 // percents stretches into itself.
 import { invoke } from './host.js'
 
-const SETTLE_MS = 100 // how long an element's size holds still before it bakes
+export const SETTLE_MS = 100 // how long an element's size holds still before it bakes
 const SAVE_MS = 1000 // how long a bake stands before it's saved for the next start
 const PROPS = ['image', 'position', 'size', 'repeat', 'origin', 'clip', 'attachment']
 const keyOf = cs => PROPS.map(p => cs.getPropertyValue(`background-${p}`)).join('|')

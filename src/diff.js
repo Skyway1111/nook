@@ -2,10 +2,12 @@
 // A hunk's buttons stage, unstage, or discard it, or only the lines picked in it, through `git apply`.
 // history.js shows a commit's changes with it too, read-only.
 import { invoke } from './host.js'
-import { el, flag, openMenu } from './ui.js'
+import { el, flag, openMenu, sheet } from './ui.js'
 import { ICON, basename } from './files.js'
 import { path as paths } from './paths.js'
 import { parseDiff, patch, applyArgs, changedRanges } from './patch.js'
+
+await sheet(new URL('./diff.css', import.meta.url))
 
 /** A file with more diff lines than this waits for a click: thousands of rows would stall the tab. */
 const LONG = 1500

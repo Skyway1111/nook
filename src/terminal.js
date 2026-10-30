@@ -261,13 +261,14 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     focus: () => term.focus(),
     /** Hears every file the session wrote, newest last, so a page Claude wrote shows its new stylesheet. */
     wrote: paths => pictures.wrote(paths),
+    /** Hears the mod's newest report, for the composer. */
+    report: composer.report,
     find,
     /** Shows the prompt you sent before the view's top, or after it. */
     jump: up => turns.jump(up),
     close: () => {
       closed = true
       clearTimeout(hold?.timer)
-      composer.close()
       links.dispose()
       search?.then(s => s.dispose())
       turns.dispose()

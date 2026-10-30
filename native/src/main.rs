@@ -489,7 +489,6 @@ fn commands(name: &str) -> Option<(Run, host::Command)> {
         "can_paste" => (Inline, cmd!(shell::can_paste)),
         "copied_paths" => (Inline, cmd!(shell::copied_paths)),
         "pty_spawn" => (Thread, cmd!(pty::pty_spawn, command, cwd, cols, rows, on_data: "onData")),
-        "pty_state" => (Thread, cmd!(pty::pty_state, id)),
         "pty_states" => (Thread, cmd!(pty::pty_states, ids)),
         "pty_command" => (Thread, cmd!(pty::pty_command, id, command, args)),
         "session_image" => (Thread, cmd!(pty::session_image, id, n)),

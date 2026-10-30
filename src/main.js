@@ -6,7 +6,6 @@ import { startSettings } from './settings.js'
 import { bytes } from './palette.js'
 import { holdBackdrops } from './backdrops.js'
 import { startWallpaper } from './wallpaper.js'
-import { startDashboard } from './dashboard.js'
 import { opened } from './recent.js'
 import { path as paths } from './paths.js'
 import { $, letter, openMenu, openPicker } from './ui.js'
@@ -183,27 +182,31 @@ function welcome() {
 
 let quick
 const openQuick = () => {
-  quick ??= Promise.all([import('./quickopen.js'), import('./commands.js')]).then(([{ startQuickOpen }, { appCommands }]) => startQuickOpen({
-    dir: tabFolder,
-    commands: appCommands({
-      tabs, files, git, drawer, wallpaper, home, banner, insertPath,
-      newSession: () => tabs.openClaude(here()),
-      openQuick: prefix => openQuick().then(q => q.open(prefix)),
-      quickPrompts,
-      findInFiles,
-      goToDefinition,
-      goBack,
-      canGoBack: () => backs.length > 0,
-      welcome,
-    }),
-    gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
-    outline: () => tabs.active()?.viewer?.outline?.() ?? null,
-    openPath: () => (tabs.active()?.viewer?.word ? tabs.active().path : null),
-    openFile,
-    insertPath,
-    reveal: path => files.reveal(path),
-    onClose: () => tabs.focus(),
-  }))
+  quick ??= Promise.all([import('./quickopen.js'), import('./commands.js')]).then(([{ startQuickOpen }, { appCommands }]) => {
+    // The palette lists every wallpaper, which load once the box has first shown, before > can be typed in it.
+    requestAnimationFrame(() => setTimeout(wallpaper.load))
+    return startQuickOpen({
+      dir: tabFolder,
+      commands: appCommands({
+        tabs, files, git, drawer, wallpaper, home, banner, insertPath,
+        newSession: () => tabs.openClaude(here()),
+        openQuick: prefix => openQuick().then(q => q.open(prefix)),
+        quickPrompts,
+        findInFiles,
+        goToDefinition,
+        goBack,
+        canGoBack: () => backs.length > 0,
+        welcome,
+      }),
+      gotoLine: (line, col) => tabs.active()?.viewer?.reveal?.({ line, col }),
+      outline: () => tabs.active()?.viewer?.outline?.() ?? null,
+      openPath: () => (tabs.active()?.viewer?.word ? tabs.active().path : null),
+      openFile,
+      insertPath,
+      reveal: path => files.reveal(path),
+      onClose: () => tabs.focus(),
+    })
+  })
   return quick
 }
 addEventListener('keydown', e => {
@@ -223,7 +226,12 @@ addEventListener('keydown', e => {
     typed += k.key
   }
   addEventListener('keydown', hold, true)
-  openQuick().then(q => q.toggle(commands ? '>' : symbols ? '@' : '', typed)).catch(banner).finally(() => removeEventListener('keydown', hold, true))
+  // F1, or > typed while the box's code loads, opens the palette, which waits for the wallpapers, loaded beside it.
+  if (commands) wallpaper.load()
+  openQuick().then(async q => {
+    if (commands || typed[0] === '>') await wallpaper.load()
+    q.toggle(commands ? '>' : symbols ? '@' : '', typed)
+  }).catch(banner).finally(() => removeEventListener('keydown', hold, true))
 }, true)
 
 // Files dropped from Explorer become paths in the prompt (Claude Code attaches images itself), or, dropped on a
@@ -262,7 +270,11 @@ addEventListener('nook-review', ({ detail: { root, files: edited } }) => {
   const tab = tabs.active()
   git.review(root || tab?.path || cwd, edited, `${tab?.name ?? 'Claude'} · last turn`)
 })
-dashboard = startDashboard($('pane'), {
+// The sessions dashboard loads on its first open, from its button or Ctrl+Shift+S, or as the pointer reaches the button.
+let board
+const loadDashboard = () => (board ??= import('./dashboard.js').then(startBoard))
+const toggleDashboard = () => loadDashboard().then(d => d.toggle()).catch(banner)
+const startBoard = ({ startDashboard }) => (dashboard = startDashboard($('pane'), {
   button: $('toggle-sessions'),
   list: () => tabs.sessions(),
   open: tab => tabs.show(tab),
@@ -304,7 +316,9 @@ dashboard = startDashboard($('pane'), {
     },
   },
   onClose: () => tabs.focus(),
-})
+}))
+$('toggle-sessions').onclick = toggleDashboard
+$('toggle-sessions').onpointerenter = loadDashboard
 $('new-tab').onclick = newSession
 $('new-tab').onmouseenter = () => { $('new-tab').title = `New Claude session in ${here()}` }
 // The chevron by + starts Claude other ways: continuing or resuming a session saved for this folder, or in a
@@ -379,6 +393,10 @@ addEventListener('keydown', e => {
   if (k === 'e') {
     e.preventDefault()
     files.focus()
+  }
+  if (k === 's') {
+    e.preventDefault()
+    toggleDashboard()
   }
   if (k === 'h' || (k === 'f' && !tabs.active()?.terminal)) {
     e.preventDefault()
