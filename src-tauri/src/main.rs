@@ -7,6 +7,7 @@ mod history;
 mod ide;
 mod index;
 mod notify;
+mod pdf;
 #[cfg_attr(not(windows), path = "priority_unix.rs")]
 mod priority;
 mod pty;
@@ -554,6 +555,7 @@ fn main() {
             commands::claude_commands,
             pty::pty_command,
             pty::session_image,
+            pdf::pdf_page,
             ide::ide_selection,
             ide::ide_diff_answer,
         ])

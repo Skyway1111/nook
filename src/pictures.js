@@ -131,7 +131,7 @@ export function startPictures(term, screen, reply = () => {}) {
         return
       }
       if (/\.pdf$/i.test(path)) {
-        // A PDF Claude read or a command saved: its first page, drawn by pdf.js at the box's size.
+        // A PDF Claude read or a command saved: its first page, drawn by the OS at the box's size.
         const [columns, rows] = [Number(k.c), Number(k.r)]
         import('./pdfpage.js').then(m => m.pdfUrl(path, boxSize(columns, rows))).then(url => {
           keep(id, { url, columns, rows, blob: true, path })
