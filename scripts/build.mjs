@@ -298,8 +298,9 @@ function asset(file, css) {
 const style = file => squeezeCss(readFileSync(file, 'utf8')).replace(/url\((['"]?)([^'")]+)\1\)/g, (all, q, url) =>
   /^(data:|https?:|#)/.test(url) ? all : `url(${asset(resolve(dirname(file), url))})`)
 
-/** dist/: index.html, index.js with every module main.js imports, index.css with the stylesheets index.html links,
- * a chunk per set of import() targets sharing modules, and the assets they name. */
+/** dist/: index.html, index.css with the stylesheets it links, index.js with every module main.js imports, a chunk per
+ * set of import() targets sharing modules, and the assets they name. In index.js each module runs in a function of
+ * its own, which V8 can let go once it has run, and main.js in a block, where it can wait. */
 function bundle() {
   const started = performance.now()
   rmSync(dist, { recursive: true, force: true })
@@ -352,7 +353,7 @@ function bundle() {
 
   writeFileSync(join(dist, 'index.js'), RUNTIME + startup.map(m => m === main
     ? `{${imports(m)}\n${m.body}\n}`
-    : `{${imports(m)}\n${m.body}\n;E[${m.n}]=${pairs(m.exports)}}\n`).join(''))
+    : `E[${m.n}]=(()=>{${imports(m)}\n${m.body}\nreturn${pairs(m.exports)}})()\n`).join(''))
   for (const [, list] of chunks) writeFileSync(join(dist, list[0].chunk), `export default{${list.map(m =>
     `${m.n}:${m.async ? 'async ' : ''}J=>{${imports(m)}\n${m.body}\nreturn${pairs(m.exports)}}`).join(',\n')}}\n`)
   const kb = n => `${(n / 1024).toFixed(1)} KB`
