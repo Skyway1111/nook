@@ -5,7 +5,7 @@
 // change redraws nothing.
 import { Vt, CP, COMBINED, CM, RGB, INVERSE, BOLD, UNDERLINE, INVISIBLE, STRIKE, ITALIC, DIM, EXT, OVERLINE } from './vt.js'
 import { keyData } from './keys.js'
-import { slotVar, bytes } from '../palette.js'
+import { slotVar, bytes, cube } from '../palette.js'
 import { WINDOWS } from '../paths.js'
 
 const SCROLLBAR = 14 // px the scrollbar takes beside the screen
@@ -26,9 +26,7 @@ const WEB = /^(https?|mailto):/i
 function slot(n) {
   const v = slotVar(n)
   if (v) return `var(${v})`
-  const cube = [0, 0x5f, 0x87, 0xaf, 0xd7, 0xff]
-  const rgb = n < 232 ? [cube[((n - 16) / 36 | 0) % 6], cube[((n - 16) / 6 | 0) % 6], cube[(n - 16) % 6]] : Array(3).fill(8 + 10 * (n - 232))
-  return '#' + rgb.map(c => c.toString(16).padStart(2, '0')).join('')
+  return '#' + cube(n).map(c => c.toString(16).padStart(2, '0')).join('')
 }
 /** Each palette slot's color as CSS. */
 export const PALETTE = Array.from({ length: 256 }, (_, n) => slot(n))

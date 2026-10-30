@@ -12,6 +12,11 @@ export function slotVar(c) {
   return SLOTS.has(c) ? `--claude-${SLOTS.get(c)}` : null
 }
 
+const LEVELS = [0, 0x5f, 0x87, 0xaf, 0xd7, 0xff]
+/** Slot `n`'s standard color from 16 up, in the 6x6x6 cube and then 24 grays, as [r, g, b]. */
+export const cube = n => (n < 232 ? [LEVELS[(n - 16) / 36 | 0], LEVELS[(n - 16) / 6 % 6 | 0], LEVELS[(n - 16) % 6]]
+  : Array(3).fill(8 + 10 * (n - 232)))
+
 const probe = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
 /** Any CSS color (oklch, named, with alpha) as [r, g, b, a] bytes, through a 1px canvas. */
 export function bytes(color) {

@@ -2,7 +2,7 @@
 // picture covers cells from the cursor, and each cell keeps its tile in its
 // extras, so text written over it, an erase, or a scroll takes the picture's cells with it. Pictures draw
 // over the text where their cells show. A terminal keeps 32 MB of pixels, oldest dropped first.
-import { bytes } from '../palette.js'
+import { bytes, cube } from '../palette.js'
 import { PALETTE } from './view.js'
 import { CM, RGB, INVERSE } from './vt.js'
 
@@ -12,16 +12,14 @@ const SIXEL_MAX = 25e6 // sixel data taken, in characters
 const FILE_MAX = 20e6 // an iTerm2 file's size
 const CELL = [7, 14] // a cell's size in px while the terminal has none
 
-// A VT340's 16 colors, in percent, then xterm's 256-color cube and grays: the sixel color registers' defaults.
+// A VT340's 16 colors, in percent, then the 256-color cube and grays: the sixel color registers' defaults.
 const VT340 = [0, 0, 0, 20, 20, 80, 80, 13, 13, 20, 80, 20, 80, 20, 80, 20, 80, 80, 80, 80, 20, 53, 53, 53,
   26, 26, 26, 33, 33, 60, 60, 26, 26, 33, 60, 33, 60, 33, 60, 33, 60, 60, 60, 60, 33, 80, 80, 80]
 const pack = (r, g, b) => (r | g << 8 | b << 16 | 0xff000000) >>> 0 // RGBA bytes as one little-endian word
 const pct = v => Math.round((Math.min(v, 100) / 100) * 255)
 const DEFAULTS = new Uint32Array(256)
 for (let i = 0; i < 16; i++) DEFAULTS[i] = pack(pct(VT340[i * 3]), pct(VT340[i * 3 + 1]), pct(VT340[i * 3 + 2]))
-const CUBE = [0, 0x5f, 0x87, 0xaf, 0xd7, 0xff]
-for (let i = 16; i < 232; i++) DEFAULTS[i] = pack(CUBE[(i - 16) / 36 | 0], CUBE[(i - 16) / 6 % 6 | 0], CUBE[(i - 16) % 6])
-for (let i = 232; i < 256; i++) DEFAULTS[i] = pack(8 + 10 * (i - 232), 8 + 10 * (i - 232), 8 + 10 * (i - 232))
+for (let i = 16; i < 256; i++) DEFAULTS[i] = pack(...cube(i))
 
 /** DEC's HLS (blue at 0°), in degrees and percent, as a packed color. */
 function hls(h, l, s) {
