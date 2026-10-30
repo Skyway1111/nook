@@ -1,7 +1,7 @@
 // A diff tab: what changed under a path, staged and unstaged, in syntax colors, unified or side by side.
 // A hunk's buttons stage, unstage, or discard it, or only the lines picked in it, through `git apply`.
 // history.js shows a commit's changes with it too, read-only.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { el, openMenu } from './ui.js'
 import { ICON, basename } from './files.js'
 import { path as paths } from './paths.js'

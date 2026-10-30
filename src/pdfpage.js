@@ -2,7 +2,7 @@
 // picture; `pictures.js` hands it here with its box's size, and the page comes back as a PNG blob URL drawn
 // with pdf.js at the box's pixel size. pdf.js and its worker load the first time a PDF shows, so a session
 // without one pays nothing for them. Scripts in the PDF never run: pdf.js only runs them in its viewer.
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { convertFileSrc } from './host.js'
 
 let pdfjs // pdf.js, with its worker set, loaded once
 

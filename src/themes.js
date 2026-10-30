@@ -1,7 +1,7 @@
 // The settings drawer's themes: a card for each installed theme, installing one from a .zip or a
 // folder, and Claude's own theme, which follows nook's when the user wants. An installed theme is a
 // folder in `themes` beside settings.json, and `theme.rs` reads and installs it.
-import { invoke, convertFileSrc } from '@tauri-apps/api/core'
+import { invoke, convertFileSrc } from './host.js'
 import preview from './nook.jpg'
 import { $, el } from './ui.js'
 import { path as paths } from './paths.js'

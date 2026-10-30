@@ -4,7 +4,7 @@
 // files in tool calls, `Update(src/main.js)`, in prose, `src/main.js:42`, and in grep output. `findPaths`
 // reads candidates from a row's text, and only those on disk become links, so a link provider asks Rust
 // about a row once, on hover, and costs nothing while the mouse is still.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { IMAGE } from './files.js'
 import { findPaths, candidates, diffLine, editedPath } from './linkify.js'
 import { showPreview, hidePreview, el } from './ui.js'

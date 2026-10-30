@@ -1,6 +1,6 @@
 // An edit Claude proposes and waits on a yes for, shown as its editor extensions show one: what would change in
 // the file, with Accept and Reject. Claude's own prompt still takes the answer too; whichever comes first counts.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { el } from './ui.js'
 import { diffRows, nearChanges } from './linediff.js'
 

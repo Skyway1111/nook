@@ -1,7 +1,7 @@
 // The git panel: the active tab's repository, its changes, branch, and commit box. Every action
 // is a git command run by git.rs, so hooks and credential helpers behave as in a terminal. diff.js
 // draws the diff tabs it opens, history.js the history tabs, and merge.js a conflicted file's tab.
-import { invoke, Channel } from '@tauri-apps/api/core'
+import { invoke, Channel } from './host.js'
 import { $, el, openMenu, openPicker, dragPath } from './ui.js'
 import { ICON, basename } from './files.js'
 import { path as paths } from './paths.js'

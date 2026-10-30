@@ -3,7 +3,7 @@
 // comes back as an SVG drawn with MathJax at about the terminal's own text size, at the box's left. MathJax
 // loads the first time a formula shows, so a session without one pays nothing for it. Its SVG is paths
 // alone, so it draws the same apart from the page, where nook's web fonts aren't loaded.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 
 const EM = 1.15 // a formula's em, in the terminal's font sizes
 const EX = 0.442 // MathJax's ex, in ems: the x-height of its TeX fonts

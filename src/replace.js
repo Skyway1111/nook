@@ -3,7 +3,7 @@
 // whole words and regular expressions as toggled. A replace rewrites only files that still hold what the
 // search read and that have no unsaved edits in a tab, and Undo puts back what it changed.
 import './replace.css'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { el } from './ui.js'
 import { ICON } from './files.js'
 import { path as paths } from './paths.js'

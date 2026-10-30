@@ -2,7 +2,7 @@
 // Loaded on the first Ctrl+P, so it adds nothing to cold open or to an idle window. Typed text finds files in the active tab's repository, or its folder outside one. `>` finds commands,
 // `:` goes to a line in the open file, `@` to a symbol in it, `#` to where a name is defined anywhere in the
 // repository, and `%` finds text inside the files. Nothing is indexed until the box first opens, and each later open shows the last index at once while a fresh one builds behind it.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { $, el } from './ui.js'
 import { rank } from './fuzzy.js'
 import { kind, ICON } from './files.js'

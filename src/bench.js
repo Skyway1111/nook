@@ -1,7 +1,7 @@
 // Timings for bench/linux.mjs, loaded only when nook starts with NOOK_BENCH set. Each goes to stdout through
 // main.rs's `bench`. A frame counts as shown once its rAF callbacks, layout, and paint have run, at the task
 // after them.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 
 const report = (event, ms) => invoke('bench', { event, ms })
 const shown = f => requestAnimationFrame(() => setTimeout(f))

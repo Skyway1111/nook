@@ -1,5 +1,5 @@
 // The DOM helpers every view uses, and the floating UI: context menu, image preview, drag ghost.
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { convertFileSrc } from './host.js'
 import { path as paths } from './paths.js'
 
 export const $ = id => document.getElementById(id)

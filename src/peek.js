@@ -2,7 +2,7 @@
 // name, a dozen lines around the line named (or the file's first lines), in the theme's syntax colors once
 // the language loads. It reads only those lines, and only after the mouse has rested, so a pass over a row
 // of paths costs nothing.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { el, place } from './ui.js'
 import { path as paths } from './paths.js'
 

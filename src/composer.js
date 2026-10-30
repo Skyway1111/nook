@@ -1,7 +1,7 @@
 // The composer: a card nook paints over Claude's prompt. It draws the draft Claude draws between its two
 // prompt rules and never takes input. Keys go to xterm, and a click on the card becomes a click on the
 // cell under the same character. It hides whenever the screen stops matching the prompt's shape.
-import { invoke, convertFileSrc } from '@tauri-apps/api/core'
+import { invoke, convertFileSrc } from './host.js'
 import { el, openMenu } from './ui.js'
 import { slotVar } from './palette.js'
 

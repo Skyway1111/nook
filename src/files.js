@@ -1,5 +1,5 @@
 // The file browser: anywhere on disk, not scoped to the session's folder.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { $, el, openMenu, showPreview, hidePreview, dragPath } from './ui.js'
 import { path as paths } from './paths.js'
 import { sortEntries } from './order.js'

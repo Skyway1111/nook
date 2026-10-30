@@ -3,7 +3,7 @@
 // colors. Mermaid loads the first time a diagram shows, so a session without one pays nothing for it. Its
 // strict mode keeps a diagram to shapes and text, and the SVG draws as a background image, which runs no
 // script.
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 
 let mermaid // the library, imported once
 let made = 0 // names each render's scratch element

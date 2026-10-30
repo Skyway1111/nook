@@ -1,6 +1,6 @@
 // File tabs' richer views, loaded the first time one opens: a table for CSV and TSV, a picture that zooms and
 // pans, SVG and HTML drawn from the editor's text, audio and video, and PDF.
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { convertFileSrc } from './host.js'
 import { el } from './ui.js'
 import { path as paths } from './paths.js'
 import { parse, separator, numeric, compareFields } from './delimited.js'

@@ -1,6 +1,6 @@
 // A file tab: a picture, audio or video, a PDF, or text in an editor. Markdown, CSV and TSV, SVG, and HTML
 // with no script open rendered and toggle to their source. previews.js draws all but Markdown, and loads when one first opens.
-import { invoke, convertFileSrc } from '@tauri-apps/api/core'
+import { invoke, convertFileSrc } from './host.js'
 import { IMAGE, basename } from './files.js'
 import { el, openMenu } from './ui.js'
 import { path as paths } from './paths.js'

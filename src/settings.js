@@ -1,7 +1,7 @@
 // The settings drawer: themes, the knobs, the user's theme.css, settings.json's options, and GitHub sign-in.
 // nook's defaults in theme.css apply first, then the installed theme in use, then the user's theme.css.
 // Each knob edits its line in the CSS box, so the file stays the one home for the user's CSS, and the box saves it.
-import { invoke, convertFileSrc } from '@tauri-apps/api/core'
+import { invoke, convertFileSrc } from './host.js'
 import defaults from './theme.css?raw'
 import { startViewer } from './viewer.js'
 import { $, el, openPicker } from './ui.js'

@@ -2,7 +2,7 @@
 // it by taking one side or both. Each one settled rewrites the file; "Mark resolved" stages it for the commit
 // that finishes the merge. conflicts.js reads the markers.
 import './merge.css'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { el } from './ui.js'
 import { parseConflicts, isConflict, resolve } from './conflicts.js'
 import { colorize } from './diff.js'

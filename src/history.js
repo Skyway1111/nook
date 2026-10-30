@@ -2,7 +2,7 @@
 // end. Only the rows on screen exist. The commit picked shows its message and changes beside the list, drawn
 // by diff.js; its menu checks it out, branches from it, cherry-picks or reverts it.
 import './history.css'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './host.js'
 import { el, openMenu, openPicker } from './ui.js'
 import { ICON } from './files.js'
 import { LOG_FORMAT, parseLog, layout } from './graph.js'

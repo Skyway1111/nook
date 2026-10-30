@@ -1,10 +1,7 @@
 import '@xterm/xterm/css/xterm.css'
 import './theme.css'
 import './style.css'
-import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { invoke, win } from './host.js'
 import { startTabs } from './tabs.js'
 import { startFiles, quote, ICON } from './files.js'
 import { startGit } from './git.js'
@@ -20,7 +17,6 @@ import { SAFE, worktreeName, fanNames, since } from './launch.js'
 import { expand, offer, saved } from './prompts.js'
 import { stat as worktreeStat, keep, discard } from './keep.js'
 
-const win = getCurrentWindow()
 // For bench/linux.mjs: how far startup got, in ms since nook started.
 const mark = window.NOOK_BENCH ? event => invoke('bench', { event: `mark:${event}` }) : () => {}
 mark('script')
@@ -46,7 +42,7 @@ const drawer = await startSettings({
     backdrops.restyle()
     // A growing window shows its own background until the page catches up, so that takes the theme's.
     const [r, g, b] = bytes(getComputedStyle(document.documentElement).getPropertyValue('--bg'))
-    getCurrentWebviewWindow().setBackgroundColor([r, g, b, 255]).catch(banner)
+    win.setBackground([r, g, b]).catch(banner)
   },
   onClose: () => tabs.focus(),
   showFolder: () => files.go(configDir),
@@ -234,9 +230,9 @@ addEventListener('keydown', e => {
 }, true)
 
 // Files dropped from Explorer become paths in the prompt (Claude Code attaches images itself), or, dropped on a
-// folder in the file browser, copies in that folder. Tauri gives the pointer in physical pixels.
-getCurrentWebview().onDragDropEvent(({ payload: { type, position, paths: dropped } }) => {
-  const dir = type === 'leave' || !position ? files.dropFolder(null) : files.dropFolder(position.x / devicePixelRatio, position.y / devicePixelRatio)
+// folder in the file browser, copies in that folder.
+win.onDrop(({ type, x, y, paths: dropped }) => {
+  const dir = type === 'leave' ? files.dropFolder(null) : files.dropFolder(x, y)
   if (type !== 'drop') return
   files.dropFolder(null)
   if (dir) files.receive(dropped, dir)
@@ -402,10 +398,7 @@ $('open-config').onclick = drawer.toggle
 $('min').onclick = () => win.minimize()
 $('max').onclick = () => win.toggleMaximize()
 $('close').onclick = () => win.close()
-const syncMaximized = async () => { $('max').textContent = (await win.isMaximized()) ? '' : '' }
-let resized // a dragged edge resizes the window many times a second; ask once it stops
-win.onResized(() => { clearTimeout(resized); resized = setTimeout(syncMaximized, 100) })
-syncMaximized()
+win.onMaximized(max => { $('max').textContent = max ? '\uE923' : '\uE922' })
 // Typing goes to Claude: clicks in the chrome never take focus, and focus that lands on nothing
 // (a closed menu, a finished path edit) returns to the open tab.
 const refocus = () => { if (document.activeElement === document.body) tabs.focus() }
@@ -413,7 +406,7 @@ addEventListener('mousedown', e => {
   if (e.target.closest('#titlebar, #files, #git, .sash') && !e.target.closest('input, textarea')) e.preventDefault()
 })
 addEventListener('focusout', () => setTimeout(refocus))
-win.onFocusChanged(({ payload: focused }) => {
+win.onFocus(focused => {
   document.body.classList.toggle('blurred', !focused)
   if (focused) refocus()
 })

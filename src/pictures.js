@@ -4,7 +4,7 @@
 // fills the picture's box with U+10EEEE cells. A cell's color is the picture's id, and its two diacritics
 // are its row and column in the box. nook paints the picture over the cells on screen and hides the
 // placeholders under it as xterm draws them. A query (a=q) learns which ways of sending nook takes.
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { convertFileSrc } from './host.js'
 import { el } from './ui.js'
 
 const PLACEHOLDER = '\u{10EEEE}'
