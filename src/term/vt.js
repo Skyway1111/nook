@@ -1029,6 +1029,12 @@ export class Vt {
       } else if (code === 0xfeff) continue // a byte order mark
       else if (code < 127 && charset && code >= 0x60) code = charset.charCodeAt(code - 0x60)
       let width = wcwidth(code)
+      if (width && x + width <= cols && !insert) { // one or two cells, joining nothing
+        line.set(x++, code | width << 22, fg, bg, ext)
+        if (width === 2) line.set(x++, 0, fg, bg, ext)
+        join = width << 1
+        continue
+      }
       const oldWidth = join >> 1 & 3
       const joins = width === 0 && oldWidth !== 0
       if (joins) width = oldWidth
