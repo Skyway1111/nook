@@ -4,10 +4,12 @@
 /** `text` as lines, split at \r\n, \r or \n. */
 export const split = text => (text.includes('\r') ? text.split(/\r\n?|\n/) : text.split('\n'))
 
+const S = 4 // offsets are kept for every 16th line, 1 << S, and summed from there
+
 export class Doc {
   constructor(text) {
     this.lines = split(text)
-    this.starts = new Int32Array(this.lines.length + 1) // each line's offset, correct up to `known`
+    this.blocks = new Int32Array((this.lines.length >> S) + 2) // line (b << S)'s offset, right up to block `known`
     this.known = 0
     this.length = this.lines.reduce((n, l) => n + l.length + 1, -1)
   }
@@ -16,32 +18,37 @@ export class Doc {
 
   /** Line `i`'s offset. */
   start(i) {
-    if (i > this.known) this.index(i)
-    return this.starts[i]
+    const lines = this.lines, b = Math.min(i >> S, (lines.length - 1) >> S)
+    if (b > this.known) this.index(b)
+    let o = this.blocks[b]
+    for (let k = b << S; k < i; k++) o += lines[k].length + 1
+    return o
   }
 
-  index(upTo) {
-    const s = this.starts, lines = this.lines
-    let k = this.known
-    for (; k < upTo; k++) s[k + 1] = s[k] + lines[k].length + 1
-    this.known = k
+  /** Sums the offsets of blocks up to block `b`, whole ones all. */
+  index(b) {
+    const bs = this.blocks, lines = this.lines
+    for (let k = this.known; k < b; k++) {
+      let o = bs[k]
+      for (let j = k << S, e = j + (1 << S); j < e; j++) o += lines[j].length + 1
+      bs[k + 1] = o
+    }
+    this.known = b
   }
 
   /** The line holding offset `pos`. */
   lineOf(pos) {
-    const s = this.starts, last = this.lines.length - 1
-    if (pos >= s[this.known]) {
-      // extend the known offsets just past `pos`
-      while (this.known < last && s[this.known] <= pos) this.index(Math.min(last, this.known + 256))
-      if (s[this.known] <= pos) return this.known
-    }
+    const bs = this.blocks, lines = this.lines, last = (lines.length - 1) >> S
+    while (this.known < last && bs[this.known] <= pos) this.index(Math.min(last, this.known + 16))
     let lo = 0, hi = this.known
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1
-      if (s[mid] <= pos) lo = mid
+      if (bs[mid] <= pos) lo = mid
       else hi = mid - 1
     }
-    return lo
+    let i = lo << S, o = bs[lo] + lines[i].length + 1
+    for (const e = Math.min(lines.length - 1, i + (1 << S) - 1); i < e && o <= pos; o += lines[++i].length + 1);
+    return i
   }
 
   /** The text between offsets `from` and `to`, lines joined by `sep`. */
@@ -113,13 +120,13 @@ export class Doc {
       pieces.push(lines.slice(line))
       this.lines = [].concat(...pieces)
     }
-    const n = this.lines.length
-    if (n + 1 > this.starts.length) {
-      const s = new Int32Array(n + 1 + (n >> 3) + 64)
-      s.set(this.starts.subarray(0, first + 1))
-      this.starts = s
+    const nb = (this.lines.length >> S) + 2
+    if (nb > this.blocks.length) {
+      const bs = new Int32Array(nb + (nb >> 3) + 8)
+      bs.set(this.blocks.subarray(0, (first >> S) + 1))
+      this.blocks = bs
     }
-    this.known = Math.min(this.known, first)
+    this.known = Math.min(this.known, first >> S)
     return { inverse, edits }
   }
 }
