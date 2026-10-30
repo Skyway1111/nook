@@ -65,8 +65,7 @@ export function startComposer(term, host, id) {
   let tall = 0 // the card's height as last laid out, 0 while it or its tab is hidden
   let taller = false // whether the card is taller than Claude's prompt block
   let gap = null // blank rows under the transcript that take the card instead of the transcript's top: { from, to, top }
-  let report = '' // the mod's last report, as JSON
-  let state = {} // ...and parsed
+  let state = null // the mod's last report, which sessions.js reads
   let chips = ''
 
   /** The cell after the last one that draws anything: a character, or unless `text`, a styled blank. */
@@ -422,43 +421,30 @@ export function startComposer(term, host, id) {
       : (state.efforts ?? []).map(l => [l, l === state.effort ? CHECK : '', pick('effort', l)]))
   })
 
-  // A Run pressed under a shell block in Claude's reply: typed as Claude's ! command, without Enter. One the
-  // tab reported before this poll first read it is old, and isn't typed again; nor is an old Review.
-  let ran
-  let reviewed
-  const poll = setInterval(async () => {
-    if (!host.offsetWidth) return
-    const text = await invoke('pty_state', { id })
-    if (!text || text === report) return
-    try {
-      state = JSON.parse(text)
-      chips = chipsHtml(state)
-    } catch {
-      return // caught mid-write; the next poll reads it whole
-    }
-    const run = state.run
-    if (report && run?.at && run.at !== ran && typeof run.command === 'string') {
-      term.input('!')
-      term.paste(run.command)
-      term.focus()
-    }
-    ran = run?.at
-    // The band's Review, after a turn that edited files: nook opens those files' changes.
-    const review = state.review
-    if (report && review?.at && review.at !== reviewed && Array.isArray(review.files)) {
-      dispatchEvent(new CustomEvent('nook-review', { detail: { root: state.root, files: review.files } }))
-    }
-    reviewed = review?.at
-    report = text
-    render()
-  }, 500)
-
   return {
     /** The terminal holds its last frame, `n` rows tall, until Claude redraws for the new size. */
     hold(n) {
       held = n
       layout()
     },
-    close: () => clearInterval(poll),
+    /** Takes the mod's newest report: the menus and ring, and a Run or Review pressed in the transcript. What the
+     * first report holds is old, and isn't run again. */
+    report(next) {
+      const was = state
+      state = next
+      chips = chipsHtml(next)
+      // A Run pressed under a shell block in Claude's reply: typed as Claude's ! command, without Enter.
+      const { run, review } = next
+      if (was && run?.at && run.at !== was.run?.at && typeof run.command === 'string') {
+        term.input('!')
+        term.paste(run.command)
+        term.focus()
+      }
+      // The band's Review, after a turn that edited files: nook opens those files' changes.
+      if (was && review?.at && review.at !== was.review?.at && Array.isArray(review.files)) {
+        dispatchEvent(new CustomEvent('nook-review', { detail: { root: next.root, files: review.files } }))
+      }
+      render()
+    },
   }
 }

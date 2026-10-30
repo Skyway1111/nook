@@ -140,6 +140,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
   const sessions = watchSessions({
     invoke,
     tabs: () => tabs,
+    shown: tab => !tab.view.hidden,
     watched: tab => (tab === active || tab === beside) && document.hasFocus(),
     onChange: (tab, view, report) => {
       tab.el.dataset.mark = view.mark
@@ -156,6 +157,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
         tab.terminal?.prompt(tab.queue.shift())
       }
       tab.terminal?.wrote(report.touched ?? [])
+      tab.terminal?.report(report)
       if (view.attention) win.attention()
       // With nook's window in the background, the desktop says so too: the tab's dot shows only inside nook.
       const note = settings.notifications !== false && !document.hasFocus() && notice(view, report, tab.name)
