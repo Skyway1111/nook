@@ -1,3 +1,0 @@
-# The MSVC toolchain otherwise links the C runtime as DLLs, and vcruntime140.dll isn't on every Windows.
-[target.'cfg(all(windows, target_env = "msvc"))']
-rustflags = ["-C", "target-feature=+crt-static"]

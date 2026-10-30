@@ -6,6 +6,7 @@
 // NOOK_ID and NOOK_NAME, the build's identity, reach both cargo builds through the environment.
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
@@ -698,6 +699,12 @@ if (!process.argv.includes('--dist')) {
   if (process.env.CARGO_TARGET_DIR) process.env.CARGO_TARGET_DIR = resolve(process.env.CARGO_TARGET_DIR)
   const release = join(process.env.CARGO_TARGET_DIR ?? join(native, 'target'), 'release')
   const exe = windows ? 'nook.exe' : 'nook'
+  // Any flags the user set, then ~ for the home folder in the paths the exes hold, and on MSVC the C runtime linked
+  // in, so nook.exe needs no vcruntime140.dll. Flags in the environment replace any in cargo's config.
+  const { CARGO_ENCODED_RUSTFLAGS: encoded, RUSTFLAGS: flags } = process.env
+  const msvc = /^host: .*-msvc$/m.test(spawnSync('rustc', ['-vV'], { cwd: native, encoding: 'utf8' }).stdout)
+  process.env.CARGO_ENCODED_RUSTFLAGS = [...(encoded ? encoded.split('\x1f') : flags?.split(/\s+/).filter(Boolean) ?? []),
+    `--remap-path-prefix=${homedir()}=~`, ...(msvc ? ['-Ctarget-feature=+crt-static'] : [])].join('\x1f')
   run('cargo', ['build', '--release'], native)
   // The stage is a nook that runs where it is: the exe and what ships beside it, and nothing else.
   const stage = join(release, 'stage')
