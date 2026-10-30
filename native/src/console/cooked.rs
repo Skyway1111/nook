@@ -2,7 +2,7 @@
 //! the program's history, and the redraw that keeps the screen showing them.
 use super::input::{Key, LCTRL, RCTRL};
 use super::wcwidth::wcwidth;
-use super::{cup, lit};
+use super::{go, lit};
 
 /// One program's command history: OpenConsole's CommandHistory (50 commands, LastDisplayed, CLE_RESET).
 #[derive(Default)]
@@ -340,7 +340,7 @@ impl Cooked {
             return;
         }
         if std::mem::take(&mut self.clear) {
-            cup(out, origin);
+            go(out, term, origin);
             lit(out, "\x1b[J");
             term = origin;
         }
@@ -352,9 +352,7 @@ impl Cooked {
             d = self.prev_char(d);
         }
         let start = if d == 0 { origin } else { ends[d] };
-        if term != start {
-            cup(out, start);
-        }
+        go(out, term, start);
         let mut p = start;
         let mut i = d;
         while i < self.buf.len() {
@@ -376,7 +374,7 @@ impl Cooked {
                 }
             }
             for r in end.0 + 1..=old.0.min(rows - 1) {
-                cup(out, (r, 0));
+                go(out, p, (r, 0));
                 lit(out, "\x1b[K");
                 p = (r, 0);
             }
@@ -390,7 +388,7 @@ impl Cooked {
                     let from = self.prev_char(self.buf.len());
                     let s = if from == 0 { origin } else { ends[from] };
                     let s = if s.1 >= cols { (s.0 + 1, 0) } else { s };
-                    cup(out, s);
+                    go(out, p, s);
                     place(at(&self.buf, from).0, s, cols, Some(out));
                 }
                 lit(out, " \r");
@@ -402,7 +400,7 @@ impl Cooked {
         // Rows past the bottom scrolled the screen: the line moved up with it.
         let over = (max_row - (rows - 1)).max(0);
         if p != want {
-            cup(out, (want.0 - over, want.1));
+            go(out, p, want);
         }
         self.origin = Some((origin.0 - over, origin.1));
         self.drawn_end = Some((end.0 - over, end.1));

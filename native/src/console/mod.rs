@@ -400,6 +400,23 @@ fn cup(out: &mut Vec<u16>, (row, col): (i32, i32)) {
     out.push(b'H' as u16);
 }
 
+/// Appends the moves from `from` to `to` (row, column): rows relative, so lines the terminal reflowed above
+/// both, or reflows while this is on its way, don't move the target; the column absolute, which also ends a
+/// pending wrap.
+fn go(out: &mut Vec<u16>, from: (i32, i32), to: (i32, i32)) {
+    let dy = to.0 - from.0;
+    if dy != 0 {
+        lit(out, "\x1b[");
+        num(out, dy.abs());
+        out.push(if dy < 0 { b'A' } else { b'B' } as u16);
+    }
+    if dy != 0 || from.1 != to.1 {
+        lit(out, "\x1b[");
+        num(out, to.1 + 1);
+        out.push(b'G' as u16);
+    }
+}
+
 /// Appends legacy attributes `a` as OpenConsole writes them: SGR 0, reverse, then the colors, white on black being
 /// the terminal's own.
 fn sgr(out: &mut Vec<u16>, a: u16) {
