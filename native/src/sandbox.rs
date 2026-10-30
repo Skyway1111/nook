@@ -177,7 +177,8 @@ mod os {
         if h.is_null() || h == INVALID_HANDLE_VALUE { Err(io::Error::last_os_error()) } else { Ok(unsafe { OwnedHandle::from_raw_handle(h) }) }
     }
 
-    /// nook's own token, less every privilege but traverse checking, as an AppContainer's.
+    /// nook's own token, less every privilege but traverse checking, which nothing starts without, as an
+    /// AppContainer's.
     fn token() -> io::Result<OwnedHandle> {
         unsafe {
             let (mut own, mut restricted, mut boxed) = (null_mut(), null_mut(), null_mut());

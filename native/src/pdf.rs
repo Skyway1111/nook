@@ -49,7 +49,7 @@ mod os {
     use std::{
         ffi::c_void,
         ptr::{null, null_mut},
-        sync::OnceLock,
+        sync::Mutex,
         thread::sleep,
         time::{Duration, Instant},
     };
@@ -58,6 +58,7 @@ mod os {
     const RANDOM_ACCESS_STREAM: Guid = guid(0x905a0fe1_bc53_11df_8c49_001e4fc686da);
     const ASYNC_INFO: Guid = guid(0x00000036_0000_0000_c000_000000000046);
     const DXGI_DEVICE: Guid = guid(0x54ec77fa_1377_44e6_8c32_88fd5f44c84c);
+    const DXGI_DEVICE3: Guid = guid(0x6007896c_3244_4afd_bf18_a6d3beda5023);
     const DXGI_SURFACE: Guid = guid(0xcafcb56c_6ac3_4889_bf47_9e23bbd260ec);
     const WIC_FACTORY_CLASS: Guid = guid(0xcacaf262_9370_4615_a13b_9f5539da4c0a);
     const WIC_FACTORY: Guid = guid(0xec5ec8a9_c395_4314_9c77_54d7a935ff70);
@@ -68,20 +69,51 @@ mod os {
     type CreateDevice = unsafe extern "system" fn(P, u32, P, u32, *const u32, u32, u32, *mut P, *mut u32, *mut P) -> i32;
     type CreateRenderer = unsafe extern "system" fn(P, *mut P) -> i32;
 
-    /// D3D11CreateDevice and PdfCreateRenderer, from System32's DLLs, loaded the first time a PDF shows.
-    static FNS: OnceLock<Option<(CreateDevice, CreateRenderer)>> = OnceLock::new();
+    /// What every page reuses: Windows.Data.Pdf's factory, a WARP device with its context and PDF renderer, and WIC's
+    /// factory. WARP is the software device; Windows.Data.Pdf's own renderer would start the GPU's driver.
+    struct Kept {
+        statics: Com,
+        device: Com,
+        context: Com,
+        renderer: Com,
+        dxgi: Com,
+        wic: Com,
+    }
 
-    fn load() -> Option<(CreateDevice, CreateRenderer)> {
+    // SAFETY: every object here lives in the multithreaded apartment, and a WARP device takes calls from any thread.
+    unsafe impl Send for Kept {}
+
+    /// Held for a whole page: a device draws one at a time.
+    static KEPT: Mutex<Option<Kept>> = Mutex::new(None);
+
+    /// D3D11CreateDevice and PdfCreateRenderer, from System32's DLLs, loaded with the first page.
+    fn load() -> Result<(CreateDevice, CreateRenderer), i32> {
         let find = |dll: &str, name: &[u8]| unsafe {
             let module = LoadLibraryExW(wide(dll).as_ptr(), null_mut(), LOAD_LIBRARY_SEARCH_SYSTEM32);
             let f = if module.is_null() { null() } else { GetProcAddress(module, name.as_ptr()) };
-            (!f.is_null()).then_some(f)
+            (!f.is_null()).then_some(f).ok_or(0x8007007e_u32 as i32) // ERROR_MOD_NOT_FOUND
         };
         let (device, renderer) = (find("d3d11.dll", b"D3D11CreateDevice\0")?, find("windows.data.pdf.dll", b"PdfCreateRenderer\0")?);
+        unsafe { Ok((std::mem::transmute::<*const c_void, CreateDevice>(device), std::mem::transmute::<*const c_void, CreateRenderer>(renderer))) }
+    }
+
+    fn keep() -> Result<Kept, i32> {
+        let (create_device, create_renderer) = load()?;
+        let class = wide("Windows.Data.Pdf.PdfDocument");
         unsafe {
             // A thread that never set up COM is in the process's multithreaded apartment, which this keeps.
             CoIncrementMTAUsage(&mut null_mut());
-            Some((std::mem::transmute::<*const c_void, CreateDevice>(device), std::mem::transmute::<*const c_void, CreateRenderer>(renderer)))
+            // A reference string borrows `class`, so nothing frees it.
+            let (mut header, mut name, mut statics) = ([0; 3], null_mut(), null_mut());
+            ok(WindowsCreateStringReference(class.as_ptr(), class.len() as u32 - 1, &mut header, &mut name))?;
+            ok(RoGetActivationFactory(name, &PDF_DOCUMENT_STATICS, &mut statics))?;
+            let (mut device, mut context, mut renderer, mut wic) = (null_mut(), null_mut(), null_mut(), null_mut());
+            ok(create_device(null_mut(), 5, null_mut(), 0x20, null(), 0, 7, &mut device, null_mut(), &mut context))?; // WARP, BGRA
+            let (device, context) = (Com::new(device)?, Com::new(context)?);
+            ok(create_renderer(device.query(&DXGI_DEVICE)?.0, &mut renderer))?;
+            ok(CoCreateInstance(&WIC_FACTORY_CLASS, null_mut(), 1, &WIC_FACTORY, &mut wic))?; // in-process
+            let dxgi = device.query(&DXGI_DEVICE3)?;
+            Ok(Kept { statics: Com::new(statics)?, device, context, renderer: Com::new(renderer)?, dxgi, wic: Com::new(wic)? })
         }
     }
 
@@ -136,60 +168,56 @@ mod os {
 
     /// The first page of the PDF in `pdf` as PNG bytes, at the pixel size `fit` picks for the page's size.
     pub fn first_page(pdf: &[u8], fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, String> {
-        render(pdf, fit).map_err(|hr| format!("Windows.Data.Pdf: {hr:#010x}"))
+        let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+        let k = match &mut *kept {
+            Some(k) => k,
+            none => none.insert(keep().map_err(|hr| format!("Windows.Data.Pdf: {hr:#010x}"))?),
+        };
+        let png = render(k, pdf, fit);
+        // The device lets go of what the page took, as a device made for the page would.
+        unsafe {
+            k.context.at::<unsafe extern "system" fn(P)>(110)(k.context.0); // ClearState
+            k.dxgi.at::<unsafe extern "system" fn(P)>(17)(k.dxgi.0); // Trim
+        }
+        png.map_err(|hr| format!("Windows.Data.Pdf: {hr:#010x}"))
     }
 
-    fn render(pdf: &[u8], fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, i32> {
-        let &(create_device, create_renderer) = FNS.get_or_init(load).as_ref().ok_or(0x8007007e_u32 as i32)?; // ERROR_MOD_NOT_FOUND
+    fn render(k: &Kept, pdf: &[u8], fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, i32> {
         let len = u32::try_from(pdf.len()).map_err(|_| 0x80070057_u32 as i32)?; // E_INVALIDARG
-        let class = wide("Windows.Data.Pdf.PdfDocument");
         unsafe {
             let (memory, mut file) = (Com::new(SHCreateMemStream(pdf.as_ptr(), len))?, null_mut());
             ok(CreateRandomAccessStreamOverStream(memory.0, 0, &RANDOM_ACCESS_STREAM, &mut file))?; // BSOS_DEFAULT
             let file = Com::new(file)?;
-            // A reference string borrows `class`, so nothing frees it.
-            let (mut header, mut name, mut statics) = ([0; 3], null_mut(), null_mut());
-            ok(WindowsCreateStringReference(class.as_ptr(), class.len() as u32 - 1, &mut header, &mut name))?;
-            ok(RoGetActivationFactory(name, &PDF_DOCUMENT_STATICS, &mut statics))?;
-            let load = Com::new(statics)?.make(8, file.0)?; // LoadFromStreamAsync
+            let load = k.statics.make(8, file.0)?; // LoadFromStreamAsync
             wait(&load)?;
             let doc = load.get(8)?; // GetResults
             let page = doc.make(6, 0u32)?; // GetPage
             let [w, h] = page.value::<[f32; 2]>(10)?; // Size, rotation applied
             let (w, h) = fit(w as f64, h as f64);
-            // WARP, the software device. Windows.Data.Pdf's own renderer would start the GPU's driver in this process.
-            let (mut device, mut context) = (null_mut(), null_mut());
-            ok(create_device(null_mut(), 5, null_mut(), 0x20, null(), 0, 7, &mut device, null_mut(), &mut context))?; // WARP, BGRA
-            let (device, context) = (Com::new(device)?, Com::new(context)?);
-            let mut renderer = null_mut();
-            ok(create_renderer(device.query(&DXGI_DEVICE)?.0, &mut renderer))?;
-            let renderer = Com::new(renderer)?;
             let mut desc = TextureDesc { width: w, height: h, mips: 1, array: 1, format: 87, samples: [1, 0], usage: 0, bind: 0x20, cpu: 0, misc: 0 }; // B8G8R8A8, render target
             let texture = |desc: &TextureDesc| {
                 let mut out = null_mut();
-                ok(call!(device.0, 5, desc => *const TextureDesc, null_mut() => P, &mut out => *mut P))?; // CreateTexture2D
+                ok(call!(k.device.0, 5, desc => *const TextureDesc, null_mut() => P, &mut out => *mut P))?; // CreateTexture2D
                 Com::new(out)
             };
             let target = texture(&desc)?;
             let params = RenderParams { source: [0.; 4], width: w, height: h, background: [1.; 4], ignore_high_contrast: true };
-            ok(call!(renderer.0, 3, page.0 => P, target.query(&DXGI_SURFACE)?.0 => P, 0 => u64, &params => *const RenderParams))?; // RenderPageToSurface at POINT {0, 0}
+            ok(call!(k.renderer.0, 3, page.0 => P, target.query(&DXGI_SURFACE)?.0 => P, 0 => u64, &params => *const RenderParams))?; // RenderPageToSurface at POINT {0, 0}
             (desc.usage, desc.bind, desc.cpu) = (3, 0, 0x20000); // staging, CPU reads
             let copy = texture(&desc)?;
-            context.at::<unsafe extern "system" fn(P, P, P)>(47)(context.0, copy.0, target.0); // CopyResource
+            k.context.at::<unsafe extern "system" fn(P, P, P)>(47)(k.context.0, copy.0, target.0); // CopyResource
             let mut mapped = Mapped { pixels: null_mut(), pitch: 0, _depth_pitch: 0 };
-            ok(call!(context.0, 14, copy.0 => P, 0 => u32, 1 => u32, 0 => u32, &mut mapped => *mut Mapped))?; // Map, read
-            let png = encode(mapped.pixels, mapped.pitch, w, h);
-            context.at::<unsafe extern "system" fn(P, P, u32)>(15)(context.0, copy.0, 0); // Unmap
+            ok(call!(k.context.0, 14, copy.0 => P, 0 => u32, 1 => u32, 0 => u32, &mut mapped => *mut Mapped))?; // Map, read
+            let png = encode(&k.wic, mapped.pixels, mapped.pitch, w, h);
+            k.context.at::<unsafe extern "system" fn(P, P, u32)>(15)(k.context.0, copy.0, 0); // Unmap
             png
         }
     }
 
     /// `height` rows of BGRA pixels, `pitch` bytes apart, as an RGB PNG: the page is opaque.
-    unsafe fn encode(pixels: *const u8, pitch: u32, width: u32, height: u32) -> Result<Vec<u8>, i32> {
+    unsafe fn encode(factory: &Com, pixels: *const u8, pitch: u32, width: u32, height: u32) -> Result<Vec<u8>, i32> {
         unsafe {
-            let (mut factory, mut encoder, mut frame) = (null_mut(), null_mut(), null_mut());
-            ok(CoCreateInstance(&WIC_FACTORY_CLASS, null_mut(), 1, &WIC_FACTORY, &mut factory))?; // in-process
-            let factory = Com::new(factory)?;
+            let (mut encoder, mut frame) = (null_mut(), null_mut());
             ok(call!(factory.0, 8, &PNG => *const Guid, null_mut() => P, &mut encoder => *mut P))?; // CreateEncoder
             let encoder = Com::new(encoder)?;
             let memory = Com::new(SHCreateMemStream(null(), 0))?;
