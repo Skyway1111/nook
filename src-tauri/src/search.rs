@@ -146,7 +146,7 @@ fn search_file(path: &Path, needle: &str, fold: bool) -> Vec<Hit> {
         last_line = line;
         let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
         let end = text[at..].find('\n').map_or(text.len(), |i| at + i);
-        hits.push(shown(&text[start..end], at - start, needle.len(), line));
+        hits.push(shown(&text[start..end], at - start, needle.len(), line, text[start..at].chars().count() as u32 + 1));
         if hits.len() >= MAX_HITS {
             break;
         }
@@ -154,16 +154,15 @@ fn search_file(path: &Path, needle: &str, fold: bool) -> Vec<Hit> {
     hits
 }
 
-/// A hit for the match at byte `at` of `line`, `len` bytes long, with the line trimmed and cut around it.
-pub(crate) fn shown(line: &str, at: usize, len: usize, number: u32) -> Hit {
-    let col = line[..at].chars().count() as u32 + 1;
+/// A hit for the match at byte `at` of `line`, `len` bytes long, at column `col`, with the line trimmed and cut
+/// around it.
+pub(crate) fn shown(line: &str, at: usize, len: usize, number: u32, col: u32) -> Hit {
     let lead = line.len() - line.trim_start().len();
     let body = line.trim();
     let start = at.saturating_sub(lead).min(body.len());
     let end = (at + len).saturating_sub(lead).min(body.len());
     // A long line keeps a little of what comes before its match.
-    let skip = body[..start].chars().count().saturating_sub(SHOWN / 3);
-    let from = body.char_indices().nth(skip).map_or(body.len(), |(i, _)| i);
+    let from = body[..start].char_indices().rev().nth(SHOWN / 3 - 1).map_or(0, |(i, _)| i);
     let cut: String = body[from..].chars().take(SHOWN).collect();
     let mark = body[from..start].chars().count() + usize::from(from > 0);
     Hit {
@@ -200,7 +199,7 @@ mod tests {
     #[test]
     fn cuts_a_long_line_around_its_match() {
         let line = format!("{}needle{}", "x".repeat(500), "y".repeat(500));
-        let hit = shown(&line, 500, 6, 7);
+        let hit = shown(&line, 500, 6, 7, 501);
         assert_eq!(hit.col, 501);
         assert!(hit.text.starts_with('…'));
         assert_eq!(hit.text.chars().count(), SHOWN + 1);

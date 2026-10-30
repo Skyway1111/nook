@@ -1,8 +1,8 @@
 //! The search tab's find and replace across files: every match under a folder, with case, whole words and
 //! regular expressions as asked, and the replacing of the matches the tab keeps, which it can undo.
 //! A file is rewritten only while it still holds what the search read, so an edit made since is never lost.
+use crate::find::{Filter, Finder};
 use crate::search::{list, shown};
-use regex_lite::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{hash_map::DefaultHasher, HashSet},
@@ -79,49 +79,9 @@ pub struct Found {
     stale: bool,
 }
 
-/// The pattern `q` asks for. Whole words wrap it in word boundaries; without a regex its text is literal.
-/// regex-lite, not regex: a quarter of a megabyte in the binary instead of two, for ASCII-only `\w`, `\b` and
-/// case folding.
-fn pattern(q: &Query) -> Result<Regex, String> {
-    let body = if q.regex { q.text.clone() } else { regex_lite::escape(&q.text) };
-    let body = if q.word { format!(r"\b(?:{body})\b") } else { body };
-    RegexBuilder::new(&body)
-        .case_insensitive(!q.case)
-        .multi_line(true)
-        .crlf(true)
-        .size_limit(1 << 23)
-        .build()
-        .map_err(|e| e.to_string().lines().last().unwrap_or("not a regular expression").trim().to_string())
-}
-
-/// The file filter `files` names, as a test of a relative path.
-fn filter(files: &str) -> Result<impl Fn(&str) -> bool, String> {
-    let (mut keep, mut drop) = (Vec::new(), Vec::new());
-    for part in files.split(',').map(str::trim).filter(|p| !p.is_empty()) {
-        let (list, part) = match part.strip_prefix('!') {
-            Some(p) => (&mut drop, p.trim()),
-            None => (&mut keep, part),
-        };
-        let mut re = String::new();
-        let mut rest = part;
-        while !rest.is_empty() {
-            if let Some(r) = rest.strip_prefix("**") {
-                re.push_str(".*");
-                rest = r;
-            } else if let Some(r) = rest.strip_prefix('*') {
-                re.push_str("[^/]*");
-                rest = r;
-            } else {
-                let ch = rest.chars().next().unwrap();
-                re.push_str(&regex_lite::escape(if ch == '\\' { "/" } else { &rest[..ch.len_utf8()] }));
-                rest = &rest[ch.len_utf8()..];
-            }
-        }
-        // Plain text matches anywhere in the path; a pattern with `*` matches the path's end from a name's start.
-        let re = if part.contains('*') { format!(r"(?:^|/){re}$") } else { re };
-        list.push(RegexBuilder::new(&re).case_insensitive(true).build().map_err(|e| e.to_string())?);
-    }
-    Ok(move |path: &str| (keep.is_empty() || keep.iter().any(|r| r.is_match(path))) && !drop.iter().any(|r| r.is_match(path)))
+/// What `q` looks for. The error says why a regular expression is not one.
+fn pattern(q: &Query) -> Result<Finder, String> {
+    Finder::new(&q.text, q.case, q.word, q.regex)
 }
 
 /// A stamp of a file's bytes: equal stamps, the same bytes, to anything short of a deliberate collision.
@@ -141,47 +101,37 @@ fn text_of(bytes: &[u8]) -> Option<&str> {
     Some(text.strip_prefix(BOM).unwrap_or(text))
 }
 
-/// What the match `m` becomes: `with` as given, or with its groups filled in for a regular expression.
-fn replacement(q: &Query, caps: &regex_lite::Captures, with: &str) -> String {
-    if q.regex {
-        let mut out = String::new();
-        caps.expand(with, &mut out);
-        out
-    } else {
-        with.to_string()
-    }
-}
-
-/// The matches of `re` in one file, at most `room` of them. Empty matches, as `^` makes, are no use to replace.
-fn find_in(path: &Path, q: &Query, re: &Regex, with: Option<&str>, room: usize) -> Option<(String, Vec<Match>)> {
+/// The matches of `re` in one file, at most `room` of them, with what each becomes when `with` is given: its
+/// groups filled in for a regular expression, else `with` as it is.
+fn find_in(path: &Path, q: &Query, re: &Finder, with: Option<&str>, room: usize) -> Option<(String, Vec<Match>)> {
     if room == 0 || fs::metadata(path).map_or(true, |m| !m.is_file() || m.len() > MAX_FILE) {
         return None;
     }
     let bytes = fs::read(path).ok()?;
     let text = text_of(&bytes)?;
     let mut matches = Vec::new();
-    let (mut line, mut counted) = (1u32, 0usize);
-    for caps in re.captures_iter(text) {
-        let m = caps.get(0).unwrap();
-        if m.is_empty() {
-            continue;
+    // The line the last match was on: its number, start, end and the match's column, which the next match on
+    // it counts on from, so a long line is read once, not once a match.
+    let (mut line, mut start, mut end, mut col, mut counted) = (1u32, 0, 0, 1, 0);
+    let mut found = re.matches(text);
+    while let Some((m, m_end)) = found.next() {
+        let gap = &text.as_bytes()[counted..m];
+        let breaks = gap.iter().filter(|&&b| b == b'\n').count();
+        if breaks > 0 {
+            line += breaks as u32;
+            start = counted + gap.iter().rposition(|&b| b == b'\n').unwrap() + 1;
+            col = 1;
+            counted = start;
         }
-        line += text[counted..m.start()].bytes().filter(|&b| b == b'\n').count() as u32;
-        counted = m.start();
-        let start = text[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+        col += text[counted..m].chars().count() as u32;
+        counted = m;
         // A match across lines shows its first.
-        let end = text[m.start()..].find(['\r', '\n']).map_or(text.len(), |i| m.start() + i);
-        let len = m.end().min(end) - m.start();
-        let hit = shown(&text[start..end], m.start() - start, len, line);
-        matches.push(Match {
-            line,
-            col: hit.col,
-            text: hit.text,
-            at: hit.at,
-            len: hit.len,
-            start: m.start(),
-            to: with.map(|w| replacement(q, &caps, w)),
-        });
+        if m > end || matches.is_empty() {
+            end = text[m..].find(['\r', '\n']).map_or(text.len(), |i| m + i);
+        }
+        let hit = shown(&text[start..end], m - start, m_end.min(end) - m, line, col);
+        let to = with.map(|w| if q.regex { found.expand(m, m_end, w) } else { w.to_string() });
+        matches.push(Match { line, col: hit.col, text: hit.text, at: hit.at, len: hit.len, start: m, to });
         if matches.len() >= room {
             break;
         }
@@ -195,9 +145,9 @@ fn find_in(path: &Path, q: &Query, re: &Regex, with: Option<&str>, room: usize) 
 pub fn find_in_files(dir: String, query: Query, with: Option<String>) -> Result<Found, String> {
     let id = LATEST.fetch_add(1, Ordering::SeqCst) + 1;
     let re = pattern(&query)?;
-    let keep = filter(&query.files)?;
+    let keep = Filter::new(&query.files);
     let (root, files, list_partial) = list(&dir)?;
-    let files: Vec<(usize, &String)> = files.iter().enumerate().filter(|(_, f)| keep(f)).collect();
+    let files: Vec<(usize, &String)> = files.iter().enumerate().filter(|(_, f)| keep.keeps(f)).collect();
     let started = Instant::now();
     let found = AtomicUsize::new(0);
     let next = AtomicUsize::new(0);
@@ -271,17 +221,21 @@ pub struct Replaced {
 }
 
 /// `text` with each match of `re` replaced, but those starting at a byte in `skip`; and how many were.
-fn replace_text(text: &str, q: &Query, re: &Regex, with: &str, skip: &HashSet<usize>) -> (String, usize) {
+fn replace_text(text: &str, q: &Query, re: &Finder, with: &str, skip: &HashSet<usize>) -> (String, usize) {
     let mut out = String::with_capacity(text.len());
     let (mut last, mut n) = (0, 0);
-    for caps in re.captures_iter(text) {
-        let m = caps.get(0).unwrap();
-        if m.is_empty() || skip.contains(&m.start()) {
+    let mut found = re.matches(text);
+    while let Some((start, end)) = found.next() {
+        if skip.contains(&start) {
             continue;
         }
-        out.push_str(&text[last..m.start()]);
-        out.push_str(&replacement(q, &caps, with));
-        last = m.end();
+        out.push_str(&text[last..start]);
+        if q.regex {
+            out.push_str(&found.expand(start, end, with));
+        } else {
+            out.push_str(with);
+        }
+        last = end;
         n += 1;
     }
     out.push_str(&text[last..]);
@@ -366,7 +320,7 @@ mod tests {
     #[test]
     fn patterns_follow_case_words_and_regex() {
         let text = "Foo foo food a.b axb";
-        let count = |q: Query| pattern(&q).unwrap().find_iter(text).count();
+        let count = |q: Query| pattern(&q).unwrap().matches(text).count();
         assert_eq!(count(q("foo", false, false, false)), 3);
         assert_eq!(count(q("foo", true, false, false)), 2);
         assert_eq!(count(q("foo", false, true, false)), 2);
@@ -374,7 +328,7 @@ mod tests {
         assert_eq!(count(q("a.b", false, false, true)), 2);
         assert!(pattern(&q("(", false, false, true)).is_err());
         // CRLF lines end before the \r.
-        assert_eq!(pattern(&q("b$", false, false, true)).unwrap().find_iter("ab\r\nb\n").count(), 2);
+        assert_eq!(pattern(&q("b$", false, false, true)).unwrap().matches("ab\r\nb\n").count(), 2);
     }
 
     #[test]
@@ -389,15 +343,15 @@ mod tests {
 
     #[test]
     fn filters_paths() {
-        let f = filter("*.js, docs/, !test").unwrap();
-        assert!(f("src/app.js"));
-        assert!(f("docs/readme.md"));
-        assert!(!f("src/app.ts"));
-        assert!(!f("src/app.test.js"));
-        assert!(!f("test/app.js"));
-        let f = filter("src/**/*.rs").unwrap();
-        assert!(f("src/a/b/c.rs") && !f("lib/c.rs"));
-        assert!(filter("").unwrap()("anything"));
+        let f = Filter::new("*.js, docs/, !test");
+        assert!(f.keeps("src/app.js"));
+        assert!(f.keeps("docs/readme.md"));
+        assert!(!f.keeps("src/app.ts"));
+        assert!(!f.keeps("src/app.test.js"));
+        assert!(!f.keeps("test/app.js"));
+        let f = Filter::new("src/**/*.rs");
+        assert!(f.keeps("src/a/b/c.rs") && !f.keeps("lib/c.rs"));
+        assert!(Filter::new("").keeps("anything"));
     }
 
     #[test]
