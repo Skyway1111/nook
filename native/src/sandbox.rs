@@ -8,8 +8,7 @@ use std::{
     io::{self, Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{channel, Receiver},
-        Condvar, Mutex, MutexGuard,
+        Arc, Condvar, Mutex, MutexGuard,
     },
     thread,
     time::{Duration, Instant},
@@ -24,9 +23,12 @@ const MAX_REPLY: u32 = 64 << 20;
 /// Workers at once: a burst of 50 pages takes 0.47 s with 4, 0.36 s with 8, and 0.56 s drawn in nook itself.
 const MAX: usize = 4;
 
+/// The answer a worker's reader thread read last, and the signal it sends with one.
+type Inbox = Arc<(Mutex<Option<io::Result<Vec<u8>>>>, Condvar)>;
+
 struct Worker {
     input: File,
-    replies: Receiver<io::Result<Vec<u8>>>,
+    inbox: Inbox,
     last: Instant,
     /// Ends the worker when dropped.
     process: os::Process,
@@ -34,9 +36,12 @@ struct Worker {
 
 impl Worker {
     fn reply(&mut self) -> Result<Vec<u8>, String> {
-        match self.replies.recv_timeout(TIMEOUT) {
-            Ok(r) => r.map_err(|e| if e.kind() == io::ErrorKind::UnexpectedEof { "the sandbox ended".into() } else { e.to_string() }),
-            Err(_) => Err(format!("the sandbox answered nothing in {} s", TIMEOUT.as_secs())),
+        let (slot, ready) = &*self.inbox;
+        let slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+        let mut slot = ready.wait_timeout_while(slot, TIMEOUT, |r| r.is_none()).unwrap_or_else(|e| e.into_inner()).0;
+        match slot.take() {
+            Some(r) => r.map_err(|e| if e.kind() == io::ErrorKind::UnexpectedEof { "the sandbox ended".into() } else { e.to_string() }),
+            None => Err(format!("the sandbox answered nothing in {} s", TIMEOUT.as_secs())),
         }
     }
 }
@@ -102,18 +107,21 @@ fn take() -> Result<Worker, String> {
 
 fn start() -> io::Result<Worker> {
     let (process, input, mut output) = os::spawn()?;
-    let (tx, replies) = channel();
+    let inbox = Inbox::default();
+    let to = inbox.clone();
     thread::spawn(move || loop {
         let reply = read(&mut output, MAX_REPLY);
         let end = reply.is_err();
-        if tx.send(reply).is_err() || end {
+        *to.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(reply);
+        to.1.notify_one();
+        if end {
             return;
         }
     });
     if !REAPING.swap(true, Ordering::Relaxed) {
         thread::spawn(reap);
     }
-    Ok(Worker { input, replies, last: Instant::now(), process })
+    Ok(Worker { input, inbox, last: Instant::now(), process })
 }
 
 /// Ends each worker once it has been idle for `IDLE`, and itself once no worker is left.
@@ -311,8 +319,8 @@ mod os {
 
     /// The worker's pipes, its standard input and output.
     pub fn enter() -> (File, File) {
-        let take = |h: std::os::windows::io::RawHandle| unsafe { File::from_raw_handle(h) };
-        (take(io::stdin().as_raw_handle()), take(io::stdout().as_raw_handle()))
+        let take = |n| unsafe { File::from_raw_handle(GetStdHandle(n)) };
+        (take(STD_INPUT_HANDLE), take(STD_OUTPUT_HANDLE))
     }
 }
 

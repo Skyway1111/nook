@@ -579,6 +579,8 @@ pub const DISABLE_MAX_PRIVILEGE: u32 = 0x1;
 pub const HANDLE_FLAG_INHERIT: u32 = 0x1;
 pub const DETACHED_PROCESS: u32 = 0x8;
 pub const WAIT_TIMEOUT: u32 = 0x102;
+pub const STD_INPUT_HANDLE: u32 = -10i32 as u32;
+pub const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
 pub const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: usize = 0x2_0002;
 pub const PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY: usize = 0x2_0007;
 pub const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x2_000D;
@@ -615,6 +617,7 @@ zeroed!(JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
 #[link(name = "kernel32.dll", kind = "raw-dylib", modifiers = "+verbatim")]
 extern "system" {
     pub fn GetCurrentProcess() -> HANDLE;
+    pub fn GetStdHandle(which: u32) -> HANDLE;
     pub fn SetHandleInformation(handle: HANDLE, mask: u32, flags: u32) -> BOOL;
     pub fn CreateJobObjectW(attributes: *const c_void, name: PCWSTR) -> HANDLE;
     pub fn SetInformationJobObject(job: HANDLE, class: i32, info: *const c_void, len: u32) -> BOOL;
