@@ -326,9 +326,10 @@ test('a reply\'s mermaid blocks split out, each with a box sized from its source
   const reply = 'The flow:\n\n```mermaid\nflowchart LR\n  a --> b\n```\n\nThen:\n```mermaid\nsequenceDiagram\n  A->>B: hi\n  B-->>A: ok\n```\nDone.'
   expect(splitBlocks(reply)).toEqual(['The flow:', ['mermaid', 'flowchart LR\n  a --> b'], 'Then:', ['mermaid', 'sequenceDiagram\n  A->>B: hi\n  B-->>A: ok'], 'Done.'])
   expect(splitBlocks('Half a block:\n```mermaid\ngraph TD\n')).toEqual(['Half a block:\n```mermaid\ngraph TD\n'])
-  expect(diagramBox('flowchart LR\n  a --> b', 120)).toEqual([100, 8])
-  expect(diagramBox(['graph TD', ...Array.from({ length: 8 }, (_, i) => `  n${i} --> n${i + 1}`)].join('\n'), 70)).toEqual([70, 27])
-  expect(diagramBox(['graph TD', ...Array(40).fill('  a --> b')].join('\n'), 70)).toEqual([70, 40])
+  expect(diagramBox('flowchart LR\n  a --> b', 120)).toEqual([100, 5])
+  expect(diagramBox(['graph TD', ...Array.from({ length: 8 }, (_, i) => `  n${i} --> n${i + 1}`)].join('\n'), 70)).toEqual([70, 35])
+  expect(diagramBox(['graph TD', ...Array.from({ length: 30 }, (_, i) => `  n${i} --> n${i + 1}`)].join('\n'), 70)).toEqual([70, 40])
+  expect(diagramBox('sequenceDiagram\n  A->>B: hi\n  B-->>A: ok', 70)).toEqual([70, 10])
 })
 
 test('a reply with a diagram draws it in its place, in a tab nook started only', async ($, on) => {

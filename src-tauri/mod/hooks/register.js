@@ -257,13 +257,142 @@ export async function picturesMade($, command, stdout, start, root, pdf = false)
 }
 
 /** The [columns, rows] a mermaid diagram's box takes in `room` columns. Nothing draws it before nook does,
- * so its size is a guess from its source: a left-to-right chart, a gantt, a timeline, or a git graph is wide
- * and short, anything else grows about three rows a line. nook fits the drawing inside the box. */
+ * so its size is an estimate from its source by the rules nook lays it out with: a flowchart's ranks along
+ * its longest chain and its widest rank, a sequence diagram's rows. Its text shows at most 1.15 × the
+ * terminal's size, so the box is the drawing at that size, narrowed to fit. Other kinds keep a rough guess:
+ * a gantt, a timeline, a git graph, or a journey is wide and short, anything else grows about three rows a
+ * line. nook fits the drawing inside the box. */
 export function diagramBox(source, room) {
-  const lines = source.split('\n').filter(l => l.trim() && !/^\s*%%/.test(l))
-  const wide = /^\s*(?:(?:graph|flowchart)\s+(?:LR|RL)\b|gantt|timeline|gitGraph|journey)/.test(lines[0] ?? '')
-  const rows = Math.round(wide ? lines.length * 1.5 : lines.length * 3)
-  return [Math.max(20, Math.min(room, 100)), Math.max(8, Math.min(DIAGRAM_ROWS, rows))]
+  const columns = Math.max(20, Math.min(room, 100))
+  let lines = source.split('\n').filter(l => l.trim() && !/^\s*%%/.test(l))
+  if (lines[0]?.trim() === '---') lines = lines.slice(lines.findIndex((l, i) => i && l.trim() === '---') + 1)
+  const size = /^\s*(?:graph|flowchart)\b/.test(lines[0] ?? '') ? flowSize(lines) : /^\s*sequenceDiagram\b/.test(lines[0] ?? '') ? sequenceSize(lines) : null
+  let rows
+  if (size) {
+    // An 18 px label at 1.15 em of the terminal's font, in cells about 0.6 em wide and 1.2 em tall.
+    const k = 1.15 / FONT_PX, wide = (size[0] * k) / 0.6
+    rows = Math.ceil(((size[1] * k) / 1.2) * Math.min(1, columns / wide)) + 1
+  } else {
+    const wide = /^\s*(?:gantt|timeline|gitGraph|journey)/.test(lines[0] ?? '')
+    rows = Math.round(wide ? lines.length * 1.5 : lines.length * 3)
+  }
+  return [columns, Math.max(4, Math.min(DIAGRAM_ROWS, rows))]
+}
+
+const FONT_PX = 18 // a diagram label's size, in px; the sizes below are at it
+const CHAR_PX = 8.5 // an average character's width
+/** A label's [width, height] in px, wrapped at `wrap`. */
+function textSize(text, wrap) {
+  const parts = text.split(/<br\s*\/?>/i).map(t => t.trim().length * CHAR_PX)
+  return [Math.min(wrap, Math.max(...parts)), parts.reduce((n, w) => n + Math.max(1, Math.ceil(w / wrap)), 0) * 22]
+}
+
+/** A flowchart's drawn [width, height] in px, near enough: nodes in ranks by their longest chain of edges,
+ * and subgraphs whose ranks overlap side by side. */
+function flowSize(lines) {
+  const lr = /^\s*\S+\s+(?:LR|RL)\b/.test(lines[0])
+  const nodes = new Map(), edges = [], inside = new Map(), open = [], members = new Map(), turned = []
+  let deepest = 0, labeled = 0, labelW = 0
+  const node = part => {
+    const m = /^\s*([\p{L}\p{N}_$][\p{L}\p{N}_$.-]*)(.*)$/u.exec(part)
+    if (!m) return null
+    const [, id, rest] = m
+    const text = /label\s*:\s*"([^"]*)"/.exec(rest)?.[1] ?? rest.replace(/:::.*$/, '').replace(/^[\s([{>/\\]+|[\s)\]}/\\]+$/g, '').replace(/^"`?|`?"$/g, '')
+    if (!nodes.has(id) || text) {
+      const [tw, th] = textSize(text || id, 200)
+      const diamond = /^\s*\{(?!\{)/.test(rest) || /shape\s*:\s*(?:diam|diamond|decision|question)\b/.test(rest)
+      const H = diamond ? 2.2 * (th + 8) : th + 16
+      nodes.set(id, diamond ? [(tw + 16) / (1 - (th + 8) / H), H] : /^\s*\(\(/.test(rest) ? Array(2).fill(Math.hypot(tw, th) + 8) : [tw + 28, H])
+    }
+    // A node belongs to the subgraph it's first named in; each open subgraph counts it among its members.
+    if (open.length && !inside.has(id)) inside.set(id, open[0])
+    for (const g of open) members.get(g).add(id)
+    return id
+  }
+  for (const raw of lines.slice(1)) {
+    const line = raw.trim()
+    const sub = /^subgraph\s+([^\s[]+)/.exec(line)
+    if (sub) open.push(sub[1]), members.set(sub[1], members.get(sub[1]) ?? new Set()), (deepest = Math.max(deepest, open.length))
+    else if (/^end\b/.test(line)) open.pop()
+    else if (/^direction\b/.test(line) && open.length) turned.push(members.get(open[open.length - 1]))
+    if (/^(?:subgraph|end|direction|classDef|class|style|linkStyle|click)\b/.test(line)) continue
+    // `a -- text --> b` and `a -->|text| b`: the arrows, each label counted.
+    const plain = line.replace(/(--|==|-\.)\s+([^|]*?)\s+(-{2,}>?|={2,}>?|\.+->?)/g, (_, a, t, b) => (labeled++, (labelW += t.length * CHAR_PX), b))
+      .replace(/\|([^|]*)\|/g, (_, t) => (labeled++, (labelW += t.length * CHAR_PX), ''))
+    const parts = plain.split(/\s*(<?(?:-{2,}|={2,})[>xo-]?|[<xo]?-?\.+-[>xo]?|~{3,})\s*/)
+    let from = null
+    for (let k = 0; k < parts.length; k += 2) {
+      const to = parts[k].split('&').map(node).filter(Boolean)
+      // A longer arrow asks for more ranks: --> is one, ---> two.
+      if (from) for (const a of from) for (const b of to) edges.push([a, b, Math.max(1, (parts[k - 1].match(/[-=.]/g)?.length ?? 2) - (/[>xo]$/.test(parts[k - 1]) ? 1 : 2))])
+      from = to
+    }
+  }
+  // An edge to a subgraph is an edge to each node in it. A subgraph turned its own way stacks across, so
+  // the edges inside it add no ranks.
+  const expand = id => (members.has(id) ? [...members.get(id)].filter(n => !members.has(n)) : [id])
+  const out = new Map([...nodes.keys()].map(id => [id, []]))
+  for (const [a, b, len] of edges) for (const x of expand(a)) for (const y of expand(b)) if (x !== y && out.has(x) && out.has(y) && !turned.some(t => t.has(x) && t.has(y))) out.get(x).push([y, len])
+  // Ranks: each node past its deepest parent; an edge back up its chain is left out, and widens the drawing.
+  const rank = new Map(), state = new Map(), order = []
+  let back = 0
+  const visit = id => {
+    state.set(id, 1)
+    for (const [b] of out.get(id)) if (!state.has(b)) visit(b)
+    else if (state.get(b) === 1) back++
+    state.set(id, 2)
+    order.push(id)
+  }
+  for (const id of nodes.keys()) if (!state.has(id) && !members.has(id)) visit(id)
+  order.reverse()
+  const at = new Map(order.map((id, i) => [id, i]))
+  for (const id of order) for (const [b, len] of out.get(id)) if (at.get(b) > at.get(id)) rank.set(b, Math.max(rank.get(b) ?? 0, (rank.get(id) ?? 0) + len))
+  // Along the ranks: each rank's deepest node. Across: each rank's nodes side by side, a subgraph taking its
+  // widest rank's width at every rank it spans.
+  const ranks = [], groups = new Map()
+  for (const id of order) {
+    const r = rank.get(id) ?? 0, [w, h] = nodes.get(id), g = inside.get(id)
+    ranks[r] ??= { along: 0, across: 0 }
+    ranks[r].along = Math.max(ranks[r].along, lr ? w : h)
+    if (!g) { ranks[r].across += (lr ? h : w) + 28; continue }
+    const box = groups.get(g) ?? { lo: r, hi: r, rows: new Map() }
+    groups.set(g, box)
+    box.lo = Math.min(box.lo, r)
+    box.hi = Math.max(box.hi, r)
+    box.rows.set(r, (box.rows.get(r) ?? 0) + (lr ? h : w) + 28)
+  }
+  for (const box of groups.values()) {
+    const wide = Math.max(...box.rows.values()) + 24
+    for (let r = box.lo; r <= box.hi; r++) (ranks[r] ??= { along: 0, across: 0 }).across += wide
+  }
+  const gap = labeled ? 47 + (lr ? labelW / labeled : 24) : 36
+  const along = ranks.reduce((s, r) => s + (r?.along ?? 0), 0) + (ranks.length - 1) * gap + deepest * 60
+  const across = Math.max(0, ...Array.from(ranks, r => r?.across ?? 0)) + back * 24
+  return lr ? [along, across] : [across, along]
+}
+
+/** A sequence diagram's drawn [width, height] in px, near enough: a row a message, note, or block line. */
+function sequenceSize(lines) {
+  const names = new Map()
+  let h = 78, widest = 0
+  const name = (id, label = id) => names.set(id.trim(), Math.max(names.get(id.trim()) ?? 0, label.trim().length * CHAR_PX + 24, 90))
+  for (const raw of lines.slice(1)) {
+    const line = raw.trim()
+    let m
+    if ((m = /^(?:create\s+)?(?:participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$/i.exec(line))) name(m[1], m[2])
+    else if ((m = /^note\s+[^:]*:(.*)$/i.exec(line))) h += textSize(m[1], 240)[1] + 30
+    else if (/^(?:loop|alt|opt|par|critical|break|rect)\b/i.test(line)) h += 34
+    else if (/^(?:else|and|option)\b/i.test(line)) h += 32
+    else if (/^end$/i.test(line)) h += 8
+    else if ((m = /^(.+?)\s*(?:<<-->>|<<->>|-->>|->>|--x|-x|--\)|-\)|-->|->)[+-]?\s*(.+?)\s*(?::(.*))?$/.exec(line))) {
+      name(m[1])
+      name(m[2])
+      const [tw, th] = textSize(m[3] ?? '', 320)
+      h += th + 18 + (m[1].trim() === m[2].trim() ? 22 : 0)
+      widest = Math.max(widest, tw + 48)
+    } else if (/^title\b/i.test(line)) h += 34
+  }
+  return [Math.max([...names.values()].reduce((s, w) => s + w + 30, 0), widest + 100), h]
 }
 
 /** A short name for `text`, the same each time: FNV-1a, in base 36. */
