@@ -43,7 +43,8 @@ fn read_at(r: &mut dyn Source, at: u64, len: usize) -> Result<Vec<u8>, String> {
 }
 
 /// A name in an archive as a relative path, its parts joined by `/`, or None when it would leave the folder it
-/// unpacks into: absolute, on a drive, through `..` (or `...`, which Windows reads as it), or into a stream (`:`).
+/// unpacks into: absolute, on a drive, through `..`, or into a stream (`:`). A part of only dots and spaces counts as
+/// `..`, since Windows trims both from a part's end.
 pub fn path(name: &str) -> Option<String> {
     if name.starts_with(['/', '\\']) {
         return None;
