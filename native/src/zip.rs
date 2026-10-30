@@ -12,6 +12,10 @@ const MAX_FILES: usize = 4096;
 const MAX_BYTES: u64 = 256 << 20;
 const BROKEN: &str = "it isn't a .zip nook can read";
 
+/// An archive to read: a file, or bytes in memory. One copy of the reader serves both.
+pub trait Source: Read + Seek {}
+impl<T: Read + Seek> Source for T {}
+
 pub struct Entry {
     /// Its path in the archive as `path` makes it.
     pub name: String,
@@ -32,7 +36,7 @@ fn u32_at(b: &[u8], i: usize) -> u32 {
     u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]])
 }
 
-fn read_at(r: &mut (impl Read + Seek), at: u64, len: usize) -> Result<Vec<u8>, String> {
+fn read_at(r: &mut dyn Source, at: u64, len: usize) -> Result<Vec<u8>, String> {
     let mut buf = vec![0; len];
     r.seek(SeekFrom::Start(at)).and_then(|_| r.read_exact(&mut buf)).map_err(|_| BROKEN)?;
     Ok(buf)
@@ -60,7 +64,7 @@ fn name(raw: &[u8]) -> String {
 }
 
 /// The archive's entries, from the central directory at its end.
-pub fn entries(r: &mut (impl Read + Seek)) -> Result<Vec<Entry>, String> {
+pub fn entries(r: &mut dyn Source) -> Result<Vec<Entry>, String> {
     let len = r.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
     let tail = read_at(r, len.saturating_sub(22 + 0xffff), len.min(22 + 0xffff) as usize)?;
     let end = (0..tail.len().saturating_sub(21)).rev().find(|&i| tail[i..].starts_with(b"PK\x05\x06")).ok_or(BROKEN)?;
@@ -98,7 +102,7 @@ pub fn entries(r: &mut (impl Read + Seek)) -> Result<Vec<Entry>, String> {
 }
 
 /// An entry's bytes, unpacked and checked against its CRC.
-pub fn read(r: &mut (impl Read + Seek), e: &Entry) -> Result<Vec<u8>, String> {
+pub fn read(r: &mut dyn Source, e: &Entry) -> Result<Vec<u8>, String> {
     let head = read_at(r, e.at, 30)?;
     if !head.starts_with(b"PK\x03\x04") {
         return Err(BROKEN.into());
@@ -117,7 +121,7 @@ pub fn read(r: &mut (impl Read + Seek), e: &Entry) -> Result<Vec<u8>, String> {
 }
 
 /// Unpacks every entry into the folder `to`.
-pub fn extract(r: &mut (impl Read + Seek), to: &Path) -> Result<(), String> {
+pub fn extract(r: &mut dyn Source, to: &Path) -> Result<(), String> {
     for e in entries(r)? {
         let path = to.join(&e.name);
         let bytes = if e.dir { None } else { Some(read(r, &e)?) };
@@ -132,7 +136,7 @@ pub fn extract(r: &mut (impl Read + Seek), to: &Path) -> Result<(), String> {
 
 /// Writes a zip of `files`, each its name in the archive and the file on disk, storing each as it is: a theme's
 /// pictures and fonts are packed already.
-pub fn write(out: &mut impl Write, files: &[(String, PathBuf)]) -> Result<(), String> {
+pub fn write(out: &mut dyn Write, files: &[(String, PathBuf)]) -> Result<(), String> {
     let too_big = || "it's over 4 GB".to_string();
     let (mut at, mut dir) = (0u64, Vec::new());
     for (name, path) in files {
@@ -194,7 +198,8 @@ struct Bits<'a> {
 }
 
 impl Bits<'_> {
-    /// Tops `bits` up to 56 or more, or with all that's left.
+    /// Tops `bits` up to 56 or more, or with all that's left. Called once every few codes, so it stays one copy.
+    #[inline(never)]
     fn fill(&mut self) {
         if let Some(word) = self.data.get(self.at..self.at + 8) {
             // Bits past `n` already hold the next byte's low bits, the same ones this puts there.

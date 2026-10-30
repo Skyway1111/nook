@@ -114,7 +114,7 @@ pub fn install_theme(path: String) -> Result<String, String> {
 fn install_from(themes: &Path, src: &Path) -> Result<String, String> {
     let zipped = src.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
     let name = if zipped { src.file_stem() } else { src.file_name() };
-    install(themes, name.map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), |stage| {
+    install(themes, name.map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), &|stage| {
         if zipped {
             zip::extract(&mut fs::File::open(src).map_err(err)?, stage)
         } else if src.is_dir() {
@@ -135,14 +135,15 @@ fn named(body: &[u8]) -> Result<(String, &[u8]), String> {
 /// then its bytes.
 pub fn install_theme_zip(body: &[u8]) -> Result<String, String> {
     let (name, bytes) = named(body)?;
-    install(&config_dir().join("themes"), name, |stage| zip::extract(&mut Cursor::new(bytes), stage))
+    install(&config_dir().join("themes"), name, &|stage| zip::extract(&mut Cursor::new(bytes), stage))
 }
 
 /// `install_theme` for a theme the page made, such as one from a picture. The body is its name, a NUL, then each
 /// file as its name, a NUL, its length in decimal, a NUL, and its bytes.
 pub fn install_theme_files(body: &[u8]) -> Result<String, String> {
-    let (name, mut rest) = named(body)?;
-    install(&config_dir().join("themes"), name, |stage| {
+    let (name, files) = named(body)?;
+    install(&config_dir().join("themes"), name, &|stage| {
+        let mut rest = files;
         while !rest.is_empty() {
             let (file, after) = named(rest)?;
             let (len, after) = named(after)?;
@@ -177,12 +178,10 @@ pub fn save_theme_zip(name: String) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Each file in `dir` and the folders in it, as its path in a .zip under `inside` and on disk, in name order. What
-/// the file browser hides stays out.
+/// Each file in `dir` and the folders in it, as its path in a .zip under `inside` and on disk. What the file browser
+/// hides stays out.
 fn list_files(dir: &Path, inside: &str, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
-    let mut entries: Vec<_> = fs::read_dir(dir).map_err(err)?.flatten().collect();
-    entries.sort_by_key(|e| e.file_name());
-    for e in entries {
+    for e in fs::read_dir(dir).map_err(err)?.flatten() {
         let Some(is_dir) = crate::shown_dir(&e) else { continue };
         let name = format!("{inside}/{}", e.file_name().to_string_lossy());
         if is_dir {
@@ -204,7 +203,7 @@ pub fn zip_holds_theme(path: String) -> bool {
 /// Installs a theme as `themes\<name>`, over any theme of that name. `fill` puts its files in a hidden folder, and
 /// the folder in there that holds theme.css names it, or `name` when theme.css is at the top. The theme then
 /// swaps in with two renames, so a window reading it finds the old or the new, never half.
-fn install(themes: &Path, name: String, fill: impl FnOnce(&Path) -> Result<(), String>) -> Result<String, String> {
+fn install(themes: &Path, name: String, fill: &dyn Fn(&Path) -> Result<(), String>) -> Result<String, String> {
     let stage = themes.join(format!(".{}", unique()));
     fs::create_dir_all(&stage).map_err(err)?;
     let installed = fill(&stage).and_then(|()| {
