@@ -2,8 +2,8 @@
 // wallpapers.js, which loads with the first scene other than none, under the terminal, whose background is
 // transparent. theme.css names the scene in `--wallpaper`, so a theme can ship one, the user's theme.css overrides
 // it, and every window follows a pick within a second. Each role's color, the opacity, and the cell size are theme
-// variables too. A frame copies glyphs from an atlas into only the cells that changed since the last one, so a frame
-// costs a few hundred small copies, not a full redraw of text.
+// variables too. A frame copies tiles from an atlas into only the cells that changed since the last one, each over
+// its own ground, so a frame costs a few hundred small copies, not a full redraw.
 import { bytes } from './palette.js'
 import { el } from './ui.js'
 import { SETTLE_MS } from './backdrops.js'
@@ -15,70 +15,20 @@ const THUMB_PX = 4 // the picker's thumbnails draw their cells this many pixels 
 const still = matchMedia('(prefers-reduced-motion: reduce)')
 
 /** Sizes `canvas` to a CSS box of `width` x `height` at the screen's pixel density, and fits cells to it: `size`
- * pixels high in font `family`, each a whole number of device pixels, so a cell's copy never blurs or leaves a
- * seam. The last row ends `floor` CSS pixels above the bottom edge. Returns `{ ctx, w, h, cols, rows }` in device
- * pixels, the context drawing in them from the first row's top, and `tiles`, a fresh glyph atlas in `colors`.
- * The last column may run past the canvas's edge. */
-function fit(canvas, width, height, size, family, colors, floor = 0) {
+ * pixels high and `aspect` times narrower, each a whole number of device pixels, so a cell's copy never blurs or
+ * leaves a seam. The last row ends `floor` CSS pixels above the bottom edge. Returns `{ ctx, w, h, top, cols, rows }`
+ * in device pixels, `top` where the first row starts. The last column may run past the canvas's edge. */
+function fit(canvas, width, height, size, aspect, floor = 0) {
   const dpr = devicePixelRatio || 1
   canvas.width = Math.max(1, Math.round(width * dpr))
   canvas.height = Math.max(1, Math.round(height * dpr))
   const ctx = canvas.getContext('2d')
-  const font = `${size * dpr}px ${family}`
-  ctx.font = font
-  const w = Math.max(1, Math.round(ctx.measureText('M').width || size * dpr * 0.6))
-  const h = Math.max(1, Math.ceil(size * dpr))
+  ctx.imageSmoothingEnabled = false // the ground stretches a pixel a cell
+  const h = Math.max(2, Math.round(size * dpr))
+  const w = Math.max(1, Math.round(h / aspect))
   const base = canvas.height - Math.round(floor * dpr)
   const rows = Math.max(1, Math.floor(base / h))
-  ctx.translate(0, base - rows * h)
-  return { ctx, w, h, cols: Math.ceil(canvas.width / w), rows, tiles: atlas(w, h, font, colors) }
-}
-
-const ATLAS_COLS = 32 // tiles a row of the atlas holds
-/** A glyph atlas: each character in each role's color, drawn once into its own tile, `w` wide and as high as the
- * font's glyphs reach, at least `h`. `spill` is how far a tile runs below its cell. */
-function atlas(w, h, font, colors) {
-  let ctx = null
-  const where = new Map()
-  const probe = el('canvas').getContext('2d')
-  probe.font = font
-  probe.textBaseline = 'top'
-  const reach = probe.measureText('█_gjy|()[]{}')
-  const spill = Math.max(0, Math.min(h, Math.ceil(reach.fontBoundingBoxDescent ?? reach.actualBoundingBoxDescent ?? h) - h))
-  const tall = h + spill
-  const tiles = {
-    canvas: el('canvas', { width: w * ATLAS_COLS, height: tall * 4 }),
-    spill,
-    at(ch, role) {
-      const key = role + '\0' + ch
-      let at = where.get(key)
-      if (at) return at
-      const n = where.size
-      at = [(n % ATLAS_COLS) * w, Math.floor(n / ATLAS_COLS) * tall]
-      if (at[1] + tall > tiles.canvas.height) {
-        // Twice the rows, keeping the tiles drawn so far.
-        const grown = el('canvas', { width: tiles.canvas.width, height: tiles.canvas.height * 2 })
-        grown.getContext('2d').drawImage(tiles.canvas, 0, 0)
-        tiles.canvas = grown
-        ctx = null
-      }
-      if (!ctx) {
-        ctx = tiles.canvas.getContext('2d')
-        ctx.font = font
-        ctx.textBaseline = 'top'
-      }
-      ctx.save()
-      ctx.beginPath()
-      ctx.rect(at[0], at[1], w, tall)
-      ctx.clip()
-      ctx.fillStyle = colors[role]
-      ctx.fillText(ch, at[0], at[1])
-      ctx.restore()
-      where.set(key, at)
-      return at
-    },
-  }
-  return tiles
+  return { ctx, w, h, top: base - rows * h, cols: Math.ceil(canvas.width / w), rows }
 }
 
 /** Draws the wallpaper in `pane`. `button` opens the picker, `save(id)` keeps a pick by setting
@@ -104,7 +54,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   let previewing = null // a scene the picker shows before it's kept
   let showing = true // false while a file tab is in front
   let focused = document.hasFocus() // the wallpaper moves only while nook's window has focus
-  let cells = null // the canvas's context, cells, and glyph atlas, from fit, while a scene shows
+  let cells = null // the canvas's context and cells, from fit, its tile atlas, and its scene's ground, while a scene shows
   let onCanvas = null, spare = null // the grid on the canvas, and one to draw the next frame into
   let floor = 0 // the scene stands this many CSS pixels above the pane's bottom, on the composer card
   let quiet = -Infinity, lastFrame = -Infinity, raf = 0 // no frame draws before `quiet`, while the pane resizes
@@ -127,7 +77,16 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
     }
     const { width, height } = pane.getBoundingClientRect()
     floor = stand()
-    cells = fit(canvas, width, height, look.size, look.family, look.colors, floor)
+    cells = fit(canvas, width, height, look.size, art.ASPECT, floor)
+    cells.tiles = art.atlas(cells.w, cells.h, look.family, look.colors)
+    cells.sky = null // the scene whose ground `cells.ground` holds
+  }
+
+  /** Scene `sid`'s ground over `cols` x `rows` cells, on a canvas a pixel a cell. */
+  function ground(sid, cols, rows) {
+    const c = el('canvas', { width: cols, height: rows })
+    c.getContext('2d').putImageData(new ImageData(art.ground(art.scene(sid), cols, rows, look.colors), cols, rows), 0, 0)
+    return c
   }
 
   /** The top of the tallest composer card showing, above the pane's bottom. While none shows, as in Claude's
@@ -141,9 +100,14 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   /** Draws the frame at `now`, touching only the cells that changed since the last one. */
   function draw(now = performance.now()) {
     lastFrame = now
-    const { ctx, w, h, cols, rows, tiles } = cells
-    const g = art.render(id(), cols, rows, clock(now), spare)
-    art.paint(ctx, g, w, h, tiles, onCanvas)
+    const c = cells
+    if (c.sky !== id()) {
+      c.ground = ground(id(), c.cols, c.rows)
+      c.sky = id()
+      onCanvas = spare = null
+    }
+    const g = art.render(id(), c.cols, c.rows, clock(now), spare)
+    art.paint(c.ctx, g, c, c.tiles, c.ground, onCanvas)
     spare = onCanvas
     onCanvas = g
   }
@@ -205,15 +169,11 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
   function restyle() {
     const style = getComputedStyle(document.documentElement)
     const v = name => style.getPropertyValue(name).trim()
-    const rgba = color => {
-      const [r, g, b, a] = bytes(color)
-      return `rgba(${r}, ${g}, ${b}, ${(a / 255).toFixed(3)})`
-    }
     look = {
       id: v('--wallpaper') || 'none',
       size: parseFloat(v('--wallpaper-font-size')) || 14,
       family: v('--font-term') || 'monospace',
-      colors: Object.fromEntries((art?.ROLES ?? []).map(r => [r, rgba(v(`--wallpaper-${r}`) || v('--ink-3'))])),
+      colors: Object.fromEntries((art?.ROLES ?? []).map(r => [r, bytes(v(`--wallpaper-${r}`) || v('--ink-3'))])),
     }
     for (const [name, value] of held) if (v(name) === value || parseFloat(v(name)) === parseFloat(value)) held.delete(name)
     motion = held.get('--wallpaper-motion') ?? v('--wallpaper-motion')
@@ -344,9 +304,12 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
     const api = {
       focus: () => box.focus(),
       restyle() {
-        thumbs = cards.map(({ thumb }) => {
+        let tiles = null // one atlas serves every thumbnail, all one size
+        thumbs = cards.map(({ thumb, sid }) => {
           const { width, height } = thumb.getBoundingClientRect()
-          return { ...fit(thumb, width, height, THUMB_PX, look.family, look.colors), last: null, spare: null }
+          const c = fit(thumb, width, height, THUMB_PX, art.ASPECT)
+          tiles ??= art.atlas(c.w, c.h, look.family, look.colors)
+          return { ...c, tiles, ground: ground(sid, c.cols, c.rows), last: null, spare: null }
         })
         api.tick(clock(performance.now()))
       },
@@ -354,7 +317,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
         cards.forEach(({ sid }, i) => {
           const th = thumbs[i]
           const g = art.render(sid, th.cols, th.rows, t, th.spare)
-          art.paint(th.ctx, g, th.w, th.h, th.tiles, th.last)
+          art.paint(th.ctx, g, th, th.tiles, th.ground, th.last)
           th.spare = th.last
           th.last = g
         })
