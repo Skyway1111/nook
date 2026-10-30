@@ -46,7 +46,6 @@ const I_AUTOLINK = /<([a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\s\x00-\x1f<>]*|[a-zA-Z0-9.
 const EMAIL = /[A-Za-z0-9._+-]+@[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![\w-])/.source
 const I_URL = re(`(?:mailto:${EMAIL}|xmpp:${EMAIL}(?:\\/[A-Za-z0-9@.]+)?)|((?:[hH][tT][tT][pP][sS]?|[fF][tT][pP]):\\/\\/|www\\.)(?:[a-zA-Z0-9\\-]+\\.?)+[^\\s<]*|[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![\\w-])`)
 const BACKPEDAL = /(?:[^?!.,:;*_'"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_'"~)]+(?!$))+/
-const I_TEXT = /(?:[^a-zA-Z0-9](?=(?:mailto|xmpp):)|(`+|~+|[^`~])(?:(?=[`~])|(?= {2,}\n)|(?=[a-zA-Z0-9.!#$%&'*+/=?_`{|}~-]+@)|[\s\S]*?(?:(?=[\\<![`*~_]|\b_|[hH][tT][tT][pP]|[fF][tT][pP]:\/\/|www\.|$)|[^ ](?= {2,}\n)|[^a-zA-Z0-9](?=(?:mailto|xmpp):)|[^a-zA-Z0-9.!#$%&'*+/=?_`{|}~-](?=[a-zA-Z0-9.!#$%&'*+/=?_`{|}~-]+@))))/y
 const TASK = /^\[[ xX]\] +/
 const IS_TASK = /^\[[ xX]\] +\S/
 
@@ -82,6 +81,7 @@ const lineAt = (s, p) => {
 
 /** `encodeURI`, keeping the `%` escapes already there, or null for a lone surrogate. */
 function cleanUrl(href) {
+  if (/^[\w;,/?:@&=+$\-.!~*'()#%]*$/.test(href)) return href
   try { return encodeURI(href).replace(/%25/g, '%') } catch { return null }
 }
 
@@ -606,8 +606,8 @@ function maskRef(m0) {
 /** `src` with links, code, tags and escapes hidden from emphasis, at the same length. */
 function mask(src) {
   let m = src.includes('[') ? src.replace(REF_SEARCH, maskRef) : src
-  m = m.replace(ANY_PUNCT, x => '+'.repeat(x.length))
-  return m.replace(SKIP, x => '[' + 'a'.repeat(x.length - 2) + ']')
+  if (src.includes('\\')) m = m.replace(ANY_PUNCT, x => '+'.repeat(x.length))
+  return /[[`<]/.test(src) ? m.replace(SKIP, x => '[' + 'a'.repeat(x.length - 2) + ']') : m
 }
 
 /** A link or image to `href`, or undefined when its text holds a link. */
@@ -725,11 +725,76 @@ function delimited(src, p, prev, masked, alt, tilde) {
   }
 }
 
+// ASCII classes for plain text: 1 starts something else, 2 can be in an email's name, 4 is a letter or digit.
+const CH = new Uint8Array(128)
+for (const ch of '\\<![`*~_') CH[ch.charCodeAt(0)] |= 1
+for (const ch of ".!#$%&'*+/=?_`{|}~-") CH[ch.charCodeAt(0)] |= 2
+for (let c = 48; c < 123; c++) if (c < 58 || (c > 64 && c < 91) || c > 96) CH[c] |= 6
+const cls = c => c < 128 ? CH[c] : 0
+const mailtoAt = (s, i) => s.startsWith('mailto:', i) || s.startsWith('xmpp:', i)
+const STOP = /[\\<![`*~_]|[hH][tT][tT][pP]|[fF][tT][pP]:\/\/|www\./g
+
+/**
+ * Where the plain text at `p` ends: before anything that could start a link, emphasis, code, a tag, a break or a
+ * bare URL or email. Each kind's next place is found once and kept in `k` until the text passes it.
+ */
+function textEnd(s, p, k) {
+  const n = s.length
+  let c = s.charCodeAt(p)
+  if (!(cls(c) & 4) && mailtoAt(s, p + 1)) return p + 1
+  let q = p + 1
+  if (c === 96 || c === 126) while (s.charCodeAt(q) === c) q++
+  if (k.stop < q) {
+    STOP.lastIndex = q
+    k.stop = STOP.exec(s)?.index ?? n
+  }
+  if (k.br < q) {
+    let t = s.indexOf('  \n', q)
+    if (t < 0) t = n
+    else while (t > q && s.charCodeAt(t - 1) === 32) t--
+    k.br = t
+  }
+  if (k.mail <= q) {
+    let t = q + 1
+    for (;;) {
+      const a = s.indexOf('mailto:', t), b = s.indexOf('xmpp:', t)
+      t = a < 0 ? b : b < 0 ? a : Math.min(a, b)
+      if (t < 0) t = n
+      else if (cls(s.charCodeAt(t - 1)) & 4) {
+        t++
+        continue
+      }
+      break
+    }
+    k.mail = t
+  }
+  if (k.at <= q) {
+    let a = q
+    for (;;) {
+      a = s.indexOf('@', a)
+      if (a < 0) {
+        k.at = k.name = n
+        break
+      }
+      let u = a
+      while (u > 0 && cls(s.charCodeAt(u - 1)) & 2) u--
+      if (u < a && a > q) {
+        k.at = a
+        k.name = u
+        break
+      }
+      a++
+    }
+  }
+  return Math.min(k.stop, k.br, k.mail, Math.max(k.name, q))
+}
+
 /** The HTML for inline Markdown `src`, or its plain text for an image's alt when `alt`. */
 function inline(src, alt) {
   const n = src.length
   let out = '', text = '', textRaw = false, inText = false
   let prev = '', keep = false, masked = null
+  const k = { stop: -1, br: -1, mail: -1, at: -1, name: 0 }
   let p = 0, m, r
   while (p < n) {
     if (!keep) prev = ''
@@ -812,9 +877,9 @@ function inline(src, alt) {
       p = r[0]
       continue
     }
-    I_TEXT.lastIndex = p
-    const raw = I_TEXT.exec(src)[0]
-    p += raw.length
+    const end = textEnd(src, p, k)
+    const raw = src.slice(p, end)
+    p = end
     const last = raw[raw.length - 1]
     if (last !== '_') prev = last
     keep = true
