@@ -445,15 +445,19 @@ export class Term {
       if (range) {
         const abs = view + y
         if (abs > sy && abs < ey) s1 = cols
-        else if (abs === sy && sy === ey) [s0, s1] = [sx, ex]
-        else if (abs === ey && sy < ey) s1 = ex
-        else if (abs === sy && sy < ey) [s0, s1] = [sx, cols]
+        else if (abs === sy) {
+          s0 = sx
+          s1 = sy === ey ? ex : cols
+        } else if (abs === ey) s1 = ex
       }
       let h0 = 0
       let h1 = 0
       if (hover) {
         const abs = top + y
-        if (abs >= hover.y1 && abs <= hover.y2) [h0, h1] = [abs === hover.y1 ? hover.x1 : 0, abs === hover.y2 ? hover.x2 : cols]
+        if (abs >= hover.y1 && abs <= hover.y2) {
+          h0 = abs === hover.y1 ? hover.x1 : 0
+          h1 = abs === hover.y2 ? hover.x2 : cols
+        }
       }
       const k = y * 5
       const curState = cur < 0 ? -1 : cur * 8 + look
@@ -738,11 +742,9 @@ export class Term {
   /** Scrolls to `pos` px, the view landing on the nearest row. */
   scrollTo(pos) {
     this.pos = pos
-    const row = Math.round(pos / this.cellH)
-    const diff = row - this.vt.buffer.ydisp
+    const diff = Math.round(pos / this.cellH) - this.vt.buffer.ydisp
     if (diff) this.scrollLines(diff)
     else this.revealBar()
-    this.pos = pos
     this.barKey = ''
     this.updateBar()
   }
@@ -1022,10 +1024,7 @@ export class Term {
 
   // ---- selection
 
-  hasSelection() {
-    const s = this.selEnds()
-    return !!s && (s[0] !== s[2] || s[1] !== s[3])
-  }
+  hasSelection() { return !!this.selRange() }
 
   /** The selection's ends, ordered, as [startX, startLine, endX, endLine] with lines counted for good, or null. */
   selEnds() {
