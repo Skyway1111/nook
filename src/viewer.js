@@ -28,10 +28,10 @@ const MEDIA = /\.(mp4|webm|mov|m4v|ogv|mp3|wav|ogg|oga|flac|m4a|aac|opus)$/i
 const PDF = /\.pdf$/i
 
 async function markdown(text, path) {
-  const [{ marked }, { highlight }, { clean }] = await Promise.all([import('marked'), editing(), import('./sanitize.js')])
+  const [{ toHtml }, { highlight }, { clean }] = await Promise.all([import('./markdown.js'), editing(), import('./sanitize.js')])
   // An inert document: nothing loads until the relative image paths point at the disk.
-  const doc = Document.parseHTML ? Document.parseHTML(marked.parse(text), SANITIZE)
-    : clean(new DOMParser().parseFromString(marked.parse(text), 'text/html'))
+  const html = toHtml(text)
+  const doc = Document.parseHTML ? Document.parseHTML(html, SANITIZE) : clean(new DOMParser().parseFromString(html, 'text/html'))
   for (const img of doc.querySelectorAll('img[src]')) {
     const src = img.getAttribute('src')
     if (!SCHEME.test(src)) img.src = convertFileSrc(resolve(src, path))
