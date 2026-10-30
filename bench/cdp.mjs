@@ -1,6 +1,7 @@
-// A CDP session with a dev nook's page, for the bench scripts. Start nook with CDP on its own WebView2 profile,
-// fill Claude's screen with transcript (`!ls -laR src` does), then run a script:
-//   $env:WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\nook-cdp"
+// A CDP session with a dev nook's page, for the bench scripts. Start a dev nook as dev.nook.cdp, which keeps its own
+// settings and WebView2 profile, with CDP on, fill Claude's screen with transcript (`!ls -laR src` does), then run a
+// script:
+//   $env:NOOK_ID = 'dev.nook.cdp'
 //   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222 --disable-gpu'
 //   npm run dev -- -- <folder>
 export async function connect(port = 9222) {

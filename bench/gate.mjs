@@ -8,10 +8,11 @@
 // that flags nothing took its time where it was needed. Exit code 1 if anything looks worse than noise; rerun
 // that pass with bench/linux.mjs at full length before believing a small flag.
 //   node bench/gate.mjs [--main origin/main] [--bin build] [--all]
-// --bin skips building this tree and benches that build instead. Main's builds and their shared cargo target
-// live in ~/.cache/nook-bench; deleting it is safe.
+// --bin skips building this tree and benches that build instead, which has to be nook built as dev.nook.bench, as
+// every build here is (bench/linux.mjs checks). Main's builds and their shared cargo target live in
+// ~/.cache/nook-bench; deleting it is safe.
 import { execFileSync, spawnSync } from 'child_process'
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'fs'
+import { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -26,22 +27,33 @@ const run = (command, args, opts) => {
   const r = spawnSync(command, args, { stdio: 'inherit', ...opts })
   if (r.status !== 0) throw new Error(`${command} ${args.join(' ')} failed`)
 }
+// Every build is nook as dev.nook.bench: its own settings and WebKit data, whatever the tree's own identity.
+const ID = 'dev.nook.bench'
+const env = { ...process.env, NOOK_ID: ID, TAURI_CONFIG: JSON.stringify({ identifier: ID }) }
+const benched = bin => existsSync(bin) && readFileSync(bin).includes(ID)
 
-/** Main's release build at `ref`, made in a worktree the first time and kept by commit. */
+/** Main's release build at `ref`, made in a worktree the first time and kept by commit, with what ships beside it.
+ * A commit with scripts/build.mjs builds itself; an older one builds with its own tauri-cli. */
 function mainBuild(ref) {
   if (ref.startsWith('origin/')) git('fetch', '-q', 'origin', ref.slice('origin/'.length))
   const sha = git('rev-parse', '--short=10', `${ref}^{commit}`)
   const bin = join(store, sha, 'nook')
-  if (existsSync(bin)) return { sha, bin }
+  if (benched(bin)) return { sha, bin }
   console.log(`Building ${ref} (${sha}), once for this commit.`)
   const dir = join(store, sha, 'src')
   rmSync(dir, { recursive: true, force: true })
   git('worktree', 'add', '-f', '--detach', dir, sha)
   try {
-    run('npm', ['ci', '--no-audit', '--no-fund'], { cwd: dir })
     // One cargo target for every main build, so only nook's own crate compiles again.
-    run('npx', ['tauri', 'build', '--no-bundle'], { cwd: dir, env: { ...process.env, CARGO_TARGET_DIR: join(store, 'target') } })
-    copyFileSync(join(store, 'target', 'release', 'nook'), bin)
+    const opts = { cwd: dir, env: { ...env, CARGO_TARGET_DIR: join(store, 'target') } }
+    if (existsSync(join(dir, 'scripts', 'build.mjs'))) {
+      run(process.execPath, ['scripts/build.mjs', '--no-pack'], opts)
+      cpSync(join(store, 'target', 'release', 'stage'), join(store, sha), { recursive: true })
+    } else {
+      run('npm', ['ci', '--no-audit', '--no-fund'], { cwd: dir })
+      run('npx', ['tauri', 'build', '--no-bundle'], opts)
+      copyFileSync(join(store, 'target', 'release', 'nook'), bin)
+    }
   } finally {
     git('worktree', 'remove', '--force', dir)
   }
@@ -53,8 +65,8 @@ let bin = flag('bin', null)
 if (bin) bin = resolve(bin)
 else {
   console.log('Building this tree.')
-  run('npx', ['tauri', 'build', '--no-bundle'], { cwd: repo })
-  bin = join(repo, 'src-tauri', 'target', 'release', 'nook')
+  run(process.execPath, ['scripts/build.mjs', '--no-pack'], { cwd: repo, env })
+  bin = join(resolve(repo, process.env.CARGO_TARGET_DIR ?? 'src-tauri/target'), 'release', 'stage', 'nook')
 }
 const built = performance.now()
 

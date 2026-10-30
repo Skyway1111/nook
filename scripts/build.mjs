@@ -368,7 +368,9 @@ const run = (command, args, cwd) => {
 bundle()
 if (!process.argv.includes('--dist')) {
   const tauri = join(root, 'src-tauri')
-  const release = join(resolve(process.env.CARGO_TARGET_DIR ?? join(tauri, 'target')), 'release')
+  // Cargo reads a relative CARGO_TARGET_DIR from src-tauri, where it runs, so it gets the whole path.
+  if (process.env.CARGO_TARGET_DIR) process.env.CARGO_TARGET_DIR = resolve(process.env.CARGO_TARGET_DIR)
+  const release = join(process.env.CARGO_TARGET_DIR ?? join(tauri, 'target'), 'release')
   const exe = windows ? 'nook.exe' : 'nook'
   run('cargo', ['build', '--release'], tauri)
   // The stage is a nook that runs where it is: the exe and what ships beside it, and nothing else.
@@ -382,7 +384,7 @@ if (!process.argv.includes('--dist')) {
     run('cargo', ['build', '--release'], join(tauri, 'setup'))
     const version = /^version = "(.+)"/m.exec(readFileSync(join(tauri, 'Cargo.toml'), 'utf8'))[1]
     const out = join(release, `${process.env.NOOK_NAME || 'nook'}_${version}_x64-setup.exe`)
-    run(join(resolve(process.env.CARGO_TARGET_DIR ?? join(tauri, 'setup', 'target')), 'release', 'setup.exe'), ['--pack', stage, out], root)
+    run(join(process.env.CARGO_TARGET_DIR ?? join(tauri, 'setup', 'target'), 'release', 'setup.exe'), ['--pack', stage, out], root)
     console.log(out)
   }
 }

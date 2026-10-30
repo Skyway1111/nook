@@ -7,15 +7,16 @@
 // CPU and memory count nook and its WebView2 processes, not the shell in its tab, which runs cmd.exe. Every
 // launch times its open; the first --sessions launches of each build also run the rest. Launches take turns
 // between the builds, and the table flags a change worse than its noise, as bench/linux.mjs does.
-// Close nook first. While the bench runs, your settings folder moves aside so every launch starts from the
-// bench's own, and it comes back when the bench ends, even after Ctrl+C.
+// Every build is nook as dev.nook.bench, with its own settings and WebView2 profile, so your own nook can stay open
+// and its settings are never touched. An --exe has to be built that way too: `$env:NOOK_ID = 'dev.nook.bench';
+// npm run build -- --no-pack` puts one in src-tauri\target\release\stage.
 //   npm run bench:windows
 //   node bench/windows.mjs [--base 3318948] [--new origin/main] [--exe base.exe,new.exe] [--wallpapers none,koi]
 //                          [--runs 20] [--sessions 3]
 // Each commit builds in a git worktree in %LOCALAPPDATA%\nook-bench; after deleting that folder, `git worktree
 // prune` forgets them.
 import { spawn, execFileSync } from 'child_process'
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -32,57 +33,49 @@ const sessions = Math.min(runs, Number(flag('sessions', 3)))
 const repo = fileURLToPath(new URL('..', import.meta.url))
 const helper = fileURLToPath(new URL('windows.ps1', import.meta.url))
 const store = join(process.env.LOCALAPPDATA, 'nook-bench')
-const config = join(process.env.APPDATA, 'dev.nook.app') // where nook keeps its settings, themes, and theme.css
-const aside = `${config}.before-bench`
+const ID = 'dev.nook.bench'
+const config = join(process.env.APPDATA, ID) // where the bench's nook keeps its settings, themes, and theme.css
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim()
 
-/** A release build of `ref`, made in its own worktree unless one is there from an earlier run. */
+/** Whether `exe` is nook as dev.nook.bench, which never opens your own settings or profile. */
+function benched(exe) {
+  const bytes = existsSync(exe) && readFileSync(exe)
+  return !!bytes && (bytes.includes(ID) || bytes.includes(Buffer.from(ID, 'utf16le')))
+}
+
+/** A release build of `ref` as dev.nook.bench, made in its own worktree unless one is there from an earlier run.
+ * A commit with scripts/build.mjs builds itself; an older one builds with its own tauri-cli. */
 function build(ref) {
   if (ref.startsWith('origin/')) git('fetch', '-q', 'origin', ref.slice('origin/'.length))
   const sha = git('rev-parse', '--short=10', `${ref}^{commit}`)
   const dir = join(store, sha)
-  const exe = join(dir, 'src-tauri', 'target', 'release', 'nook.exe')
-  if (existsSync(exe)) return { label: `${ref} (${sha})`, exe }
   if (!existsSync(dir)) git('worktree', 'add', '-f', '--detach', dir, sha)
+  const own = existsSync(join(dir, 'scripts', 'build.mjs'))
+  const exe = join(dir, 'src-tauri', 'target', 'release', ...(own ? ['stage'] : []), 'nook.exe')
+  if (benched(exe)) return { label: `${ref} (${sha})`, exe }
   console.log(`Building ${ref} (${sha}) in ${dir}. A commit's first build takes a few minutes.`)
-  const run = (...command) => execFileSync(command.join(' '), { cwd: dir, stdio: 'inherit', shell: true })
-  run('npm', 'ci')
-  run('npx', 'tauri', 'build', '--no-bundle')
-  if (!existsSync(exe)) throw new Error(`no nook.exe after building ${sha}`)
+  const env = { ...process.env, NOOK_ID: ID, TAURI_CONFIG: JSON.stringify({ identifier: ID }) }
+  const run = (...command) => execFileSync(command.join(' '), { cwd: dir, env, stdio: 'inherit', shell: true })
+  if (own) run('node', 'scripts/build.mjs', '--no-pack')
+  else {
+    run('npm', 'ci')
+    run('npx', 'tauri', 'build', '--no-bundle')
+  }
+  if (!benched(exe)) throw new Error(`no nook.exe built as ${ID} after building ${sha}`)
   return { label: `${ref} (${sha})`, exe }
-}
-
-const running = () => execFileSync('tasklist', ['/FI', 'IMAGENAME eq nook.exe', '/NH'], { encoding: 'utf8' }).includes('nook.exe')
-if (running()) {
-  console.error('nook is running. Close it first: the bench moves its settings folder aside while it runs.')
-  process.exit(2)
-}
-if (existsSync(aside)) {
-  console.error(`A bench run that ended early left your settings in ${aside}.\nDelete ${config}, rename ${aside} back to dev.nook.app, then run the bench again.`)
-  process.exit(2)
 }
 
 const exes = flag('exe', null)
 const builds = exes
   ? exes.split(',').map(e => ({ label: e, exe: resolve(e) }))
   : [build(flag('base', '3318948')), build(flag('new', 'origin/main'))]
-for (const b of builds) if (!existsSync(b.exe)) throw new Error(`no build at ${b.exe}`)
+for (const b of builds) if (!benched(b.exe)) throw new Error(`${b.exe} isn't nook built as ${ID}, so it would open your own settings`)
 
-// From here on, launches write to `config`, so the user's own folder waits in `aside` until the bench ends.
 const children = new Set()
-let moved = false
-function restore() {
-  for (const child of children) try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {}
-  if (!moved) return
-  rmSync(config, { recursive: true, force: true })
-  if (existsSync(aside)) renameSync(aside, config)
-  moved = false
-}
-process.on('exit', restore)
+const stopAll = () => { for (const child of children) try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {} }
+process.on('exit', stopAll)
 for (const signal of ['SIGINT', 'SIGHUP']) process.on(signal, () => process.exit(130)) // Ctrl+C, or the console closing
-if (existsSync(config)) renameSync(config, aside)
-moved = true
 
 /** A fresh settings folder whose tab runs cmd.exe and whose theme.css picks `wallpaper`. */
 function scratch(wallpaper) {
@@ -188,7 +181,6 @@ for (const wallpaper of wallpapers) {
   }
   rmSync(home, { recursive: true, force: true })
 }
-restore()
 
 let worse = 0
 for (const { wallpaper, mine } of results) {

@@ -4,12 +4,16 @@
 // shows, raster ms, and the display compositor's ms per frame.
 // Then parity: each element that holds its gradients still (backdrops.js), screenshotted with its baked
 // bitmaps and with live CSS. A pixel off by more than 2 of 255 is more than dither.
-// cdp.mjs has the command that starts nook with CDP on 9222.
+// cdp.mjs has the command that starts nook with CDP on 9222. The window dragged is this repo's dev build's.
 //   node bench/resize.mjs [port]
 import { execFileSync } from 'child_process'
+import { resolve } from 'path'
+import { fileURLToPath } from 'url'
 import { connect, sleep, median, quantile } from './cdp.mjs'
 
 const { send, evaluate, trace, close } = await connect(process.argv[2])
+const repo = fileURLToPath(new URL('..', import.meta.url))
+const exe = resolve(repo, process.env.CARGO_TARGET_DIR ?? 'src-tauri/target', 'debug', 'nook.exe')
 
 // Prints "epochMs width height" per step. Per-monitor DPI aware, so sizes are physical px like the page's.
 const DRAG = `Add-Type @'
@@ -41,7 +45,7 @@ public static class Drag {
   }
 }
 '@
-[Drag]::Run((Get-Process nook | Where-Object { $_.Path -like '*\\target\\debug\\nook.exe' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowHandle)`
+[Drag]::Run((Get-Process nook | Where-Object { $_.Path -eq '${exe}' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowHandle)`
 
 // Each frame: when, the page's size in physical px, and the length of the text Claude's rows show.
 await evaluate(`(() => {
@@ -102,15 +106,17 @@ const diff = (a, b) => evaluate(`(async () => {
   return { max, over }
 })()`)
 
+/** The element as it holds its bitmaps, its background-* in its style, against the live CSS under them. */
 async function parity(selector) {
   const el = `document.querySelector('${selector}')`
-  if (!await evaluate(`import('/src/backdrops.js').then(async m => !!(window.__baked = await m.bake(${el})), () => false)`)) return null
+  const baked = `[...${el}.style].filter(p => p.startsWith('background-')).map(p => [p, ${el}.style.getPropertyValue(p)])`
+  if (!await evaluate(`(window.__baked = ${baked}).some(([, v]) => v.includes('blob:'))`)) return null
   const shot = async () => (await send('Page.captureScreenshot', { format: 'png' })).data
-  const live = await shot()
-  await evaluate(`for (const [p, v] of __baked.style) ${el}.style.setProperty(p, v)`)
-  await sleep(300)
   const held = await shot()
-  await evaluate(`for (const [p] of __baked.style) ${el}.style.removeProperty(p)`)
+  await evaluate(`for (const [p] of __baked) ${el}.style.removeProperty(p)`)
+  await sleep(300)
+  const live = await shot()
+  await evaluate(`for (const [p, v] of __baked) ${el}.style.setProperty(p, v)`)
   return diff(live, held)
 }
 
