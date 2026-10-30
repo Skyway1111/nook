@@ -410,10 +410,10 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       })
       if (bp.length < (hs.length >> B) + 2) { const more = new Float64Array((hs.length >> B) * 2 + 2); more.set(bp); bp = more }
       bpKnown = Math.min(bpKnown, at2[0] >> B)
-      bmKnown = Math.min(bmKnown, at2[0] >> B)
       cb = -1
       for (const [s, t] of dropped ?? []) for (let j = s; j < t; j++) if (!hs[j] && !foldIn(j)) setH(j, wrap ? estimate(j) : lh)
     }
+    bmKnown = Math.min(bmKnown, at2[0] >> B) // with or without heights, a block's longest line may have changed
     if (d || edits.some(e => e.ins > 1)) {
       const moved = new Map()
       let k = 0, dd = 0

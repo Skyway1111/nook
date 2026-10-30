@@ -11,6 +11,7 @@ export class Doc {
     this.lines = split(text)
     this.blocks = new Int32Array((this.lines.length >> S) + 2) // line (b << S)'s offset, right up to block `known`
     this.known = 0
+    this.at = this.atOffset = 0 // the last line start or lineOf found, and its offset, which a look just past it walks on from
     this.length = this.lines.reduce((n, l) => n + l.length + 1, -1)
   }
 
@@ -18,10 +19,16 @@ export class Doc {
 
   /** Line `i`'s offset. */
   start(i) {
-    const lines = this.lines, b = Math.min(i >> S, (lines.length - 1) >> S)
-    if (b > this.known) this.index(b)
-    let o = this.blocks[b]
-    for (let k = b << S; k < i; k++) o += lines[k].length + 1
+    const lines = this.lines
+    let k = this.at, o = this.atOffset
+    if (i < k || i > k + (1 << S)) {
+      const b = Math.min(i >> S, (lines.length - 1) >> S)
+      if (b > this.known) this.index(b)
+      k = b << S
+      o = this.blocks[b]
+    }
+    for (; k < i; k++) o += lines[k].length + 1
+    if (i < lines.length) { this.at = i; this.atOffset = o }
     return o
   }
 
@@ -38,16 +45,24 @@ export class Doc {
 
   /** The line holding offset `pos`. */
   lineOf(pos) {
-    const bs = this.blocks, lines = this.lines, last = (lines.length - 1) >> S
-    while (this.known < last && bs[this.known] <= pos) this.index(Math.min(last, this.known + 16))
-    let lo = 0, hi = this.known
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1
-      if (bs[mid] <= pos) lo = mid
-      else hi = mid - 1
+    const bs = this.blocks, lines = this.lines, last = lines.length - 1
+    let i = this.at, o = this.atOffset, e = Math.min(last, i + (1 << S))
+    if (pos >= o) for (; i < e && o + lines[i].length + 1 <= pos; i++) o += lines[i].length + 1
+    if (pos < this.atOffset || (i === e && i < last && o + lines[i].length + 1 <= pos)) {
+      const lb = last >> S
+      while (this.known < lb && bs[this.known] <= pos) this.index(Math.min(lb, this.known + 16))
+      let lo = 0, hi = this.known
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1
+        if (bs[mid] <= pos) lo = mid
+        else hi = mid - 1
+      }
+      i = lo << S
+      o = bs[lo]
+      for (e = Math.min(last, i + (1 << S) - 1); i < e && o + lines[i].length + 1 <= pos; i++) o += lines[i].length + 1
     }
-    let i = lo << S, o = bs[lo] + lines[i].length + 1
-    for (const e = Math.min(lines.length - 1, i + (1 << S) - 1); i < e && o <= pos; o += lines[++i].length + 1);
+    this.at = i
+    this.atOffset = o
     return i
   }
 
@@ -127,6 +142,7 @@ export class Doc {
       this.blocks = bs
     }
     this.known = Math.min(this.known, first >> S)
+    this.at = this.atOffset = 0
     return { inverse, edits }
   }
 }
