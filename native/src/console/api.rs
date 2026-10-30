@@ -1185,7 +1185,12 @@ impl State {
         let alert = take(&mut self.alert);
         for _ in 0..self.waits.len() {
             let Some(mut w) = self.waits.pop_front() else { break };
-            if alert && matches!(w.kind, WaitKind::Read { .. }) {
+            if let (true, WaitKind::Read { raw_io, .. }) = (alert, w.kind) {
+                // Nothing read: the request's own NumBytes would hand the client its buffer back as a line.
+                if !raw_io {
+                    wr(&mut w.reply.body, 12, 0u32);
+                    wr(&mut w.reply.body, 16, 0u32);
+                }
                 self.dev.complete(&Reply { status: ALERTED, ..w.reply });
                 continue;
             }
