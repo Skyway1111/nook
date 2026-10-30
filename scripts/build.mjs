@@ -20,10 +20,8 @@ const PAYLOAD = [
   ...(windows ? [
     ['native/conpty/conpty.dll', 'conpty.dll'],
     ['native/conpty/OpenConsole.exe', 'OpenConsole.exe'],
-    ['native/conpty/LICENSE', 'conpty-LICENSE.txt'],
   ] : []),
-  ['src/fonts/OFL.txt', 'Libron-LICENSE.txt'],
-  ['src/fonts/FluentIcons-LICENSE.txt', 'FluentIcons-LICENSE.txt'],
+  ['LICENSES.txt', 'LICENSES.txt'],
   ['mod/.claude-plugin/plugin.json', 'mod/.claude-plugin/plugin.json'],
   ['mod/hooks/hooks.json', 'mod/hooks/hooks.json'],
   ['mod/hooks/register.js', 'mod/hooks/register.js'],

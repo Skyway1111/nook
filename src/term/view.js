@@ -1,5 +1,5 @@
 // A terminal on the page: a Vt's screen drawn as DOM rows, and keys, the mouse, and the clipboard turned into
-// what the program reads, as xterm.js turns them. Its classes are the ones nook's CSS and benches use: .xterm,
+// what the program reads, as xterm turns them. Its classes are the ones nook's CSS and benches use: .xterm,
 // .xterm-screen, .xterm-rows, .xterm-cursor, .xterm-helper-textarea. Each frame compares every row with what it
 // drew last and rewrites only the rows that changed. Colors are classes bound to theme variables, so a theme
 // change redraws nothing.

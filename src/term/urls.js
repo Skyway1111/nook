@@ -1,5 +1,6 @@
 // Web addresses in a terminal's text as links: http(s) URLs, read across rows a long line wraps onto, each one
-// that parses as a URL whose start is its own.
+// that parses as a URL whose start is its own. The pattern, the check, and the 2048-character window are xterm.js's
+// web-links addon's (LICENSES.txt).
 const URL_RE = /(https?|HTTPS?):[/]{2}[^\s"'!*(){}|\\^<>`]*[^\s"':,.!?{}|\\^~[\]`()<>]/g
 
 /** Whether `s` starts with the origin it parses to, so a URL with stray text in front of its host is not one. */

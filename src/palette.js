@@ -6,7 +6,7 @@ import nook from '../mod/themes/nook.json' with { type: 'json' }
 const ANSI = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white']
 const SLOTS = new Map(Object.entries(nook.overrides).map(([token, color]) => [Number(/\d+(?=\))/.exec(color)), token]))
 
-/** The variable that colors palette slot `c`, or null for a slot that keeps xterm's color. */
+/** The variable that colors palette slot `c`, or null for a slot drawn in its standard 256-color value (view.js). */
 export function slotVar(c) {
   if (c < 16) return `--ansi-${c < 8 ? ANSI[c] : 'bright-' + ANSI[c - 8]}`
   return SLOTS.has(c) ? `--claude-${SLOTS.get(c)}` : null

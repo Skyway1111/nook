@@ -1,6 +1,6 @@
-// Markdown to HTML for file tabs, GitHub's flavor as marked 18 writes it: the same tags, attributes and quirks.
-// viewer.js sanitizes what this returns. Blocks are read first, so a link defined below its use resolves; then each
-// block's inline text is read in the order it was found, and the blocks are written out.
+// Markdown to HTML for file tabs, GitHub's flavor as marked 18 writes it (LICENSES.txt): the same tags, attributes
+// and quirks. viewer.js sanitizes what this returns. Blocks are read first, so a link defined below its use
+// resolves; then each block's inline text is read in the order it was found, and the blocks are written out.
 
 const TAG = 'address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul'
 const HR = / {0,3}((?:-[\t ]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})(?:\n+|$)/.source
@@ -10,7 +10,7 @@ const HTML6 = `<\\/?(?:${TAG})(?: +|\\n|\\/?>)|<(?:script|pre|style|textarea|!--
 const DELIM = /((?:\| *)?:?-+:? *(?:\| *:?-+:? *)*(?:\| *)?)/.source
 const re = (s, f = 'y') => new RegExp(s, f)
 
-// marked's block and inline patterns, sticky, so a document splits into the same pieces.
+// marked's block and inline patterns (LICENSES.txt), sticky, so a document splits into the same pieces.
 const B_FENCES = /( {0,3})(`{3,}(?=[^`\n]*(?:\n|$))|~{3,})([^\n]*)(?:\n|$)(?:|([\s\S]*?)(?:\n|$))(?: {0,3}\2[~`]* *(?=\n|$)|$)/y
 const B_HEADING = / {0,3}(#{1,6})(?=\s|$)(.*)(?:\n+|$)/y
 const B_HR = re(HR)
