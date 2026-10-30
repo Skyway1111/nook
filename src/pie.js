@@ -19,19 +19,25 @@ export function draw(src, c) {
   }
   if (!slices.length) throw new Error('no slices')
   const total = slices.reduce((s, [, v]) => s + v, 0)
+  if (!Number.isFinite(total)) throw new Error('no total')
+  // Each slice's share: on the slice where it fits, else after its name in the legend.
+  let at = 0
+  const arcs = slices.map(([, v]) => {
+    const a0 = (at / total) * 2 * Math.PI, a1 = ((at += v) / total) * 2 * Math.PI, share = (100 * v) / total
+    const words = `${share < 10 ? +share.toFixed(1) : Math.round(share)}%`
+    return { a0, a1, words, fits: (a1 - a0) * 0.66 * R >= measure(words, 1) + 6 }
+  })
   const head = title ? label(title, false, 2 * R + 200) : null, top = head ? head.h + 12 : 0
-  const legend = slices.map(([name, v]) => label(show ? `${name} [${+v.toFixed(2)}]` : name, false, 280))
+  const legend = slices.map(([name, v], k) => label(`${name}${show ? ` [${+v.toFixed(2)}]` : ''}${arcs[k].fits ? '' : ` (${arcs[k].words})`}`, false, 280))
   const legendH = legend.reduce((s, l) => s + l.h + 6, -6), lx = 2 * R + 36
   const cy = top + Math.max(R, legendH / 2)
-  let out = '', at = 0
-  slices.forEach(([, v], k) => {
-    const a0 = (at / total) * 2 * Math.PI, a1 = ((at += v) / total) * 2 * Math.PI, fill = c.cat(k)
-    const p = a => [R + R * Math.sin(a), cy - R * Math.cos(a)]
-    if (slices.length === 1) out += `<circle class="slice" cx="${R}" cy="${r(cy)}" r="${R}" fill="${fill}"/>`
-    else out += `<path class="slice" d="M${R},${r(cy)}L${p(a0).map(r)}A${R},${R} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${p(a1).map(r)}z" fill="${fill}"/>`
-    const share = (100 * v) / total, mid = (a0 + a1) / 2, words = `${share < 10 ? +share.toFixed(1) : Math.round(share)}%`
-    // A slice too thin for its share's text shows it in the legend only.
-    if ((a1 - a0) * 0.66 * R >= measure(words, 1) + 6) out += `<text class="share" x="${r(R + 0.66 * R * Math.sin(mid))}" y="${r(cy - 0.66 * R * Math.cos(mid) + 6)}" text-anchor="middle">${words}</text>`
+  let out = ''
+  const p = a => [R + R * Math.sin(a), cy - R * Math.cos(a)]
+  arcs.forEach(({ a0, a1, words, fits }, k) => {
+    if (slices.length === 1) out += `<circle class="slice" cx="${R}" cy="${r(cy)}" r="${R}" fill="${c.cat(k)}"/>`
+    else out += `<path class="slice" d="M${R},${r(cy)}L${p(a0).map(r)}A${R},${R} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${p(a1).map(r)}z" fill="${c.cat(k)}"/>`
+    const mid = (a0 + a1) / 2
+    if (fits) out += `<text class="share" x="${r(R + 0.66 * R * Math.sin(mid))}" y="${r(cy - 0.66 * R * Math.cos(mid) + 6)}" text-anchor="middle">${words}</text>`
   })
   let y = cy - legendH / 2
   legend.forEach((l, k) => {

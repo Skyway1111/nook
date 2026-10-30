@@ -1,12 +1,13 @@
 // mermaid's classDiagram: each class a box of its name, attributes and methods, laid out by layered.js
 // along its relations. A line it can't read is skipped.
 import { layout, trace, basis, box } from './layered.js'
-import { label, text, esc, r, styles } from './labels.js'
+import { label, text, esc, r, styles, labelBox, split } from './labels.js'
 
 const PX = 12, PY = 6 // px around a compartment's lines
 // What each end of a relation draws, and how far short of the box its line stops for it.
 const ENDS = { '<|': ['tri', 14], '|>': ['tri', 14], '*': ['comp', 18], o: ['aggr', 18], '<': ['open', 0], '>': ['open', 0], '()': ['lolli', 12] }
-const REL = /^(.*?\S)\s*(?:"([^"]*)"\s*)?(<\||\*|o|<|\(\))?(--|\.\.)(\|>|\*|o|>|\(\))?\s*(?:"([^"]*)"\s*)?(\S.*)$/
+// An `o` end stands apart from the name beside it: `Photo--Album` relates Photo.
+const REL = /^(.*?\S)\s*(?:"([^"]*)"\s*)?(<\||\*|(?<!\w)o|<|\(\))?(--|\.\.)(\|>|\*|o(?!\w)|>|\(\))?\s*(?:"([^"]*)"\s*)?(\S.*)$/
 
 /** `~T~` generics as `<T>`, nested ones too. */
 function generic(s) {
@@ -64,8 +65,8 @@ export function draw(src) {
     let m
     if (line === '}') space = -1
     else if ((m = /^direction\s+(TB|TD|BT|LR|RL)\b/i.exec(line))) dir = m[1].toUpperCase().replace('TD', 'TB')
-    else if ((m = /^namespace\s+(.+?)\s*\{?$/.exec(line))) spaces.push(m[1].replace(/^`(.*)`$/, '$1')), (space = spaces.length - 1)
-    else if ((m = /^class\s+(.+?)(?::::([\w-]+))?\s*(\{)?\s*(?:\}\s*)?$/.exec(line))) {
+    else if ((m = /^namespace\s+(.*?\S)\s*\{?$/.exec(line))) spaces.push(m[1].replace(/^`(.*)`$/, '$1')), (space = spaces.length - 1)
+    else if ((m = /^class\s+(.*?[^\s{}])(?::::([\w-]+))?\s*(?:(\{)[\s}]*)?$/.exec(line))) {
       const c = cls(m[1])
       if (m[2]) c.css.push(m[2])
       if (m[3] && !line.endsWith('}')) body = c
@@ -74,7 +75,7 @@ export function draw(src) {
     else if ((m = /^classDef\s+(\S+)\s+(.*)$/.exec(line))) for (const n of m[1].split(',')) classDefs.set(n, styles(m[2]))
     else if ((m = /^cssClass\s+"([^"]*)"\s+([\w-]+)/.exec(line))) for (const n of m[1].split(',')) cls(n).css.push(m[2])
     else if ((m = /^style\s+(\S+)\s+(.*)$/.exec(line))) own.push([cls(m[1]), styles(m[2])])
-    else if (/^(?:click|link|callback|accTitle|accDescr)\b/.test(line)) continue
+    else if (/^(?:click|link|callback)\b/.test(line)) continue
     else {
       // A relation, `A "1" *-- "n" B : label`, or a member, `A : +name`.
       const colon = line.indexOf(':')
@@ -138,10 +139,7 @@ export function draw(src) {
       const back = 10 - cut
       front += `<text class="card" x="${r(p[0] + ux * back - uy * 14)}" y="${r(p[1] + uy * back + ux * 14 + 5)}" text-anchor="middle">${esc(card)}</text>`
     }
-    if (rel.lab && e.label) {
-      const l = rel.lab, [lx, ly] = e.label
-      front += `<rect class="elabel" x="${r(lx - l.w / 2 - 4)}" y="${r(ly - l.h / 2 - 1)}" width="${r(l.w + 8)}" height="${r(l.h + 2)}" rx="3"/>` + text(l, lx, ly)
-    }
+    if (rel.lab && e.label) front += labelBox(rel.lab, ...e.label)
   })
   let linked = rels.length
   notes.forEach((n, k) => {
@@ -153,20 +151,19 @@ export function draw(src) {
   const css = order.map(c => [...(classDefs.get('default') ?? []), ...c.css.flatMap(n => classDefs.get(n) ?? [])])
   for (const [c, list] of own) css[index.get(c)].push(...list)
   order.forEach((c, k) => {
-    const b = boxes[k], [x, y] = res.nodes[k], x0 = x - b.w / 2, y0 = y - b.h / 2, list = css[k]
-    const shape = list.filter(p => !p.startsWith('color:') && !p.startsWith('font-')), ink = list.filter(p => p.startsWith('color:')).map(p => 'fill:' + p.slice(6))
-    front += `<g class="cls"${shape.length ? ` style="${esc(shape.join(';'))}"` : ''}><rect x="${r(x0)}" y="${r(y0)}" width="${r(b.w)}" height="${r(b.h)}" rx="3"/>`
+    const b = boxes[k], [x, y] = res.nodes[k], x0 = x - b.w / 2, y0 = y - b.h / 2, [shape, ink] = split(css[k])
+    front += `<g class="cls"${shape ? ` style="${esc(shape)}"` : ''}><rect x="${r(x0)}" y="${r(y0)}" width="${r(b.w)}" height="${r(b.h)}" rx="3"/>`
     let yy = y0 + b.hh
     for (const s of b.sizes) if (s) front += `<path class="div" d="M${r(x0)},${r(yy)}h${r(b.w)}"/>`, (yy += s)
     front += '</g>'
     let ty = y0 + PY
     b.head.forEach((l, i) => {
-      front += text(l, x, ty + l.h / 2, i < c.annots.length ? 'annot' : '', ink.join(';'))
+      front += text(l, x, ty + l.h / 2, i < c.annots.length ? 'annot' : '', ink)
       ty += l.h
     })
     ty = y0 + b.hh + PY
     for (const [i, part] of b.parts.entries()) {
-      for (const l of part) front += text(l, x0 + PX, ty + l.h / 2, '', ink.join(';'), true), (ty += l.h)
+      for (const l of part) front += text(l, x0 + PX, ty + l.h / 2, '', ink, true), (ty += l.h)
       if (b.sizes[i]) ty += 2 * PY
     }
   })
@@ -182,5 +179,5 @@ export const css = c => `.cls{fill:${c.raised};stroke:${c.accent};stroke-width:1
   + `.annot{fill:${c.ink2};font-size:15px}.card{fill:${c.ink2};font-size:15px}`
   + `.rel{fill:none;stroke:${c.ink2};stroke-width:1.5}.rel.dashed,.link{stroke-dasharray:6 4}.link{fill:none;stroke:${c.ink2};stroke-opacity:.7}`
   + `.mk{fill:${c.ink2};stroke:${c.ink2};stroke-width:1.5}.mk.hollow{fill:${c.bg}}.mk.line{fill:none}`
-  + `.note{fill:${c.raised};stroke:${c.ink2};stroke-opacity:.7}.elabel{fill:${c.bg};fill-opacity:.9}`
+  + `.note{fill:${c.raised};stroke:${c.ink2};stroke-opacity:.7}`
   + `.cluster{fill:${c.accent};fill-opacity:.06;stroke:${c.ink2};stroke-opacity:.6}.title{fill:${c.ink2};font-weight:600}`

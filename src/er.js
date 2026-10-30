@@ -1,14 +1,22 @@
 // mermaid's erDiagram: each entity a table of its attributes, each relationship a line with crow's-foot
 // ends, laid out by layered.js. A line it can't read is skipped.
 import { layout, trace, basis, box, selfLoop } from './layered.js'
-import { label, text, esc, r, measure, LINE } from './labels.js'
+import { label, text, esc, r, measure, labelBox, LINE } from './labels.js'
 
 const PX = 14, PY = 8 // px around the entity's name
 const CX = 10 // px either side of a cell's text
 const ROW = LINE + 8 // px an attribute's row takes
-const REL = /^(.+?)\s*(\|o|\|\||\}o|\}\|)(--|\.\.|\.-|-\.)(o\||\|\||o\{|\|\{)\s*(.+?)\s*(?::\s*(.*))?$/
-// Each end's marker: exactly one, zero or one, one or more, zero or more.
-const ENDS = { '||': 'one', '|o': 'zo', 'o|': 'zo', '}|': 'many', '|{': 'many', '}o': 'zm', 'o{': 'zm' }
+// Each end's marker, by its symbol or its words: exactly one, zero or one, one or more, zero or more.
+const ENDS = {
+  __proto__: null, '||': 'one', '|o': 'zo', 'o|': 'zo', '}|': 'many', '|{': 'many', '}o': 'zm', 'o{': 'zm',
+  one: 'one', 'only one': 'one', 1: 'one', 'zero or one': 'zo', 'one or zero': 'zo', 'one or more': 'many',
+  'one or many': 'many', 'many(1)': 'many', '1+': 'many', 'zero or more': 'zm', 'zero or many': 'zm', 'many(0)': 'zm',
+  '0+': 'zm', many: 'zm',
+}
+// `A ||--o{ B : label`, or in words, `A only one to zero or more B : label` (`optionally to` is dashed).
+const REL = /^(.*?\S)\s*(\|o|\|\||\}o|\}\|)(--|\.\.|\.-|-\.)(o\||\|\||o\{|\|\{)\s*(.*?\S)\s*(?::\s*(.*))?$/
+const WORD = '(one or zero|zero or one|one or more|one or many|zero or more|zero or many|only one|many\\([01]\\)|many|one|[01]\\+|1)'
+const WORDS = new RegExp(`^("[^"]*"|\\S+)\\s+${WORD}\\s+(optionally to|to)\\s+${WORD}\\s+("[^"]*"|\\S+)\\s*(?::\\s*(.*))?$`, 'i')
 
 /** The ER diagram in `src` (its first line the header) as { w, h, svg }. */
 export function draw(src) {
@@ -28,13 +36,14 @@ export function draw(src) {
     let m
     if (body) {
       if (line.startsWith('}')) body = null
-      else if ((m = /^(\S+)\s+(\S+)((?:\s+(?:PK|FK|UK)\b\s*,?)*)\s*(?:"(.*)")?$/.exec(line))) body.attrs.push({ type: m[1], name: m[2], keys: m[3].replace(/[\s,]+/g, ' ').trim().replace(/ /g, ', '), note: m[4] ?? '' })
+      else if ((m = /^(\S+)\s+(\S+)((?:[\s,]+(?:PK|FK|UK)\b)*)[\s,]*(?:"(.*)")?$/.exec(line))) body.attrs.push({ type: m[1], name: m[2], keys: m[3].replace(/[\s,]+/g, ' ').trim().replace(/ /g, ', '), note: m[4] ?? '' })
       continue
     }
     if ((m = /^direction\s+(TB|TD|BT|LR|RL)\b/i.exec(line))) dir = m[1].toUpperCase().replace('TD', 'TB')
-    else if ((m = REL.exec(line))) {
-      rels.push({ a: entity(m[1]), b: entity(m[5]), ea: ENDS[m[2]], eb: ENDS[m[4]], dashed: m[3] !== '--', lab: m[6] ? label(m[6].trim().replace(/^"(.*)"$/, '$1')) : null })
-    } else if ((m = /^(.+?)\s*\{\s*(\})?$/.exec(line))) {
+    else if ((m = REL.exec(line) ?? WORDS.exec(line))) {
+      const [a, b] = [m[2], m[4]].map(e => ENDS[e.toLowerCase()]), dashed = m[3] !== '--' && m[3].toLowerCase() !== 'to'
+      rels.push({ a: entity(m[1]), b: entity(m[5]), ea: a, eb: b, dashed, lab: m[6] ? label(m[6].trim().replace(/^"(.*)"$/, '$1')) : null })
+    } else if ((m = /^(.*?\S)\s*\{\s*(\})?$/.exec(line))) {
       const e = entity(m[1])
       if (!m[2]) body = e
     } else if (/^[\w-]+$/.test(line)) entity(line)
@@ -80,10 +89,7 @@ export function draw(src) {
       lab = e.label
     }
     lines += `<path class="rel${rel.dashed ? ' dashed' : ''}" d="${basis(pts)}" marker-start="url(#${rel.ea})" marker-end="url(#${rel.eb})"/>`
-    if (rel.lab && lab) {
-      const l = rel.lab, [lx, ly] = lab
-      front += `<rect class="elabel" x="${r(lx - l.w / 2 - 4)}" y="${r(ly - l.h / 2 - 1)}" width="${r(l.w + 8)}" height="${r(l.h + 2)}" rx="3"/>` + text(l, lx, ly)
-    }
+    if (rel.lab && lab) front += labelBox(rel.lab, ...lab)
   })
   order.forEach((e, k) => {
     const t = tables[k], [x, y] = res.nodes[k], x0 = x - t.w / 2, y0 = y - t.h / 2
@@ -111,4 +117,4 @@ export const css = c => `.table{fill:${c.raised};stroke:${c.accent};stroke-width
   + `.ename{font-weight:600}.stripe{fill:${c.ink};fill-opacity:.04}`
   + `.type,.note{fill:${c.ink2}}.note{font-style:italic}.keys{fill:${c.accent};font-weight:bold}`
   + `.rel{fill:none;stroke:${c.ink2};stroke-width:1.5}.rel.dashed{stroke-dasharray:6 4}`
-  + `.mk{fill:none;stroke:${c.ink2};stroke-width:1.5}.mk circle{fill:${c.bg}}.elabel{fill:${c.bg};fill-opacity:.9}`
+  + `.mk{fill:none;stroke:${c.ink2};stroke-width:1.5}.mk circle{fill:${c.bg}}`

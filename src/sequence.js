@@ -6,7 +6,7 @@ const GAP = 30 // px between two participants' boxes
 const ROW = 14 // px between a message's line and the next row's text
 const BLOCK = 12 // px a block's frame stands out past the lifelines in it
 const ARROWS = '<<-->>|<<->>|-->>|->>|--x|-x|--\\)|-\\)|-->|->'
-const MESSAGE = new RegExp(`^(.+?)\\s*(${ARROWS})\\s*([+-]?)\\s*(.+?)\\s*(?::(.*))?$`)
+const MESSAGE = new RegExp(`^(.*?\\S)\\s*(${ARROWS})\\s*([+-]?)\\s*(.*?\\S)\\s*(?::(.*))?$`)
 
 /** A color for a box or a rect block, or '' when `c` isn't one. */
 const tint = c => (/^(?:#[\da-f]{3,8}|(?:rgb|hsl)a?\([\d\s.,%/]+\)|[a-z]+)$/i.test(c) && CSS.supports('color', c) ? c : '')
@@ -33,7 +33,7 @@ export function draw(src) {
     const line = raw.trim().replace(/;$/, '')
     if (!line || line.startsWith('%%')) continue
     let m
-    if ((m = /^(create\s+)?(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$/i.exec(line))) {
+    if ((m = /^(create\s+)?(participant|actor)\s+(.*?\S)(?:\s+as\s+(.+))?$/i.exec(line))) {
       let [, create, kind, id, name] = m
       id = id.replace(/@\{.*\}$/, '')
       // `participant "Long name" as X`: the quoted part is the name, the other the id.

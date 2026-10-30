@@ -16,17 +16,17 @@ export function draw(src, c) {
   for (const raw of src.split('\n').slice(1)) {
     const line = raw.trim()
     let m
-    if (!line || line.startsWith('%%') || /^acc(?:Title|Descr)\b/.test(line)) continue
+    if (!line || line.startsWith('%%')) continue
     if ((m = /^title\s+(.*)$/.exec(line))) title = label(m[1], false, 600)
     else if ((m = /^section\s+(.*)$/.exec(line))) sections.push(label(m[1], false, WRAP))
     else if (journey) {
-      if (!(m = /^(.+?)\s*:\s*(\d+)\s*(?::\s*(.*))?$/.exec(line))) continue
+      if (!(m = /^(.*?\S)\s*:\s*(\d+)\s*(?::\s*(.*))?$/.exec(line))) continue
       const who = (m[3] ?? '').split(',').map(a => a.trim()).filter(Boolean)
       for (const a of who) if (!actors.includes(a)) actors.push(a)
       cols.push({ section: sections.length - 1, lab: label(m[1], false, WRAP), score: Math.min(5, Math.max(1, Number(m[2]))), who: who.map(a => actors.indexOf(a)) })
     } else if (line.startsWith(':')) cols[cols.length - 1]?.events.push(...line.slice(1).split(':').map(e => label(e.trim(), false, WRAP)))
     else {
-      const [period, ...events] = line.split(/\s*:\s*/)
+      const [period, ...events] = line.split(':').map(e => e.trim())
       cols.push({ section: sections.length - 1, lab: label(period, false, WRAP), events: events.filter(Boolean).map(e => label(e, false, WRAP)) })
     }
   }
@@ -68,10 +68,10 @@ export function draw(src, c) {
   let bottom = axis + 12
   if (journey) {
     // A face a task, as high as it scored, joined in a line.
-    const face = col => [x(cols.indexOf(col)) + colW / 2, axis + 36 + (5 - col.score) * STEP]
-    out += `<path class="mood" d="M${cols.map(col => face(col).map(r).join(',')).join('L')}"/>`
-    for (const col of cols) {
-      const [fx, fy] = face(col), mouth = col.score >= 4 ? `M${r(fx - 6)},${r(fy + 3)}Q${r(fx)},${r(fy + 9)} ${r(fx + 6)},${r(fy + 3)}` : col.score === 3 ? `M${r(fx - 6)},${r(fy + 5)}h12` : `M${r(fx - 6)},${r(fy + 8)}Q${r(fx)},${r(fy + 2)} ${r(fx + 6)},${r(fy + 8)}`
+    const face = (col, k) => [x(k) + colW / 2, axis + 36 + (5 - col.score) * STEP]
+    out += `<path class="mood" d="M${cols.map((col, k) => face(col, k).map(r).join(',')).join('L')}"/>`
+    for (const [k, col] of cols.entries()) {
+      const [fx, fy] = face(col, k), mouth = col.score >= 4 ? `M${r(fx - 6)},${r(fy + 3)}Q${r(fx)},${r(fy + 9)} ${r(fx + 6)},${r(fy + 3)}` : col.score === 3 ? `M${r(fx - 6)},${r(fy + 5)}h12` : `M${r(fx - 6)},${r(fy + 8)}Q${r(fx)},${r(fy + 2)} ${r(fx + 6)},${r(fy + 8)}`
       out += `<path class="guide" d="M${r(fx)},${r(y)}V${r(fy - 15)}"/><circle class="face" cx="${r(fx)}" cy="${r(fy)}" r="15"/>`
         + `<circle class="eye" cx="${r(fx - 5)}" cy="${r(fy - 4)}" r="1.8"/><circle class="eye" cx="${r(fx + 5)}" cy="${r(fy - 4)}" r="1.8"/><path class="mouth" d="${mouth}"/>`
     }

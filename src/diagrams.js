@@ -19,6 +19,7 @@ const MARGIN = 4 // px around the drawing
 const MONO = '13px "Cascadia Mono", Consolas, monospace'
 // Each kind nook draws, by the word that starts it: a module's `draw(src, colors)` and `css(colors)`.
 const KINDS = {
+  __proto__: null,
   flowchart, 'flowchart-v2': flowchart, 'flowchart-elk': flowchart, graph: flowchart, sequenceDiagram: sequence,
   classDiagram: classes, 'classDiagram-v2': classes, stateDiagram: states, 'stateDiagram-v2': states, erDiagram: er,
   pie, gantt, mindmap, timeline, journey: timeline, gitGraph: gitgraph,
@@ -90,14 +91,15 @@ export async function diagramUrl(path, box) {
 /** `text`, a mermaid diagram, as an SVG document. */
 function diagram(text, c, box) {
   const lines = text.replace(/\r/g, '').split('\n')
-  // Front matter (---) holds settings and maybe a title; %% lines are comments; the next line names the kind.
+  // Front matter (---) holds settings and maybe a title; %% lines are comments, and accTitle and accDescr
+  // are for screen readers; the next line names the kind.
   let k = 0, title = ''
   if (lines[0]?.trim() === '---') {
     for (k = 1; k < lines.length && lines[k].trim() !== '---'; k++) title = /^title\s*:\s*(.*)$/.exec(lines[k].trim())?.[1].replace(/^(["'])(.*)\1$/, '$2') ?? title
     k++
   }
   while (k < lines.length && (!lines[k].trim() || /^\s*%%/.test(lines[k]))) k++
-  const src = lines.slice(k).filter(l => !/^\s*%%/.test(l)).join('\n')
+  const src = lines.slice(k).filter(l => !/^\s*%%/.test(l)).join('\n').replace(/^[ \t]*acc(?:Title|Descr)[ \t]*(?::.*|\{[^}]*\}.*)$/gm, '')
   const kind = KINDS[/^\s*([\w-]+)/.exec(src)?.[1]]
   let d = null
   try {
@@ -117,7 +119,7 @@ function diagram(text, c, box) {
 function listing(text, c) {
   const rows = text.replace(/\t/g, '  ').replace(/\s+$/, '').split('\n')
   const w = Math.max(0, ...rows.map(row => measure(row, 0, MONO)))
-  const svg = `<text class="src">${rows.map((row, i) => `<tspan x="0" y="${16 * i + 12}">${esc(row) || ' '}</tspan>`).join('')}</text>`
+  const svg = `<text class="src" xml:space="preserve">${rows.map((row, i) => `<tspan x="0" y="${16 * i + 12}">${esc(row) || ' '}</tspan>`).join('')}</text>`
   return { w, h: rows.length * 16, svg, css: `.src{font:${MONO};fill:${c.ink2};white-space:pre}` }
 }
 
@@ -131,5 +133,5 @@ function frame(d, c, box) {
     if (fit > cap) vw = box.width / cap, (vh = box.height / cap), (top = (vh - h) / 2)
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${r(vw)}" height="${r(vh)}" viewBox="${r(-MARGIN)} ${r(-MARGIN - top)} ${r(vw)} ${r(vh)}">`
-    + `<style>text{font-family:${FAMILY};font-size:${FONT}px;fill:${c.ink}}${d.css}</style>${d.svg}</svg>`
+    + `<style>text{font-family:${FAMILY};font-size:${FONT}px;fill:${c.ink}}.elabel{fill:${c.bg};fill-opacity:.9}${d.css}</style>${d.svg}</svg>`
 }

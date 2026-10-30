@@ -2,7 +2,7 @@
 // [*] as start and end dots, forks, joins and choices, laid out by layered.js. A line it can't read is
 // skipped.
 import { layout, trace, basis, box, selfLoop } from './layered.js'
-import { label, text, esc, r, styles } from './labels.js'
+import { label, text, esc, r, styles, labelBox, split } from './labels.js'
 
 const PX = 14, PY = 8 // px around a state's label
 const ARROW = 9 // px from an arrowhead's base to its tip
@@ -33,8 +33,11 @@ export function draw(src) {
     if (!line || line.startsWith('%%')) continue
     line = line.replace(/(\S+?):::([\w-]+)/g, (_, id, c) => (classOf.push([id, c]), id))
     let m
-    if ((m = /^(.+?)\s*-->\s*(.+?)\s*(?::(.*))?$/.exec(line))) {
-      edges.push({ a: end(m[1], true), b: end(m[2], false), lab: m[3]?.trim() ? label(m[3].trim()) : null })
+    // Notes and state lines first: their text can hold an arrow.
+    if ((m = /^note\s+(left|right)\s+of\s+(\S+?)\s*(?::(.*))?$/i.exec(line))) {
+      const n = { of: m[2], side: m[1].toLowerCase(), lines: [] }
+      if (m[3] === undefined) note = n
+      else notes.push({ ...n, lab: label(m[3].trim(), false, 240) })
     } else if ((m = /^state\s+(?:"([^"]*)"\s+as\s+(\S+?)|(\S+?)\s+as\s+"([^"]*)"|(\S+?))\s*(?:<<(fork|join|choice)>>)?\s*(\{)?$/.exec(line))) {
       const id = m[2] ?? m[3] ?? m[5], name = m[1] ?? m[4]
       const kind = /<<(fork|join|choice)>>/.exec(line)?.[1]
@@ -48,6 +51,8 @@ export function draw(src) {
         if (name) s.name = name
         if (kind) s.kind = kind
       }
+    } else if ((m = /^(.*?\S)\s*-->\s*(.*?\S)\s*(?::(.*))?$/.exec(line))) {
+      edges.push({ a: end(m[1], true), b: end(m[2], false), lab: m[3]?.trim() ? label(m[3].trim()) : null })
     } else if (line === '}') stack.pop()
     else if (line === '--' && stack.length) {
       // A concurrent region: what's in the composite so far becomes its first region, and a new one opens.
@@ -64,14 +69,10 @@ export function draw(src) {
       const d = m[1].toUpperCase().replace('TD', 'TB')
       if (stack.length) scopes[scope()].dir = d
       else dir = d
-    } else if ((m = /^note\s+(left|right)\s+of\s+(\S+?)\s*(?::(.*))?$/i.exec(line))) {
-      const n = { of: m[2], side: m[1].toLowerCase(), lines: [] }
-      if (m[3] === undefined) note = n
-      else notes.push({ ...n, lab: label(m[3].trim(), false, 240) })
     } else if ((m = /^classDef\s+(\S+)\s+(.*)$/.exec(line))) for (const n of m[1].split(',')) classDefs.set(n, styles(m[2]))
     else if ((m = /^class\s+(\S+)\s+([\w-]+)/.exec(line))) for (const id of m[1].split(',')) classOf.push([id, m[2]])
     else if ((m = /^style\s+(\S+)\s+(.*)$/.exec(line))) classOf.push([m[1], styles(m[2])])
-    else if (/^(?:hide|scale|accTitle|accDescr|click)\b/.test(line)) continue
+    else if (/^(?:hide|scale|click)\b/.test(line)) continue
     else if ((m = /^([^\s:]+)\s*:\s*(.*)$/.exec(line))) state(m[1]).desc.push(m[2])
     else if (/^[\w.-]+$/.test(line)) state(line)
   }
@@ -143,9 +144,8 @@ export function draw(src) {
   const css = new Map()
   for (const [id, c] of classOf) css.set(id, [...(css.get(id) ?? []), ...(typeof c === 'string' ? classDefs.get(c) ?? [] : c)])
   nodes.forEach((s, k) => {
-    const [x, y] = res.nodes[k], o = shapes[k], list = [...(classDefs.get('default') ?? []), ...(css.get(s.id) ?? [])]
-    const shape = list.filter(p => !p.startsWith('color:') && !p.startsWith('font-')), ink = list.filter(p => p.startsWith('color:') || p.startsWith('font-')).map(p => p.replace(/^color:/, 'fill:'))
-    const st = shape.length ? ` style="${esc(shape.join(';'))}"` : ''
+    const [x, y] = res.nodes[k], o = shapes[k], [shape, ink] = split([...(classDefs.get('default') ?? []), ...(css.get(s.id) ?? [])])
+    const st = shape ? ` style="${esc(shape)}"` : ''
     if (s.kind === 'start') front += `<circle class="dot" cx="${r(x)}" cy="${r(y)}" r="8"${st}/>`
     else if (s.kind === 'end') front += `<circle class="ring" cx="${r(x)}" cy="${r(y)}" r="10"/><circle class="dot" cx="${r(x)}" cy="${r(y)}" r="5.5"${st}/>`
     else if (s.kind === 'fork' || s.kind === 'join') front += `<rect class="bar" x="${r(x - o.w / 2)}" y="${r(y - o.h / 2)}" width="${o.w}" height="${o.h}" rx="2"${st}/>`
@@ -153,10 +153,10 @@ export function draw(src) {
     else {
       const y0 = y - o.h / 2
       front += `<rect class="state" x="${r(x - o.w / 2)}" y="${r(y0)}" width="${r(o.w)}" height="${r(o.h)}" rx="7"${st}/>`
-      front += text(o.name, x, y0 + PY + o.name.h / 2, '', ink.join(';'))
+      front += text(o.name, x, y0 + PY + o.name.h / 2, '', ink)
       if (o.desc) {
         const dy = y0 + o.name.h + 2 * PY
-        front += `<path class="div" d="M${r(x - o.w / 2)},${r(dy)}h${r(o.w)}"/>` + text(o.desc, x, dy + PY / 2 + o.desc.h / 2, '', ink.join(';'))
+        front += `<path class="div" d="M${r(x - o.w / 2)},${r(dy)}h${r(o.w)}"/>` + text(o.desc, x, dy + PY / 2 + o.desc.h / 2, '', ink)
       }
     }
   })
@@ -186,13 +186,9 @@ export function draw(src) {
   return { w: res.width, h: res.height, svg: defs + out + lines + front }
 }
 
-/** An edge's label on a patch of background. */
-const labelBox = (l, x, y) => `<rect class="elabel" x="${r(x - l.w / 2 - 4)}" y="${r(y - l.h / 2 - 1)}" width="${r(l.w + 8)}" height="${r(l.h + 2)}" rx="3"/>` + text(l, x, y)
-
 export const css = c => `.state{fill:${c.raised};stroke:${c.accent};stroke-width:1.5}.div{stroke:${c.accent};stroke-opacity:.55}`
   + `.dot,.bar{fill:${c.ink2}}.ring{fill:none;stroke:${c.ink2};stroke-width:1.5}`
   + `.tr{fill:none;stroke:${c.ink2};stroke-width:1.5}.arrow{fill:${c.ink2}}`
   + `.cluster{fill:${c.accent};fill-opacity:.06;stroke:${c.ink2};stroke-opacity:.6}.title{fill:${c.ink2};font-weight:600}`
   + `.region{fill:none;stroke:${c.ink2};stroke-opacity:.5;stroke-dasharray:6 4}`
   + `.note{fill:${c.raised};stroke:${c.ink2};stroke-opacity:.7}.link{fill:none;stroke:${c.ink2};stroke-opacity:.7;stroke-dasharray:4 4}`
-  + `.elabel{fill:${c.bg};fill-opacity:.9}`

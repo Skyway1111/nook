@@ -1,7 +1,7 @@
 // mermaid's flowchart (and graph): parsed leniently, laid out by layered.js, drawn as SVG. A line it can't
 // read is skipped, so a diagram with a mistake still draws what it can.
 import { layout, trace, basis, shorten, selfLoop } from './layered.js'
-import { label, text, esc, r, styles } from './labels.js'
+import { label as plain, text, esc, r, styles, labelBox, split } from './labels.js'
 
 const PX = 14, PY = 8 // px of room around a node's label
 const ARROW = 9 // px from an arrowhead's base to its tip
@@ -23,8 +23,11 @@ const NAMED = {
   flag: 'flag', odd: 'flag', ellipse: 'ellipse', 'sm-circ': 'circle', 'f-circ': 'circle', start: 'circle', stop: 'dbl',
 }
 
+/** A label: a flowchart's breaks at `\n` too, where other kinds keep it (C:\new is a path). */
+const label = (t, md) => plain(md ? t : t.replace(/\\n/g, '<br>'), md)
+
 function parse(src) {
-  const nl = src.indexOf('\n')
+  const nl = src.search(/[\n;]/) // statements can follow the header after a `;`
   const head = (nl < 0 ? src : src.slice(0, nl)).trim()
   const dir = /\b(TB|TD|BT|RL|LR)\b/i.exec(head.replace(/^\S+/, ''))?.[1].toUpperCase().replace('TD', 'TB') ?? 'TB'
   const s = nl < 0 ? '' : src.slice(nl + 1)
@@ -247,7 +250,7 @@ function parse(src) {
     if (s.startsWith('%%', i)) { rest(); continue }
     const word = /^[a-zA-Z]+/.exec(s.slice(i, i + 16))?.[0] ?? ''
     const after = s[i + word.length]
-    const kw = word && (after === undefined || /[\s;]/.test(after) || (after === ':' && word.startsWith('acc')))
+    const kw = word && (after === undefined || /[\s;]/.test(after))
     if (kw && word === 'subgraph') {
       i += word.length
       const line = rest().replace(/;\s*$/, '').trim()
@@ -281,10 +284,8 @@ function parse(src) {
       i += word.length
       const m = /^\s*(\S+)\s+(.*)$/.exec(rest())
       if (m) for (const k of m[1].split(',')) linkStyle.push([k === 'default' ? k : Number(k), styles(m[2])])
-    } else if (kw && /^(click|accTitle|accDescr|callback|call|href)$/.test(word)) {
-      if (word === 'accDescr' && /^\s*\{/.test(s.slice(i + word.length))) i = s.indexOf('}', i) + 1 || s.length
-      else rest()
-    } else {
+    } else if (kw && /^(click|callback|call|href)$/.test(word)) rest()
+    else {
       const at = i
       if (!statement() || i === at) rest()
       else {
@@ -351,8 +352,8 @@ function outline(n, lab) {
     case 'sub': {
       w += 16
       const box = rect(w, h, 0)
-      const plain = box.draw
-      box.draw = (x, y) => plain(x, y) + `<path d="M${r(x - w / 2 + 8)},${r(y - h / 2)}v${r(h)}M${r(x + w / 2 - 8)},${r(y - h / 2)}v${r(h)}"/>`
+      const outer = box.draw
+      box.draw = (x, y) => outer(x, y) + `<path d="M${r(x - w / 2 + 8)},${r(y - h / 2)}v${r(h)}M${r(x + w / 2 - 8)},${r(y - h / 2)}v${r(h)}"/>`
       return box
     }
     default: return rect(w, h, 3)
@@ -373,6 +374,7 @@ function poly(w, h, pts, dx = 0) {
 /** The flowchart in `src` (its first line the header) as { w, h, svg }. */
 export function draw(src) {
   const g = parse(src)
+  if (!g.nodes.length && !g.clusters.length) throw new Error('no nodes')
   // An id naming a subgraph stands for the subgraph, unless a node by that name has its own label or shape.
   const cindex = new Map(g.clusters.map((c, k) => [c.id, k]))
   const nodes = g.nodes.filter(n => !cindex.has(n.id) || n.text !== n.id || n.shape !== 'rect')
@@ -436,8 +438,7 @@ export function draw(src) {
       out += `<path class="${cls}" d="${basis(pts)}"${st}${e.head ? ` marker-end="url(#${marker(e.head, color)})"` : ''}/>`
       if (elabs[k]) {
         const l = elabs[k]
-        const [lx, ly] = lr ? [x, y + o.h / 2 + 30 + l.h / 2] : [x + o.w / 2 + 30 + l.w / 2, y]
-        labelsOut += `<rect class="elabel" x="${r(lx - l.w / 2 - 4)}" y="${r(ly - l.h / 2 - 1)}" width="${r(l.w + 8)}" height="${r(l.h + 2)}" rx="3"/>` + text(l, lx, ly)
+        labelsOut += labelBox(l, ...(lr ? [x, y + o.h / 2 + 30 + l.h / 2] : [x + o.w / 2 + 30 + l.w / 2, y]))
       }
       return
     }
@@ -446,19 +447,13 @@ export function draw(src) {
     const ui = at(e.u), vi = at(e.v)
     const pts = trace(got.points, ui >= 0 && [shapes[ui], ...res.nodes[ui]], vi >= 0 && [shapes[vi], ...res.nodes[vi]], e.tail ? ARROW : 0, e.head ? ARROW : 0)
     out += `<path class="${cls}" d="${basis(pts)}"${st}${e.head ? ` marker-end="url(#${marker(e.head, color)})"` : ''}${e.tail ? ` marker-start="url(#${marker(e.tail === '<' ? '>' : e.tail, color)})"` : ''}/>`
-    if (elabs[k] && got.label) {
-      const l = elabs[k], [lx, ly] = got.label
-      labelsOut += `<rect class="elabel" x="${r(lx - l.w / 2 - 4)}" y="${r(ly - l.h / 2 - 1)}" width="${r(l.w + 8)}" height="${r(l.h + 2)}" rx="3"/>` + text(l, lx, ly)
-    }
+    if (elabs[k] && got.label) labelsOut += labelBox(elabs[k], ...got.label)
   })
   // Nodes.
   nodes.forEach((n, k) => {
-    const [x, y] = res.nodes[k], list = css.get(n.id) ?? []
-    const color = list.filter(p => p.startsWith('color:')).map(p => 'fill:' + p.slice(6))
-    const shape = list.filter(p => !p.startsWith('color:') && !p.startsWith('font-'))
-    const font = list.filter(p => p.startsWith('font-'))
-    out += `<g class="node"${shape.length ? ` style="${esc(shape.join(';'))}"` : ''}>${shapes[k].draw(x, y)}</g>`
-    out += text(labs[k], x + (shapes[k].dx || 0), y + (shapes[k].dy || 0), '', [...color, ...font].join(';'))
+    const [x, y] = res.nodes[k], [shape, ink] = split(css.get(n.id) ?? [])
+    out += `<g class="node"${shape ? ` style="${esc(shape)}"` : ''}>${shapes[k].draw(x, y)}</g>`
+    out += text(labs[k], x + (shapes[k].dx || 0), y + (shapes[k].dy || 0), '', ink)
   })
   let defs = ''
   for (const [key, mid] of markers) {
@@ -475,4 +470,3 @@ export const css = c => `.node{fill:${c.raised};stroke:${c.accent};stroke-width:
   + `.title{fill:${c.ink2};font-weight:600}`
   + `.edge{fill:none;stroke:${c.ink2};stroke-width:1.5}.edge.thick{stroke-width:3.5}.edge.dotted{stroke-dasharray:3 4}`
   + `.arrow{fill:${c.ink2};stroke:${c.ink2}}.arrow .x{stroke-width:2;fill:none}`
-  + `.elabel{fill:${c.bg};fill-opacity:.9}`

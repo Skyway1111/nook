@@ -17,6 +17,7 @@ export function measure(text, style = 0, font) {
   const k = (font ?? style & 3) + '\0' + text
   let w = widths.get(k)
   if (w === undefined) {
+    if (widths.size > 4096) widths.clear() // reuse pays within a diagram; across a session it only grows
     ctx ??= new OffscreenCanvas(1, 1).getContext('2d')
     ctx.font = font ?? `${style & 2 ? 'italic ' : ''}${style & 1 ? 'bold ' : ''}${FONT}px ${FAMILY}`
     widths.set(k, (w = ctx.measureText(text).width))
@@ -25,6 +26,7 @@ export function measure(text, style = 0, font) {
 }
 
 const NAMED = {
+  __proto__: null,
   quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: ' ', hellip: '…', mdash: '—', ndash: '–', bull: '•',
   middot: '·', rarr: '→', larr: '←', harr: '↔', uarr: '↑', darr: '↓', rArr: '⇒', lArr: '⇐', hArr: '⇔', times: '×',
   divide: '÷', deg: '°', plusmn: '±', le: '≤', ge: '≥', ne: '≠', infin: '∞', copy: '©', reg: '®', trade: '™',
@@ -34,7 +36,7 @@ const NAMED = {
   delta: 'δ', lambda: 'λ', mu: 'μ', pi: 'π', sigma: 'σ', theta: 'θ', omega: 'ω', Delta: 'Δ', Sigma: 'Σ', Omega: 'Ω',
 }
 /** `text` with mermaid's entity codes (#quot; #35; #x2665;) and HTML's (&amp;) as the characters they name. */
-export function decode(text) {
+function decode(text) {
   return text.replace(/[#&](?:(\d{1,7})|x([\da-f]{1,6})|([a-z]\w{1,9}));/gi, (all, dec, hex, name) => {
     if (name) return NAMED[name] ?? all
     const c = dec ? Number(dec) : parseInt(hex, 16)
@@ -49,7 +51,7 @@ export function decode(text) {
  */
 export function label(text, md = false, wrap = WRAP, base = 0) {
   const lines = []
-  for (const raw of decode(text).split(md ? /<br\s*\/?>|\n/i : /<br\s*\/?>|\\n/i)) {
+  for (const raw of decode(text).split(md ? /<br\s*\/?>|\n/i : /<br\s*\/?>/i)) {
     const runs = md ? markdown(raw.trim()) : tags(raw.trim(), base)
     // Words with their styles, then filled into lines no wider than `wrap`.
     let line = [], w = 0
@@ -118,6 +120,9 @@ export function text(lab, x, y, cls = '', style = '', start = false) {
   return out + '</text>'
 }
 
+/** An edge's label on a patch of background, centered on (x, y). */
+export const labelBox = (l, x, y) => `<rect class="elabel" x="${r(x - l.w / 2 - 4)}" y="${r(y - l.h / 2 - 1)}" width="${r(l.w + 8)}" height="${r(l.h + 2)}" rx="3"/>` + text(l, x, y)
+
 const STYLES = new Set(['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'color', 'opacity', 'fill-opacity', 'stroke-opacity', 'font-weight', 'font-style'])
 const VALUE = /^(?:#[\da-f]{3,8}|[a-z]+|(?:rgb|hsl)a?\([\d\s.,%deg/]+\)|[\d.]+(?:px|em|%)?(?:[\s,]+[\d.]+(?:px|em|%)?)*)$/i
 
@@ -131,6 +136,16 @@ export function styles(list) {
     if (STYLES.has(k) && VALUE.test(v)) out.push(`${k}:${v}`)
   }
   return out
+}
+
+/** A style list cut in two: the shape's CSS, and its text's (`color` as the text's fill, and `font-*`). */
+export function split(list) {
+  const shape = [], ink = []
+  for (const p of list) {
+    if (p.startsWith('color:')) ink.push('fill:' + p.slice(6))
+    else (p.startsWith('font-') ? ink : shape).push(p)
+  }
+  return [shape.join(';'), ink.join(';')]
 }
 
 /** A number for SVG: at most one decimal. */
