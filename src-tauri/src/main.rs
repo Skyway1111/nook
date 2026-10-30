@@ -15,6 +15,8 @@ mod defs;
 mod search;
 #[cfg_attr(not(windows), path = "shell_unix.rs")]
 mod shell;
+#[cfg(windows)]
+mod sys;
 mod theme;
 
 use serde::{Deserialize, Serialize};

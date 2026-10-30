@@ -10,12 +10,8 @@ pub fn notify(window: WebviewWindow, title: String, body: String) -> Result<(), 
 
 #[cfg(windows)]
 fn show(window: &WebviewWindow, title: &str, body: &str) -> Result<(), String> {
+    use crate::sys::*;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use windows_sys::Win32::UI::Shell::{
-        Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_TIP, NIIF_INFO, NIIF_RESPECT_QUIET_TIME, NIM_ADD, NIM_DELETE,
-        NIM_MODIFY, NOTIFYICONDATAW,
-    };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{LoadIconW, SendMessageW, ICON_SMALL2, IDI_APPLICATION, WM_GETICON};
 
     /// Copies `text` into a fixed UTF-16 field, cut to fit with its terminating zero.
     fn put<const N: usize>(field: &mut [u16; N], text: &str) {
@@ -26,14 +22,12 @@ fn show(window: &WebviewWindow, title: &str, body: &str) -> Result<(), String> {
     // The icon stays a few seconds after its balloon shows; a newer notification keeps it for its own.
     static SHOWN: AtomicU64 = AtomicU64::new(0);
     let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as _;
-    // SAFETY: plain Win32 calls on nook's own window, with a zeroed struct its size names.
+    let icon = |hwnd| NOTIFYICONDATAW { cbSize: size_of::<NOTIFYICONDATAW>() as u32, hWnd: hwnd, uID: 1, ..Default::default() };
+    // SAFETY: plain Win32 calls on nook's own window.
     unsafe {
-        let mut data: NOTIFYICONDATAW = std::mem::zeroed();
-        data.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        data.hWnd = hwnd;
-        data.uID = 1;
+        let mut data = icon(hwnd);
         data.uFlags = NIF_ICON | NIF_TIP | NIF_INFO;
-        data.hIcon = SendMessageW(hwnd, WM_GETICON, ICON_SMALL2 as usize, 0) as _;
+        data.hIcon = SendMessageW(hwnd, WM_GETICON, ICON_SMALL2, 0) as _;
         if data.hIcon.is_null() {
             data.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
         }
@@ -49,11 +43,7 @@ fn show(window: &WebviewWindow, title: &str, body: &str) -> Result<(), String> {
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(10));
             if SHOWN.load(Ordering::SeqCst) == mine {
-                let mut data: NOTIFYICONDATAW = std::mem::zeroed();
-                data.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-                data.hWnd = hwnd as _;
-                data.uID = 1;
-                Shell_NotifyIconW(NIM_DELETE, &data);
+                Shell_NotifyIconW(NIM_DELETE, &icon(hwnd as _));
             }
         });
     }
