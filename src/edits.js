@@ -135,7 +135,7 @@ function backspace(v) {
 const forwardDelete = v => deleteBy(v, r => charStep(v, r.head, true))
 function groupDelete(v, forward) {
   return deleteBy(v, r => {
-    const { start, text, k } = line(v, r.head)
+    const { start, text } = line(v, r.head)
     let p = r.head, cat = -1
     for (;;) {
       const at = p - start
@@ -150,7 +150,6 @@ function groupDelete(v, forward) {
       if (ch !== ' ' || p !== r.head) cat = c
       p = q
     }
-    void k
     return p
   })
 }
@@ -188,8 +187,8 @@ function markup(v, start, k) {
 
 // ---- Lines
 
-/** The blocks of whole lines the ranges touch: { from, to (line numbers), ranges }. A range that ends at a line's
- * start leaves that line out. */
+/** The blocks of whole lines the ranges touch, those that touch or abut merged: { from, to (line numbers), ranges }.
+ * A range that ends at a line's start leaves that line out. */
 function blocks(v) {
   const out = []
   for (const r of v.ranges) {
@@ -197,8 +196,7 @@ function blocks(v) {
     let b = v.doc.lineOf(to(r))
     if (to(r) > from(r) && to(r) === v.doc.start(b) && b > a) b--
     const last = out.at(-1)
-    if (last && a <= last.to + 1 && a <= last.to) { last.to = Math.max(last.to, b); last.ranges.push(r) }
-    else if (last && a === last.to + 1 && false) last.to = b
+    if (last && a <= last.to + 1) { last.to = Math.max(last.to, b); last.ranges.push(r) }
     else out.push({ from: a, to: b, ranges: [r] })
   }
   return out
@@ -365,12 +363,18 @@ export function type(v, s) {
 function closeBrackets(v, ch, pairs) {
   const isClose = Object.values(pairs).includes(ch), isOpen = ch in pairs
   if (!isClose && !isOpen) return false
+  const at = r => { const { text, k } = line(v, r.head); return text[k] }
+  if (!isOpen) { // a closer: over the one closeBrackets put after the main caret, and the same at every caret
+    if (!v.closed.includes(from(v.ranges[v.main])) || v.ranges.some(r => r.anchor !== r.head || at(r) !== ch)) return false
+    v.dispatch({ sel: { ranges: v.ranges.map(r => sel1(r.head + 1)), main: v.main }, kind: 'type' })
+    return true
+  }
   const changes = [], ranges = [], closed = []
   let shift = 0
   for (const r of v.ranges) {
     const a = from(r), b = to(r)
     const { text, k } = line(v, b)
-    const after = text[k], before = line(v, a).text[a - line(v, a).start - 1]
+    const after = text[k], before = text[k - 1]
     if (a !== b && isOpen) { // wrap the selection
       changes.push({ from: a, to: a, insert: ch }, { from: b, to: b, insert: pairs[ch] })
       ranges.push(sel1(r.anchor + shift + 1, r.head + shift + 1))
@@ -378,12 +382,12 @@ function closeBrackets(v, ch, pairs) {
       continue
     }
     if (a !== b) return false
-    if (isClose && after === ch && v.closed.includes(b)) { // type over the closer we put there
+    if (after === ch && v.closed.includes(b)) { // type over the quote we put there
       ranges.push(sel1(b + shift + 1))
       continue
     }
     const quote = pairs[ch] === ch
-    if (!isOpen || (after !== undefined && !AFTER.test(after) && !(quote && false)) ||
+    if ((after !== undefined && !AFTER.test(after)) ||
         (quote && before !== undefined && (WORD.test(before) || before === ch))) return false
     changes.push({ from: a, to: a, insert: ch + pairs[ch] })
     ranges.push(sel1(a + shift + 1))
@@ -484,7 +488,6 @@ function toggleBlock(v, byLine = false) {
     return sel1(v.doc.start(b.from) + lead(t).length, v.doc.start(b.to) + v.doc.lines[b.to].trimEnd().length)
   }) : v.ranges) {
     const a = from(r), b = to(r)
-    const s = v.doc.slice(Math.max(0, a - open.length - 1), Math.min(v.doc.length, b + close.length + 1))
     const inner = v.doc.slice(a, b)
     const o = new RegExp(`^${esc(open)} ?`).exec(inner), c = new RegExp(` ?${esc(close)}$`).exec(inner)
     if (o && c && o[0].length + c[0].length <= inner.length) {
@@ -496,7 +499,6 @@ function toggleBlock(v, byLine = false) {
       ranges.push(sel1(a + shift + open.length + 1, b + shift + open.length + 1))
       shift += open.length + close.length + 2
     }
-    void s
   }
   v.dispatch({ changes, sel: byLine ? undefined : { ranges, main: v.main }, kind: 'comment' })
   return true
@@ -525,8 +527,7 @@ export function match(v, at, limit = 10_000) {
   const dir = o >= 0 ? 1 : -1
   let depth = 0, seen = 0
   for (let i = i0; i >= 0 && i < v.doc.count; i += dir) {
-    const text = v.doc.lines[i], tokens = i === i0 ? null : v.tokensOf(i)
-    const toks = tokens ?? v.tokensOf(i0)
+    const text = v.doc.lines[i], toks = v.tokensOf(i)
     for (let k = i === i0 ? k0 + dir : dir > 0 ? 0 : text.length - 1; k >= 0 && k < text.length; k += dir) {
       if (++seen > limit) return null
       const x = text[k]
@@ -540,22 +541,20 @@ export function match(v, at, limit = 10_000) {
   }
   return null
 }
-export const cursor = {
-  /** The bracket beside a caret at `pos` and its partner: { at, to }, to null when nothing pairs with it. */
-  bracket(v, pos) {
-    const { text, k } = line(v, pos)
-    for (const at of [pos - 1, pos]) {
-      const x = text[at - pos + k]
-      if (x === undefined || (!OPEN.includes(x) && !CLOSE.includes(x))) continue
-      const m = match(v, at)
-      if (m !== undefined) return { at, to: m }
-    }
-    return null
-  },
+/** The bracket beside a caret at `pos` and its partner: { at, to }, to null when nothing pairs with it. */
+export function bracketAt(v, pos) {
+  const { text, k } = line(v, pos)
+  for (const at of [pos - 1, pos]) {
+    const x = text[at - pos + k]
+    if (x === undefined || (!OPEN.includes(x) && !CLOSE.includes(x))) continue
+    const m = match(v, at)
+    if (m !== undefined) return { at, to: m }
+  }
+  return null
 }
 function matchingBracket(v, extend) {
   return move(v, r => {
-    const b = cursor.bracket(v, r.head)
+    const b = bracketAt(v, r.head)
     if (!b || b.to == null) return r.head
     return b.at === r.head ? b.to + 1 : b.to
   }, extend)
@@ -677,7 +676,7 @@ function simplify(v) {
 }
 function selectLine(v) {
   const ranges = blocks(v).map(b => sel1(v.doc.start(b.from), Math.min(v.doc.length, v.doc.start(b.to) + v.doc.lines[b.to].length + 1)))
-  v.dispatch({ sel: { ranges, main: ranges.length - 1 }, kind: 'select' })
+  v.dispatch({ sel: { ranges, main: 0 }, kind: 'select' })
   return true
 }
 function page(v, down, extend) {
@@ -803,7 +802,7 @@ export const KEYS = {
   ...sides('Ctrl-ArrowRight', (v, x) => move(v, r => groupStep(v, r.head, true), x)),
   ...sides('Alt-ArrowLeft', (v, x) => move(v, r => syntaxStep(v, r.head, false), x)),
   ...sides('Alt-ArrowRight', (v, x) => move(v, r => syntaxStep(v, r.head, true), x)),
-  ...sides('ArrowUp', (v, x) => move(v, r => (!x && r.anchor !== r.head && false ? from(r) : v.vertical(r, -1)), x)),
+  ...sides('ArrowUp', (v, x) => move(v, r => v.vertical(r, -1), x)),
   ...sides('ArrowDown', (v, x) => move(v, r => v.vertical(r, 1), x)),
   ...sides('Home', (v, x) => move(v, r => smartHome(v, r), x)),
   ...sides('End', (v, x) => move(v, r => v.rowEdge(r.head, true), x)),

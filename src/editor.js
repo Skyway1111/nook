@@ -8,7 +8,7 @@ import { lang } from './langs.js'
 import { el } from './ui.js'
 import { UNCOMMITTED, runs, ages, since } from './blame.js'
 import { lineChanges } from './linediff.js'
-import { KEYS, keyName, type, foldRange, foldable, cursor, wordAt, groupAt } from './edits.js'
+import { KEYS, keyName, type, foldRange, foldable, bracketAt, wordAt, groupAt } from './edits.js'
 import { startFind } from './find.js'
 import { startComplete } from './complete.js'
 
@@ -324,8 +324,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   }
   /** Undoes the last change, or with `onlySel` the last move of the selection; `redo` the other way. */
   function undo(redo = false, onlySel = false) {
-    const from = redo ? hist.undone : hist.done, onto = redo ? hist.done : hist.undone
-    const ev = from.at(-1)
+    const take = redo ? hist.undone : hist.done, onto = redo ? hist.done : hist.undone
+    const ev = take.at(-1)
     if (!ev) return false
     if (onlySel && ev.sels.length) {
       const s = ev.sels.pop()
@@ -335,7 +335,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       return true
     }
     if (!ev.inv) return false
-    from.pop()
+    take.pop()
     const now = snapshot()
     const back = []
     for (let k = ev.inv.length - 1; k >= 0; k--) {
@@ -571,7 +571,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
         if (!wrap && r.simple) continue
         const ht = r.el.getBoundingClientRect().height
         if (Math.abs(ht - (hs ? hs[i] : lh)) > 0.5) {
-          if (!hs) { hsAll(); }
+          if (!hs) hsAll()
           hs[i] = ht
           ysKnown = Math.min(ysKnown, i)
           moved++
@@ -821,7 +821,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   function brackets(list) {
     for (const r of ranges) {
       if (r.anchor !== r.head) continue
-      const m = cursor.bracket(view, r.head)
+      const m = bracketAt(view, r.head)
       if (!m) continue
       rects(m.at, m.at + 1, m.to == null ? 'cm-nonmatchingBracket' : 'cm-matchingBracket', list, true)
       if (m.to != null) rects(m.to, m.to + 1, 'cm-matchingBracket', list, true)
@@ -865,7 +865,6 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     leftDirty = true
     textWidth = content.clientWidth - lineLeft - padRight
     heights()
-    for (const r of rows.values()) r.simple = r.simple // rows keep their text; heights are measured on draw
     draw()
     scroller.scrollTop = padTop + top(anchor)
     dirty()
@@ -935,6 +934,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   function copied(cut) {
     const any = ranges.some(r => r.anchor !== r.head)
     let s
+    linewise = null
     if (any) s = ranges.filter(r => r.anchor !== r.head).map(r => doc.slice(from(r), to(r))).join('\n')
     else {
       const lines = [...new Set(ranges.map(r => doc.lineOf(r.head)))]
@@ -945,10 +945,13 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       if (any) KEYS.Backspace(view)
       else {
         const lines = [...new Set(ranges.map(r => doc.lineOf(r.head)))].sort((a, b) => a - b)
-        const changes = lines.map(i => {
+        const changes = []
+        for (const i of lines) {
           const a = doc.start(i), b = a + doc.lines[i].length
-          return b < doc.length ? { from: a, to: b + 1, insert: '' } : { from: Math.max(0, a - 1), to: b, insert: '' }
-        })
+          const c = b < doc.length ? { from: a, to: b + 1, insert: '' } : { from: Math.max(0, a - 1), to: b, insert: '' }
+          if (changes.length && c.from <= changes.at(-1).to) changes.at(-1).to = c.to
+          else changes.push(c)
+        }
         dispatch({ changes, kind: 'delete.cut' })
       }
     }
@@ -995,10 +998,10 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   content.addEventListener('mousedown', e => {
     if (e.button !== 0) return
     e.preventDefault()
-    if (composing) { ta.blur(); }
+    if (composing) ta.blur() // ends the composition where it is
     focus()
     const cell = e.target.closest('.cm-gutterElement')
-    if (cell) return gutterClick(cell, e)
+    if (cell) return gutterClick(cell)
     if (e.target.classList.contains('cm-foldPlaceholder')) {
       const i = [...rows].find(([, r]) => r.line.contains(e.target))?.[0]
       if (i != null) setFolds(folds.filter(f => f[0] !== i))
@@ -1099,7 +1102,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     const i = doc.lineOf(pos), s = doc.start(i)
     return { from: s, to: Math.min(doc.length, s + doc.lines[i].length + 1) }
   }
-  function gutterClick(cell, e) {
+  function gutterClick(cell) {
     const i = [...rows].find(([, r]) => r.el === cell.parentNode)?.[0]
     if (i == null) return
     if (cell.classList.contains('cm-foldGutter')) {

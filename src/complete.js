@@ -56,7 +56,7 @@ export function startComplete(v) {
     return start + k
   }
 
-  function candidates(a, b) {
+  function candidates(a) {
     const seen = new Set(keywords)
     const out = [...keywords]
     if (v.L.lex === 'css') for (const p of cssProperties()) if (!seen.has(p)) { seen.add(p); out.push(p) }
@@ -70,7 +70,6 @@ export function startComplete(v) {
       out.push(m[0])
       n++
     }
-    void b
     return out
   }
 
@@ -82,7 +81,7 @@ export function startComplete(v) {
     if (!q && !explicit && !list?.explicit) return close()
     if (!list || list.from !== a) {
       list?.dom.remove()
-      list = { from: a, items: null, picked: 0, shown: list?.from === a ? list.shown : Date.now(), dom: null, explicit, all: candidates(a, head) }
+      list = { from: a, items: null, picked: 0, shown: list?.from === a ? list.shown : Date.now(), dom: null, explicit, all: candidates(a) }
     }
     const items = []
     for (const label of list.all) {
