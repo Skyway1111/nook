@@ -58,28 +58,34 @@ pub fn read_theme(seen: Option<u64>) -> Option<Theme> {
     if first {
         let _ = fs::create_dir_all(&dir).and_then(|()| fs::write(&path, THEME_SEED));
     }
-    let (name, settings) = theme_name(&dir.join("settings.json"));
+    let settings = fs::metadata(dir.join("settings.json")).ok();
+    let name = theme_name(settings.as_ref());
     let pack_dir = name.as_ref().map(|n| dir.join("themes").join(n));
     let stamp = changes(&dir, pack_dir.as_ref().map_or(0, |d| changes(d, 0)));
     let pack_css = pack_dir.map(|d| d.join("theme.css"));
-    let files = [Some(&path), pack_css.as_ref()].map(|p| p.and_then(|p| fs::metadata(p).ok()));
-    let version = files.into_iter().fold(stamp ^ settings, stat) >> 11; // a JSON number holds 53 bits
-    if seen == Some(version) {
+    let files = [settings, fs::metadata(&path).ok(), pack_css.as_ref().and_then(|p| fs::metadata(p).ok())];
+    let version = files.iter().fold(stamp, |h, m| stat(h, m.as_ref())) >> 11; // a JSON number holds 53 bits
+    if seen == Some(version) && !files.iter().flatten().any(fresh) {
         return None;
     }
     let read = |p: &Path| fs::read(p).ok().map(decode);
     Some(Theme { css: read(&path), name, pack: pack_css.and_then(|p| read(&p)), stamp: stamp >> 11, first, version })
 }
 
-/// The installed theme settings.json names, and its stats hashed. It's parsed again only when they change.
-fn theme_name(settings: &Path) -> (Option<String>, u64) {
+/// Whether a file was written in the last two seconds: a second write within its time's resolution keeps its stats.
+fn fresh(m: &fs::Metadata) -> bool {
+    m.modified().is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() < 2))
+}
+
+/// The installed theme settings.json names. It's parsed again only when its stats change, or are fresh.
+fn theme_name(settings: Option<&fs::Metadata>) -> Option<String> {
     static LAST: Mutex<Option<(u64, Option<String>)>> = Mutex::new(None);
-    let now = stat(0, fs::metadata(settings).ok());
+    let now = stat(0, settings);
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-    if last.as_ref().is_none_or(|(was, _)| *was != now) {
+    if settings.is_some_and(fresh) || last.as_ref().is_none_or(|(was, _)| *was != now) {
         *last = Some((now, read_settings().ok().and_then(|s| s.theme)));
     }
-    (last.as_ref().and_then(|(_, name)| name.clone()), now)
+    last.as_ref().and_then(|(_, name)| name.clone())
 }
 
 /// `seed` hashed with each entry of `dir`'s stats, so it changes even when a copy of an older file replaces one.
@@ -87,13 +93,13 @@ fn theme_name(settings: &Path) -> (Option<String>, u64) {
 fn changes(dir: &Path, seed: u64) -> u64 {
     let entries = fs::read_dir(dir).into_iter().flatten().flatten();
     let entries = entries.filter(|e| !matches!(e.file_name().to_str(), Some("theme.css" | "settings.json")));
-    entries.map(|e| e.metadata().ok()).fold(seed, stat)
+    entries.fold(seed, |h, e| stat(h, e.metadata().ok().as_ref()))
 }
 
 /// `h` hashed with a file's modified time and size, or a folder's modified time. A copy keeps its source's modified
 /// time, and on Windows its change time too, so the size goes in; on Linux the change time, which every write
 /// sets, goes in as well. A missing file counts as zeros.
-fn stat(h: u64, m: Option<fs::Metadata>) -> u64 {
+fn stat(h: u64, m: Option<&fs::Metadata>) -> u64 {
     let parts = m.map_or([0; 3], |m| {
         let time = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as u64);
         #[cfg(unix)]
