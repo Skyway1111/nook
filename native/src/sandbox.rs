@@ -1,14 +1,15 @@
-//! A worker process with as little power as the OS allows, for parsing files nook didn't write (pdf.rs). nook starts
-//! its own program again with `WORKER` set, which no start folder can, and the two talk over a pipe each way in
-//! messages: a u32 length, then the bytes. One request runs at a time. A worker that dies, or answers nothing within
-//! `TIMEOUT`, fails that request and is ended; one idle for `IDLE` is ended too, and the next request starts a new one.
+//! Workers with as little power as the OS allows, for parsing files nook didn't write (pdf.rs). nook starts its own
+//! program again with `WORKER` set, which no start folder can, and each worker talks to nook over a pipe each way in
+//! messages: a u32 length, then the bytes. A worker takes one request at a time, and up to `MAX` run at once, so a
+//! burst draws in parallel. A worker that dies, or answers nothing within `TIMEOUT`, fails its one request and is
+//! ended; one idle for `IDLE` is ended too, and later requests start new ones.
 use std::{
     fs::File,
     io::{self, Read, Write},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver},
-        Mutex,
+        Condvar, Mutex, MutexGuard,
     },
     thread,
     time::{Duration, Instant},
@@ -20,9 +21,10 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE: Duration = Duration::from_secs(60);
 /// The longest answer nook takes: a 4096-pixel square page as a PNG that didn't compress.
 const MAX_REPLY: u32 = 64 << 20;
+/// Workers at once: a burst of 50 pages takes 0.47 s with 4, 0.36 s with 8, and 0.56 s drawn in nook itself.
+const MAX: usize = 4;
 
 struct Worker {
-    id: u64,
     input: File,
     replies: Receiver<io::Result<Vec<u8>>>,
     last: Instant,
@@ -30,40 +32,69 @@ struct Worker {
     process: os::Process,
 }
 
-static SLOT: Mutex<Option<Worker>> = Mutex::new(None);
-
-/// The worker's answer to the message `parts` make, starting a worker if none runs.
-pub fn ask(parts: &[&[u8]]) -> Result<Vec<u8>, String> {
-    let mut slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
-    if slot.as_mut().is_some_and(|w| !w.process.alive()) {
-        *slot = None;
-    }
-    let w = match &mut *slot {
-        Some(w) => w,
-        none => none.insert(start().map_err(|e| format!("can't start the sandbox: {e}"))?),
-    };
-    let reply = match write(&mut w.input, parts) {
-        Err(e) => Err(e.to_string()),
-        Ok(()) => match w.replies.recv_timeout(TIMEOUT) {
-            Ok(r) => r.map_err(|e| format!("the sandbox ended: {e}")),
+impl Worker {
+    fn ask(&mut self, parts: &[&[u8]]) -> Result<Vec<u8>, String> {
+        write(&mut self.input, parts).map_err(|e| e.to_string())?;
+        match self.replies.recv_timeout(TIMEOUT) {
+            Ok(r) => r.map_err(|e| if e.kind() == io::ErrorKind::UnexpectedEof { "the sandbox ended".into() } else { e.to_string() }),
             Err(_) => Err(format!("the sandbox answered nothing in {} s", TIMEOUT.as_secs())),
-        },
-    };
-    match reply {
-        Ok(r) => {
-            w.last = Instant::now();
-            Ok(r)
-        }
-        Err(e) => {
-            *slot = None;
-            Err(e)
         }
     }
 }
 
+struct Pool {
+    /// Workers waiting for a request, the one used last at the end.
+    idle: Vec<Worker>,
+    /// Workers running a request, or starting.
+    busy: usize,
+}
+
+static POOL: Mutex<Pool> = Mutex::new(Pool { idle: Vec::new(), busy: 0 });
+static FREED: Condvar = Condvar::new();
+static REAPING: AtomicBool = AtomicBool::new(false);
+
+fn lock() -> MutexGuard<'static, Pool> {
+    POOL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A worker's answer to the message `parts` make.
+pub fn ask(parts: &[&[u8]]) -> Result<Vec<u8>, String> {
+    let mut w = take()?;
+    let reply = w.ask(parts);
+    let mut pool = lock();
+    pool.busy -= 1;
+    if reply.is_ok() {
+        w.last = Instant::now();
+        pool.idle.push(w);
+    }
+    FREED.notify_one();
+    reply
+}
+
+/// The idle worker used last, or a new one while fewer than `MAX` run; otherwise waits for one.
+fn take() -> Result<Worker, String> {
+    let mut pool = lock();
+    loop {
+        while let Some(mut w) = pool.idle.pop() {
+            if w.process.alive() {
+                pool.busy += 1;
+                return Ok(w);
+            }
+        }
+        if pool.busy < MAX {
+            pool.busy += 1;
+            drop(pool);
+            return start().map_err(|e| {
+                lock().busy -= 1;
+                FREED.notify_one();
+                format!("can't start the sandbox: {e}")
+            });
+        }
+        pool = FREED.wait(pool).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
 fn start() -> io::Result<Worker> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let id = NEXT.fetch_add(1, Ordering::Relaxed);
     let (process, input, mut output) = os::spawn()?;
     let (tx, replies) = channel();
     thread::spawn(move || loop {
@@ -73,23 +104,25 @@ fn start() -> io::Result<Worker> {
             return;
         }
     });
-    thread::spawn(move || loop {
-        let left = {
-            let mut slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
-            match &*slot {
-                Some(w) if w.id == id => match IDLE.checked_sub(w.last.elapsed()) {
-                    Some(left) if !left.is_zero() => left,
-                    _ => {
-                        *slot = None;
-                        return;
-                    }
-                },
-                _ => return,
-            }
-        };
-        thread::sleep(left);
-    });
-    Ok(Worker { id, input, replies, last: Instant::now(), process })
+    if !REAPING.swap(true, Ordering::Relaxed) {
+        thread::spawn(reap);
+    }
+    Ok(Worker { input, replies, last: Instant::now(), process })
+}
+
+/// Ends each worker once it has been idle for `IDLE`, and itself once no worker is left.
+fn reap() {
+    let mut wait = IDLE;
+    loop {
+        thread::sleep(wait);
+        let mut pool = lock();
+        pool.idle.retain(|w| w.last.elapsed() < IDLE);
+        if pool.idle.is_empty() && pool.busy == 0 {
+            REAPING.store(false, Ordering::Relaxed);
+            return;
+        }
+        wait = pool.idle.iter().map(|w| IDLE - w.last.elapsed()).min().unwrap_or(IDLE);
+    }
 }
 
 /// The worker's side: answers each message with `answer`, until nook closes the pipe.
