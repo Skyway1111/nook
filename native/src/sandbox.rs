@@ -416,10 +416,13 @@ mod os {
     /// thread ends it if nook does mid-page, when the pipe can't tell it.
     pub fn enter() -> (File, File) {
         unsafe {
-            // Before Linux 5.9, one by one.
+            // Before Linux 5.9, each one /proc lists.
             if syscall(SYS_CLOSE_RANGE, 3 as c_ulong, c_ulong::from(u32::MAX), 0 as c_ulong) < 0 {
-                for fd in 3..1024 {
-                    close(fd);
+                let fds = std::fs::read_dir("/proc/self/fd").into_iter().flatten().flatten();
+                for fd in fds.filter_map(|e| e.file_name().to_str()?.parse::<c_int>().ok()).collect::<Vec<_>>() {
+                    if fd > 2 {
+                        close(fd);
+                    }
                 }
             }
             if prctl(PR_SET_NO_NEW_PRIVS, 1 as c_ulong, 0 as c_ulong, 0 as c_ulong, 0 as c_ulong) != 0 {
