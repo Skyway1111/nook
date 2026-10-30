@@ -149,9 +149,11 @@ extern "C" {
     pub(crate) fn g_free(p: Ptr);
     fn g_strfreev(v: *mut *mut c_char);
     fn g_filename_from_uri(uri: *const c_char, host: *mut *mut c_char, error: *mut Ptr) -> *mut c_char;
+    pub(crate) fn g_filename_to_uri(path: *const c_char, host: *const c_char, error: *mut Ptr) -> *mut c_char;
+    fn g_error_free(error: Ptr);
     fn g_bytes_new_with_free_func(data: *const u8, size: usize, free: Notify, user: Ptr) -> Ptr;
     fn g_bytes_unref(b: Ptr);
-    fn g_variant_new(format: *const c_char, ...) -> Ptr;
+    pub(crate) fn g_variant_new(format: *const c_char, ...) -> Ptr;
     fn g_variant_unref(v: Ptr);
     fn g_variant_get_child_value(v: Ptr, i: usize) -> Ptr;
     fn g_variant_get_variant(v: Ptr) -> Ptr;
@@ -169,6 +171,23 @@ extern "C" {
     fn g_input_stream_read(s: Ptr, buf: *mut u8, n: usize, cancellable: Ptr, error: *mut Ptr) -> isize;
     fn g_bus_get(kind: c_int, cancellable: Ptr, done: Ready, data: Ptr);
     fn g_bus_get_finish(res: Ptr, error: *mut Ptr) -> Ptr;
+    fn g_bus_get_sync(kind: c_int, cancellable: Ptr, error: *mut Ptr) -> Ptr;
+    fn g_dbus_connection_call_sync(
+        bus: Ptr,
+        name: *const c_char,
+        path: *const c_char,
+        iface: *const c_char,
+        method: *const c_char,
+        params: Ptr,
+        reply: *const c_char,
+        flags: c_int,
+        timeout: c_int,
+        cancellable: Ptr,
+        error: *mut Ptr,
+    ) -> Ptr;
+    pub(crate) fn g_file_new_for_path(path: *const c_char) -> Ptr;
+    pub(crate) fn g_file_trash(file: Ptr, cancellable: Ptr, error: *mut Ptr) -> c_int;
+    pub(crate) fn g_app_info_launch_default_for_uri(uri: *const c_char, context: Ptr, error: *mut Ptr) -> c_int;
     fn g_dbus_connection_call(
         bus: Ptr,
         name: *const c_char,
@@ -314,7 +333,7 @@ fn ui() -> &'static Ui {
     &UI.0
 }
 
-fn cstring(s: &str) -> CString {
+pub(crate) fn cstring(s: &str) -> CString {
     CString::new(s.replace('\0', "")).unwrap_or_default()
 }
 
@@ -1016,4 +1035,43 @@ unsafe fn apply_scheme(mut v: Ptr) {
         g_object_set(gtk_settings_get_default(), c"gtk-application-prefer-dark-theme".as_ptr(), dark, null::<c_char>());
     }
     g_variant_unref(v);
+}
+
+// The desktop's services, for the file actions (shell_unix.rs) and notifications (notify.rs). These wait for an
+// answer, so they run off the main thread.
+
+/// A GError's message. Frees the error.
+pub(crate) unsafe fn error_text(error: Ptr) -> String {
+    #[repr(C)]
+    struct GError {
+        domain: u32,
+        code: c_int,
+        message: *const c_char,
+    }
+    if error.is_null() {
+        return "it failed".into();
+    }
+    let message = text((*(error as *const GError)).message);
+    g_error_free(error);
+    message
+}
+
+/// Calls `method` of a freedesktop service on the session bus, on the interface named as the service is, and waits for
+/// its reply. `args` makes the call's arguments, a new GVariant tuple, which the call takes.
+pub(crate) fn bus_call(service: &CStr, path: &CStr, method: &CStr, args: impl FnOnce() -> Ptr) -> Result<(), String> {
+    unsafe {
+        let mut error = null_mut();
+        let bus = g_bus_get_sync(G_BUS_TYPE_SESSION, null_mut(), &mut error);
+        if bus.is_null() {
+            return Err(error_text(error));
+        }
+        let (name, path, method) = (service.as_ptr(), path.as_ptr(), method.as_ptr());
+        let reply = g_dbus_connection_call_sync(bus, name, path, name, method, args(), null(), 0, -1, null_mut(), &mut error);
+        g_object_unref(bus);
+        if reply.is_null() {
+            return Err(error_text(error));
+        }
+        g_variant_unref(reply);
+    }
+    Ok(())
 }

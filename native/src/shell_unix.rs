@@ -1,16 +1,21 @@
-//! The file actions shell.rs gives Windows, on Linux: opening with the desktop's default app, the
-//! freedesktop trash through `gio`, renames that never overwrite, and a cut, copy, and paste of files
-//! within nook. Desktops share no one file clipboard the way Explorer's apps do, so nook keeps its own.
+//! The file actions shell.rs gives Windows, on Linux, through GIO and the desktop's D-Bus services: opening with the
+//! desktop's default app, showing a file in the file manager, the freedesktop trash, renames that never overwrite,
+//! and a cut, copy, and paste of files within nook. Desktops share no one file clipboard the way Explorer's apps do,
+//! so nook keeps its own.
 
 use std::{
-    ffi::{c_char, c_int, c_uint, CString},
+    ffi::{c_char, c_int, c_uint, CStr, CString},
     fs, io,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    ptr::{null, null_mut},
     sync::Mutex,
 };
 
 use crate::err;
+use crate::host::gtk::{
+    bus_call, error_text, g_app_info_launch_default_for_uri, g_file_new_for_path, g_file_trash, g_filename_to_uri, g_free,
+    g_object_unref, g_variant_new,
+};
 
 extern "C" {
     fn renameat2(from_dir: c_int, from: *const c_char, to_dir: c_int, to: *const c_char, flags: c_uint) -> c_int;
@@ -27,37 +32,73 @@ fn in_dir(path: &str, dir: &str) -> bool {
     Path::new(path).parent().is_some_and(|p| p == Path::new(dir))
 }
 
-/// Starts `program` on `args` without waiting for it, and with nothing of nook's on its stdio.
-fn launch(program: &str, args: &[&str]) -> Result<(), String> {
-    Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(drop)
-        .map_err(|e| format!("can't run {program}: {e}"))
+/// `path` as a URI: file:// for an absolute path, and a URL as it is.
+fn uri(path: &str) -> Option<CString> {
+    let path = CString::new(path).ok()?;
+    if !path.as_bytes().starts_with(b"/") {
+        return Some(path);
+    }
+    unsafe {
+        let uri = g_filename_to_uri(path.as_ptr(), null(), null_mut());
+        if uri.is_null() {
+            return None;
+        }
+        let owned = CStr::from_ptr(uri).to_owned();
+        g_free(uri.cast());
+        Some(owned)
+    }
 }
 
-/// Opens a path or URL with the desktop's default app. Linux has no shared Open with dialog or
-/// Properties sheet, so the file browser offers neither, and any other verb opens too.
+/// Opens `uri` with the desktop's default app for it.
+fn launch(uri: &CStr) {
+    unsafe { g_app_info_launch_default_for_uri(uri.as_ptr(), null_mut(), null_mut()) };
+}
+
+/// Opens a path or URL with the desktop's default app. Linux has no shared Open with dialog or Properties sheet, so
+/// the file browser offers neither, and any other verb opens too. Finding the app reads the file and the desktop's
+/// list of apps, so that happens on a thread of its own.
 pub fn open_path(path: String, verb: Option<String>) {
     let _ = verb;
-    let _ = launch("xdg-open", &[&path]);
+    std::thread::spawn(move || {
+        if let Some(uri) = uri(&path) {
+            launch(&uri);
+        }
+    });
 }
 
-/// Shows the folder that holds `path` in the file manager.
+/// Shows `path` selected in its folder, through the file manager's freedesktop interface, or where no file manager
+/// answers there, opens the folder. The file manager may have to start first, so this waits on a thread of its own.
 pub fn reveal(path: String) {
-    let dir = Path::new(&path).parent().unwrap_or(Path::new("/"));
-    let _ = launch("xdg-open", &[&dir.to_string_lossy()]);
+    std::thread::spawn(move || {
+        let Some(file) = uri(&path) else { return };
+        let items = [file.as_ptr(), null()];
+        let shown = bus_call(c"org.freedesktop.FileManager1", c"/org/freedesktop/FileManager1", c"ShowItems", || unsafe {
+            g_variant_new(c"(^ass)".as_ptr(), items.as_ptr(), c"".as_ptr())
+        });
+        if shown.is_err() {
+            let dir = Path::new(&path).parent().unwrap_or(Path::new("/"));
+            if let Some(dir) = uri(&dir.to_string_lossy()) {
+                launch(&dir);
+            }
+        }
+    });
 }
 
-/// Moves a file or folder to the trash, where the file manager can restore it. Never deletes outright:
-/// without `gio`, it fails and says so.
+/// Moves a file or folder to the trash, where the file manager can restore it. Never deletes outright: where there's
+/// no trash, as on a system mount, it fails and says so.
 pub fn recycle(path: String) -> Result<bool, String> {
-    let mut cmd = Command::new("gio");
-    cmd.args(["trash", "--"]).arg(&path);
-    crate::run(&mut cmd, None).map(|_| true).map_err(|e| format!("nook can't move it to the trash: {e}"))
+    let path = CString::new(path).map_err(err)?;
+    unsafe {
+        let file = g_file_new_for_path(path.as_ptr());
+        let mut error = null_mut();
+        let trashed = g_file_trash(file, null_mut(), &mut error) != 0;
+        g_object_unref(file);
+        if trashed {
+            Ok(true)
+        } else {
+            Err(format!("nook can't move it to the trash: {}", error_text(error)))
+        }
+    }
 }
 
 /// Renames a file or folder. A name that's taken fails instead of replacing what has it: the kernel checks as it
