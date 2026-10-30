@@ -278,14 +278,6 @@ pub fn page_alive() -> bool {
     web().alive.get()
 }
 
-/// Posts JSON `s` to the page.
-pub fn post_json(s: &str) {
-    let wv = web().webview.get();
-    if !wv.is_null() {
-        unsafe { call!(wv, 32, wide(s).as_ptr() => *const u16) };
-    }
-}
-
 /// Posts string `s` to the page.
 pub fn post_string(s: &str) {
     let wv = web().webview.get();

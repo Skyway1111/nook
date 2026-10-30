@@ -25,16 +25,17 @@ pub fn run(cfg: Config) -> Result<(), String> {
     Ok(())
 }
 
-/// Sends JSON `text` to the page, in order with the other messages.
+/// Sends JSON `text`, an event, to the page, in order with the other messages. It goes as a string, which the
+/// page parses: a JSON message would reach it with each object's keys sorted.
 pub fn send(text: &str) {
-    webview::post_json(text);
+    webview::post_string(text);
 }
 
 /// Sends a reply's JSON `text`. A long one goes as a buffer marked `[0]`, which may pass other messages: replies
 /// match by id.
 pub fn send_reply(text: &str) {
     if text.len() <= SHORT {
-        webview::post_json(text);
+        webview::post_string(text);
     } else {
         webview::post_buffer(text.as_bytes(), "[0]");
     }

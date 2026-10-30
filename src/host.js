@@ -40,9 +40,9 @@ function text(id, seq, s, end) {
 const post = wv ? m => wv.postMessage(m) : m => window.webkit.messageHandlers.ipc.postMessage(JSON.stringify(m))
 if (wv) {
   const decoder = new TextDecoder()
-  // A string is a stream's short piece, `<id> <seq> <end>|<text>`; anything else is a reply or an event.
+  // A string is a reply or an event as JSON, or a stream's short piece, `<id> <seq> <end>|<text>`.
   wv.addEventListener('message', ({ data }) => {
-    if (typeof data !== 'string') return receive(data)
+    if (data[0] === '[') return receive(JSON.parse(data))
     const bar = data.indexOf('|')
     const [id, seq, end] = data.slice(0, bar).split(' ')
     text(+id, +seq, data.slice(bar + 1), end === '1')
