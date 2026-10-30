@@ -6,7 +6,6 @@ import { startSettings } from './settings.js'
 import { bytes } from './palette.js'
 import { holdBackdrops } from './backdrops.js'
 import { startWallpaper } from './wallpaper.js'
-import { startDashboard } from './dashboard.js'
 import { opened } from './recent.js'
 import { path as paths } from './paths.js'
 import { $, letter, openMenu, openPicker } from './ui.js'
@@ -262,7 +261,10 @@ addEventListener('nook-review', ({ detail: { root, files: edited } }) => {
   const tab = tabs.active()
   git.review(root || tab?.path || cwd, edited, `${tab?.name ?? 'Claude'} · last turn`)
 })
-dashboard = startDashboard($('pane'), {
+// The sessions dashboard loads on its first open, from its button or Ctrl+Shift+S.
+let board
+const toggleDashboard = () => (board ??= import('./dashboard.js').then(startBoard)).then(d => d.toggle()).catch(banner)
+const startBoard = ({ startDashboard }) => (dashboard = startDashboard($('pane'), {
   button: $('toggle-sessions'),
   list: () => tabs.sessions(),
   open: tab => tabs.show(tab),
@@ -304,7 +306,8 @@ dashboard = startDashboard($('pane'), {
     },
   },
   onClose: () => tabs.focus(),
-})
+}))
+$('toggle-sessions').onclick = toggleDashboard
 $('new-tab').onclick = newSession
 $('new-tab').onmouseenter = () => { $('new-tab').title = `New Claude session in ${here()}` }
 // The chevron by + starts Claude other ways: continuing or resuming a session saved for this folder, or in a
@@ -379,6 +382,10 @@ addEventListener('keydown', e => {
   if (k === 'e') {
     e.preventDefault()
     files.focus()
+  }
+  if (k === 's') {
+    e.preventDefault()
+    toggleDashboard()
   }
   if (k === 'h' || (k === 'f' && !tabs.active()?.terminal)) {
     e.preventDefault()

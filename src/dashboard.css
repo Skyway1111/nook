@@ -1,0 +1,81 @@
+/* Loaded with dashboard.js, so its rules cost nothing until the dashboard first opens. */
+
+/* The sessions dashboard, over the pane: a card for each Claude tab. */
+.sessions {
+  position: absolute; z-index: 6; inset: 10px 12px auto; max-height: calc(100% - 20px); overflow: auto;
+  display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 12px; outline: none;
+  background: var(--bg); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.sessions > header { display: flex; align-items: center; gap: 14px; font-size: .86rem; color: var(--ink-3); white-space: nowrap; }
+.sessions > header b { font-weight: 600; font-size: .95rem; color: var(--ink-1); }
+.sessions > header .count { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.sessions > header .limits { font-size: .8rem; }
+.sessions > header .limits.full { color: var(--session-waiting); }
+.sessions > header .new { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; color: var(--ink-2); }
+.sessions > header .new:hover { background: var(--hover); color: var(--ink-1); }
+.sessions .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.sessions .session {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px; border-radius: 9px; text-align: left;
+  background: var(--raised); border: 1px solid var(--line); color: var(--ink-2); font-size: .86rem; outline: none;
+}
+.sessions .session:hover { border-color: var(--ink-3); }
+.sessions .session.at { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.sessions .session header { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.sessions .session .state { color: var(--ink-1); font-weight: 600; white-space: nowrap; }
+.sessions .session .where { flex: 1; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
+.sessions .session p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessions .session .prompt { color: var(--ink-1); }
+.sessions .session .answer { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-height: 1.4; color: var(--ink-2); }
+.sessions .session .answer:empty { display: none; }
+.sessions .session:not([data-mark=working], [data-mark=waiting]) .doing:empty { display: none; }
+.sessions .session .doing { font-family: var(--font-term); font-size: .8rem; color: var(--ink-3); min-height: 1.2em; }
+.sessions .session .fill { display: block; height: 3px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--fill), var(--line) var(--fill)); opacity: .8; }
+.sessions .session .fill.full { background: linear-gradient(to right, var(--session-waiting) var(--fill), var(--line) var(--fill)); }
+.sessions .session .fill[hidden] { display: none; }
+.sessions .session footer { font-size: .78rem; color: var(--ink-3); }
+.sessions .session .files { display: flex; gap: 6px; min-height: 0; }
+.sessions .session .files:empty { display: none; }
+.sessions .session .file { padding: 1px 7px; border-radius: 5px; font-size: .78rem; background: var(--hover); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.sessions .session .file:hover { background: var(--line); color: var(--ink-1); }
+.sessions .session .file:is(.review, .act) { flex: none; color: var(--accent); }
+.sessions .session .file.keep { flex: none; color: var(--session-done); font-weight: 600; }
+.sessions .session .file.deny { flex: none; }
+.sessions .session .file.discard { flex: none; }
+.sessions .session .file.discard.sure { color: var(--ansi-red); font-weight: 600; }
+.sessions .session .asks { display: flex; align-items: center; gap: 6px; }
+.sessions .session .asks:empty { display: none; }
+.sessions .session .plan { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--ink-2); }
+.sessions .session .plan:has(.words:empty) { display: none; }
+.sessions .session .plan .steps { flex: none; display: flex; gap: 2px; }
+.sessions .session .plan .steps i { width: 7px; height: 7px; border-radius: 2px; background: var(--line); }
+.sessions .session .plan .steps i.done { background: var(--session-done); }
+.sessions .session .plan .words { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sessions .session .queue { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--ink-2); }
+.sessions .session .queue:empty { display: none; }
+.sessions .session .queue .next { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessions .session .queue .file { flex: none; }
+.sessions .session .doing[hidden] { display: none; }
+.sessions .session .asks .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-term); font-size: .8rem; color: var(--ink-1); }
+.sessions .mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.sessions [data-mark=working] .mark { background: var(--session-working); }
+.sessions [data-mark=waiting] .mark { background: var(--session-waiting); }
+.sessions [data-mark=done] .mark { background: var(--session-done); }
+.sessions .pick { flex: none; width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid var(--ink-3); cursor: pointer; }
+.sessions .pick[aria-checked=true] { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--raised); }
+.sessions .pick[aria-disabled=true] { opacity: .35; cursor: default; }
+.sessions .send { display: flex; gap: 8px; align-items: flex-end; }
+.sessions .send textarea {
+  flex: 1; min-width: 0; resize: none; padding: 7px 10px; border-radius: 8px; outline: none; font: inherit; font-size: .88rem;
+  background: var(--raised); border: 1px solid var(--line); color: var(--ink-1);
+}
+.sessions .send textarea:focus { border-color: var(--accent); }
+.sessions .send .go { flex: none; height: 32px; padding: 0 12px; border-radius: 8px; background: var(--accent); color: var(--bg); font-weight: 600; font-size: .86rem; }
+.sessions .send .go:disabled { background: var(--hover); color: var(--ink-3); }
+.sessions .send .then { flex: none; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-1); font-size: .86rem; }
+.sessions .send .then:hover:not(:disabled) { background: var(--hover); }
+.sessions .send .then:disabled { color: var(--ink-3); }
+.sessions .send .fan { flex: none; display: flex; align-items: center; height: 32px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.sessions .send .fan input { width: 2.6em; height: 100%; border: 0; background: transparent; color: var(--ink-1); text-align: center; font: inherit; font-size: .86rem; }
+.sessions .send .fan .start { height: 100%; padding: 0 10px; border-left: 1px solid var(--line); color: var(--ink-1); font-size: .86rem; }
+.sessions .send .fan .start:hover:not(:disabled) { background: var(--hover); }
+.sessions .send .fan .start:disabled { color: var(--ink-3); }
