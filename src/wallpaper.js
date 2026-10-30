@@ -7,12 +7,12 @@
 import { ROLES, SCENES, paint, render, scene } from './wallpapers.js'
 import { bytes } from './palette.js'
 import { el } from './ui.js'
+import { SETTLE_MS } from './backdrops.js'
 
 const FRAME_MS = 100 // ten frames a second. Characters step from cell to cell, so more frames would only cost.
 const SPEEDS = [.25, 3] // --wallpaper-speed's range. Below 1 the frames slow with the scene, so a slower scene costs less.
 const ECHO_MS = 50 // after a key, a frame waits this long at most for the key's echo, and draws in the animation frame after it
 const THUMB_PX = 4 // the picker's thumbnails draw their cells this many pixels high
-const SETTLE_MS = 100 // while the pane resizes, the last bitmap stretches; it redraws at the new size once this long passes without one, as backdrops.js does
 const still = matchMedia('(prefers-reduced-motion: reduce)')
 
 /** Sizes `canvas` to a CSS box of `width` x `height` at the screen's pixel density, and fits cells to it: `size`
@@ -225,6 +225,7 @@ export function startWallpaper(pane, { button, save, tune, onClose }) {
     picker?.restyle()
   }
 
+  // While the pane resizes, the last bitmap stretches; it redraws at the new size once SETTLE_MS passes without one.
   let settle = 0
   const resettle = () => {
     clearTimeout(settle)
