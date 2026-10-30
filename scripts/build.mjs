@@ -176,7 +176,7 @@ function parse(file) {
   const code = tokens.filter(t => t[0] !== ' ' && t[0] !== 'n' && t[0] !== 'c')
   const fail = (t, what) => { throw new Error(`${relative(root, file)}:${tokens.slice(0, t[3]).map(t => t[1]).join('').split('\n').length}: ${what}`) }
   const target = t => {
-    if (t?.[0] !== 's' || !/^['"]\.\.?\//.test(t[1])) fail(t, 'expected a relative path in quotes')
+    if (t?.[0] !== 's' || !/^['"]\.\.?\//.test(t[1])) fail(t, `${t?.[1]}: nook imports its own files only, by a relative path in quotes`)
     return resolve(dirname(file), t[1].slice(1, -1))
   }
   // Leaves out code[a] to code[b], and ends the statement there if the next line could continue the one before.
@@ -366,7 +366,12 @@ const run = (command, args, cwd) => {
   if (r.status !== 0) process.exit(r.status ?? 1)
 }
 
-bundle()
+try {
+  bundle()
+} catch (e) {
+  console.error(e.constructor === Error ? `build: ${e.message}` : e) // the source's mistakes by name, the build's own with a stack
+  process.exit(1)
+}
 if (!process.argv.includes('--dist')) {
   const tauri = join(root, 'src-tauri')
   // Cargo reads a relative CARGO_TARGET_DIR from src-tauri, where it runs, so it gets the whole path.
