@@ -11,7 +11,7 @@
 }
 .history-bar .search {
   flex: 0 1 320px; min-width: 180px; height: 28px; padding: 0 10px; font: inherit; color: var(--ink-1);
-  background: var(--raised); border: 1px solid transparent; border-radius: 6px; outline: none; user-select: text;
+  background: var(--raised); border: 1px solid transparent; border-radius: 6px; outline: none; user-select: text; -webkit-user-select: text;
 }
 .history-bar .search:focus { border-color: var(--accent); }
 .history-bar .search::placeholder { color: var(--ink-3); }

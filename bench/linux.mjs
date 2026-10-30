@@ -34,17 +34,18 @@
 // --quick is the merge gate's run, which bench/gate.mjs starts: each session times fewer keys, resizes and
 // floods over shorter spans, 16 opens, no Claude-view pass unless --tui on, and a number that comes close to its
 // bar gets more launches before the verdict. --koi also switches each session to the koi wallpaper for a while.
-// Needs Xvfb, xdotool and python3, and a build: `npx tauri build --no-bundle`.
-//   node bench/linux.mjs [--bin src-tauri/target/release/nook[,other...]] [--wallpapers none,koi] [--runs 30]
+// Needs Xvfb, xdotool and python3, and nook built as dev.nook.bench, which keeps its own settings:
+// `NOOK_ID=dev.nook.bench npm run build -- --no-pack` puts one in src-tauri/target/release/stage.
+//   node bench/linux.mjs [--bin src-tauri/target/release/stage/nook[,other...]] [--wallpapers none,koi] [--runs 30]
 //                        [--sessions 3] [--tui off] [--repo path] [--quick] [--koi] [--json out.json]
 import { spawn, execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
-import { f, judge, median, quantile, table } from './stats.mjs'
+import { ID, benched, f, judge, median, quantile, table } from './stats.mjs'
 
 const flag = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i < 0 ? fallback : process.argv[i + 1] }
-const bins = flag('bin', new URL('../src-tauri/target/release/nook', import.meta.url).pathname).split(',').map(b => resolve(b))
+const bins = flag('bin', new URL('../src-tauri/target/release/stage/nook', import.meta.url).pathname).split(',').map(b => resolve(b))
 const wallpapers = flag('wallpapers', 'none').split(',')
 const quick = process.argv.includes('--quick')
 const runs = Number(flag('runs', quick ? 16 : 30))
@@ -57,7 +58,7 @@ const [W, H] = [1280, 820] // nook's own first size
 const P = quick
   ? { settle: 2000, idle: 5000, keys: 60, resizes: 20, floods: 1, afterFlood: 800, scrolls: 12, resizesFull: 8, diffCpu: 3000 }
   : { settle: 3000, idle: 10000, keys: 100, resizes: 40, floods: 3, afterFlood: 1500, scrolls: 40, resizesFull: 20, diffCpu: 5000 }
-for (const bin of bins) if (!existsSync(bin)) throw new Error(`no build at ${bin}`)
+for (const bin of bins) if (!benched(bin)) throw new Error(`no nook built as ${ID} at ${bin}`)
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
@@ -82,7 +83,7 @@ done`
 /** A config folder whose settings run SHELL and whose theme.css picks `wallpaper`. */
 function scratch(wallpaper, command = ['bash', '-c', SHELL]) {
   const dir = mkdtempSync(join(tmpdir(), 'nook-bench-'))
-  const config = join(dir, 'config', 'dev.nook.app')
+  const config = join(dir, 'config', ID)
   const home = join(dir, 'home')
   mkdirSync(config, { recursive: true })
   mkdirSync(home)
