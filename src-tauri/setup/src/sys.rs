@@ -55,9 +55,11 @@ extern "system" {
     pub fn CreateDirectoryW(p: P, sa: V) -> i32;
     pub fn RemoveDirectoryW(p: P) -> i32;
     pub fn DeleteFileW(p: P) -> i32;
+    pub fn GetFileAttributesW(p: P) -> u32;
     pub fn FindFirstFileW(p: P, d: *mut FindData) -> H;
     pub fn FindNextFileW(h: H, d: *mut FindData) -> i32;
     pub fn FindClose(h: H) -> i32;
+    pub fn WideCharToMultiByte(cp: u32, flags: u32, w: P, wn: i32, b: *mut u8, bn: i32, d: *const u8, used: *mut i32) -> i32;
     pub fn CompareStringOrdinal(a: P, an: i32, b: P, bn: i32, ignore_case: i32) -> i32;
     pub fn CreateProcessW(app: P, cmd: *mut u16, pa: V, ta: V, inherit: i32, flags: u32, env: V, dir: P, si: *const StartupInfo, pi: *mut ProcessInfo) -> i32;
     pub fn WaitForSingleObject(h: H, ms: u32) -> u32;

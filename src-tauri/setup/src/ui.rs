@@ -2,7 +2,7 @@
 //! shows how it went.
 
 use crate::sys::*;
-use crate::{cat, dec, Fail};
+use crate::Fail;
 use core::cell::UnsafeCell;
 use core::ptr::{null, null_mut};
 use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering::Relaxed};
@@ -146,9 +146,9 @@ unsafe extern "system" fn worker(data: V) -> u32 {
             s.code.store(0, Relaxed);
             &pages[1]
         }
-        Err(Fail(what, code)) => {
+        Err(f) => {
             s.code.store(2, Relaxed);
-            *s.text.get() = cat(&[&what, w!(" (error "), &dec(code as usize).iter().map(|&b| b as u16).collect::<crate::W>(), w!(")")]);
+            *s.text.get() = f.text();
             pages[2].content = (*s.text.get()).as_ptr();
             pages[2].icon = 0xFFFE as P;
             &pages[2]
@@ -161,7 +161,7 @@ unsafe extern "system" fn worker(data: V) -> u32 {
 
 /// Asks to close the running nook; true to go on.
 unsafe fn ask(flow: &Flow, parent: H) -> bool {
-    let mut p = page(flow, w!(concat!(name!(), " is running")), w!("Close it to go on?"), None, 0x1000, 9);
+    let mut p = page(flow, w!(concat!(name!(), " is running")), w!("Close it to continue?"), None, 0x1000, 9);
     p.parent = parent;
     p.icon = 0xFFFF as P;
     p.callback = None;

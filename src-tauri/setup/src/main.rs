@@ -119,6 +119,26 @@ fn index(b: &[u8]) -> Vec<(W, usize)> {
 /// Why a step failed, and the Win32 error.
 pub struct Fail(pub W, pub u32);
 
+impl Fail {
+    pub fn text(&self) -> W {
+        let code: W = dec(self.1 as usize).iter().map(|&b| b as u16).collect();
+        cat(&[&self.0, w!(" (error "), &code, w!(")")])
+    }
+}
+
+/// A silent run's exit code; a failure also goes to stderr, as UTF-8.
+fn exit(r: Result<(), Fail>) -> u32 {
+    let Err(f) = r else { return 0 };
+    let text = f.text();
+    let mut out = [0u8; 2048];
+    unsafe {
+        let n = WideCharToMultiByte(65001, 0, text.as_ptr(), text.len() as i32 - 1, out.as_mut_ptr(), 2047, null(), null_mut()) as usize;
+        out[n] = b'\n';
+        WriteFile(GetStdHandle(-12i32 as u32), out.as_ptr(), n as u32 + 1, &mut 0, null_mut());
+    }
+    2
+}
+
 fn fail<T>(what: &[&[u16]]) -> Result<T, Fail> {
     let code = unsafe { GetLastError() };
     Err(Fail(cat(what), code))
@@ -163,7 +183,7 @@ struct Install<'a> {
 impl Install<'_> {
     fn run(&self, silent: bool) -> u32 {
         if silent {
-            return self.install(self.fresh && !self.ns && !self.update).map_or(2, |_| 0);
+            return exit(self.install(self.fresh && !self.ns && !self.update));
         }
         let files = within(&self.dir, &index(self.p.index));
         let flow = ui::Flow {
@@ -177,7 +197,7 @@ impl Install<'_> {
             done: w!(concat!(name!(), " is installed")),
             done_check: Some(w!(concat!("Run ", name!()))),
             failed: w!(concat!(name!(), " wasn't installed")),
-            running: &|| Rm::over(&files).is_some(),
+            running: &|| running(&files),
             work: &|desktop| self.install(desktop),
         };
         let (code, run) = ui::run(&flow);
@@ -205,11 +225,7 @@ impl Install<'_> {
         unsafe { data.set_len(n) };
         ui::progress(20);
         let files = index(self.p.index);
-        if let Some(rm) = Rm::over(&within(&self.dir, &files)) {
-            if !rm.close() {
-                return fail(&[w!(concat!("Couldn't close ", name!(), "."))]);
-            }
-        }
+        close(&within(&self.dir, &files))?;
         let old = cat(&[&self.dir, UNINSTALLER]);
         let before = read(&old).map_or(Vec::new(), |exe| match parts(&exe) {
             Packed { kind: Some(LIST), index: i, .. } => index(i),
@@ -332,11 +348,7 @@ fn relaunch(path: &[u16], exe: &[u8], silent: bool, update: bool) -> u32 {
 fn uninstall(files: &[(W, usize)], dir: &W, silent: bool, update: bool) -> u32 {
     let full = within(dir, files);
     let work = |data: bool| -> Result<(), Fail> {
-        if let Some(rm) = Rm::over(&full) {
-            if !rm.close() {
-                return fail(&[w!(concat!("Couldn't close ", name!(), "."))]);
-            }
-        }
+        close(&full)?;
         let paths: Vec<W> = files.iter().map(|(p, _)| p.clone()).collect();
         remove(dir, &paths);
         ui::progress(50);
@@ -367,11 +379,18 @@ fn uninstall(files: &[(W, usize)], dir: &W, silent: bool, update: bool) -> u32 {
             if data && !update {
                 RegDeleteTreeW(HKCU, DIR_KEY.as_ptr());
                 RegDeleteKeyW(HKCU, VENDOR_KEY.as_ptr());
+                // The WebView2 processes of a nook just closed hold its profile for a moment longer.
                 for at in [&ROAMING, &LOCAL] {
                     let mut d = cat(&[&known(at), w!(concat!("\\", id!()))]);
                     d.push(0);
-                    let mut op = FileOp { hwnd: 0, func: 3, from: d.as_ptr(), to: null(), flags: 0x614, aborted: 0, mappings: null_mut(), title: null() };
-                    SHFileOperationW(&mut op);
+                    for _ in 0..50 {
+                        let mut op = FileOp { hwnd: 0, func: 3, from: d.as_ptr(), to: null(), flags: 0x614, aborted: 0, mappings: null_mut(), title: null() };
+                        SHFileOperationW(&mut op);
+                        if GetFileAttributesW(d.as_ptr()) == u32::MAX {
+                            break;
+                        }
+                        Sleep(100);
+                    }
                 }
             }
         }
@@ -379,7 +398,7 @@ fn uninstall(files: &[(W, usize)], dir: &W, silent: bool, update: bool) -> u32 {
         Ok(())
     };
     if silent {
-        return work(false).map_or(2, |_| 0);
+        return exit(work(false));
     }
     let flow = ui::Flow {
         title: w!(concat!(name!(), " Uninstall")),
@@ -392,7 +411,7 @@ fn uninstall(files: &[(W, usize)], dir: &W, silent: bool, update: bool) -> u32 {
         done: w!(concat!(name!(), " is uninstalled")),
         done_check: None,
         failed: w!(concat!(name!(), " wasn't uninstalled")),
-        running: &|| Rm::over(&full).is_some(),
+        running: &|| running(&full),
         work: &work,
     };
     ui::run(&flow).0
@@ -486,7 +505,7 @@ fn walk(root: &[u16], rel: &[u16], out: &mut Vec<W>) {
     unsafe { FindClose(h) };
 }
 
-/// A Restart Manager session over files some process has open.
+/// A Restart Manager session over a set of files.
 struct Rm(u32);
 
 impl Rm {
@@ -497,18 +516,33 @@ impl Rm {
         }
         let rm = Rm(h);
         let ptrs: Vec<P> = files.iter().map(|f| f.as_ptr()).collect();
-        let (mut need, mut n, mut why) = (0, 0, 0);
-        unsafe {
-            (RmRegisterResources(h, ptrs.len() as u32, ptrs.as_ptr(), 0, null_mut(), 0, null_mut()) == 0
-                && RmGetList(h, &mut need, &mut n, null_mut(), &mut why) == 234)
-                .then_some(rm)
-        }
+        (unsafe { RmRegisterResources(h, ptrs.len() as u32, ptrs.as_ptr(), 0, null_mut(), 0, null_mut()) } == 0).then_some(rm)
     }
 
-    /// Closes those processes, forcing any that don't respond.
-    fn close(&self) -> bool {
-        unsafe { RmShutdown(self.0, 1, null_mut()) == 0 }
+    /// Whether some process has one of the files open.
+    fn busy(&self) -> bool {
+        let (mut need, mut n, mut why) = (0, 0, 0);
+        unsafe { RmGetList(self.0, &mut need, &mut n, null_mut(), &mut why) == 234 }
     }
+}
+
+fn running(files: &[W]) -> bool {
+    Rm::over(files).is_some_and(|rm| rm.busy())
+}
+
+/// Closes every process that has one of the files open, forcing any that don't respond. A console
+/// host the Restart Manager can't close goes on its own once nook has, so this waits up to 5 s, asking
+/// fresh sessions: one that has shut processes down goes on listing them.
+fn close(files: &[W]) -> Result<(), Fail> {
+    let Some(rm) = Rm::over(files).filter(Rm::busy) else { return Ok(()) };
+    let code = unsafe { RmShutdown(rm.0, 1, null_mut()) };
+    for _ in 0..50 {
+        if !running(files) {
+            return Ok(());
+        }
+        unsafe { Sleep(100) };
+    }
+    Err(Fail(cat(&[w!(concat!("Couldn't close ", name!(), "."))]), code))
 }
 
 impl Drop for Rm {
