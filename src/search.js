@@ -26,10 +26,17 @@ export function findAll(b, query, matchCase) {
     for (let i = y; i < end; i++) text += rowText(b, i, i === end - 1, cell)
     if (!text) continue
     const t = matchCase ? text : text.toLowerCase()
+    // Each match is looked for from the cell the last one starts in, so a long line is walked once.
+    let ry = y
+    let rx = 0
+    let rat = 0
     for (let at = t.indexOf(q); at !== -1; at = t.indexOf(q, at + q.length)) {
-      const [sy, sx] = locate(b, y, end, at, cell)
+      const [sy, sx, past] = locate(b, ry, end, at, cell, rx, rat)
       const [ey, ex] = locate(b, sy, end, at + q.length, cell, sx, at)
       hits.push(b.trimmed + sy, sx, (ey - sy) * b.getLine(sy).length + ex - sx)
+      ry = sy
+      rx = sx
+      rat = at + past
     }
   }
   return hits
@@ -50,20 +57,21 @@ function skips(b, i, cell) {
   return !c.getChars() && c.getWidth() === 1 && b.getLine(i + 1)?.getCell(0, cell)?.getWidth() === 2
 }
 
-/** The cell where character `n` of the line rows `y` to `end` read as starts, as [row, x]; past the text, the
- * cell after it. From cell `x` of row `y`, which character `from` starts, when given. */
+/** The cell where character `n` of the line rows `y` to `end` read as starts, as [row, x, how many characters
+ * past `n` that cell starts]; past the text, the cell after it. From cell `x` of row `y`, which character `from`
+ * starts, when given. */
 function locate(b, y, end, n, cell, x = 0, from = 0) {
   n -= from
   for (let i = y; i < end; i++, x = 0) {
     const line = b.getLine(i)
     const stop = i === end - 1 ? line.getTrimmedLength() : line.length - (skips(b, i, cell) ? 1 : 0)
-    for (; x < stop; x += cell.getWidth() || 1) {
-      if (n <= 0) return [i, x]
-      n -= line.getCell(x, cell).getChars().length || 1
+    for (; x < stop; x += line.width(x) || 1) {
+      if (n <= 0) return [i, x, -n]
+      n -= line.chars(x).length || 1
     }
-    if (n <= 0 && i === end - 1) return [i, x]
+    if (n <= 0 && i === end - 1) return [i, x, -n]
   }
-  return [end - 1, b.getLine(end - 1).getTrimmedLength()]
+  return [end - 1, b.getLine(end - 1).getTrimmedLength(), 0]
 }
 
 /** A find bar over `host` for `term`, whose keys go to Claude through `send`. Returns `{ open, close, dispose }`. */
@@ -176,7 +184,7 @@ export function startSearch(term, host, send) {
       const b = term.vt.buffer
       const y = current.line - b.trimmed
       term.select(current.x, y, current.cells)
-      if (y < b.viewportY || y >= b.viewportY + term.rows) term.scrollLines(y - b.viewportY - (term.rows >> 1))
+      if (y < b.ydisp || y >= b.ydisp + term.rows) term.scrollLines(y - b.ydisp - (term.rows >> 1))
     }
     paint()
   }
