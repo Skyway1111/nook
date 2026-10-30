@@ -74,7 +74,7 @@ pub fn reveal(path: String) {
         let items = [file.as_ptr(), null()];
         let shown = bus_call(c"org.freedesktop.FileManager1", c"/org/freedesktop/FileManager1", c"ShowItems", || unsafe {
             g_variant_new(c"(^ass)".as_ptr(), items.as_ptr(), c"".as_ptr())
-        });
+        }, drop);
         if shown.is_err() {
             let dir = Path::new(&path).parent().unwrap_or(Path::new("/"));
             if let Some(dir) = uri(&dir.to_string_lossy()) {

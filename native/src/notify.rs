@@ -50,12 +50,16 @@ fn show(title: &str, body: &str) -> Result<(), String> {
 
 #[cfg(not(windows))]
 fn show(title: &str, body: &str) -> Result<(), String> {
-    use crate::host::gtk::{bus_call, cstring, g_variant_new};
-    use std::ptr::null;
-    let (title, body) = (cstring(title), cstring(body));
+    use crate::host::gtk::{bus_call, cstring, g_variant_new, lists};
+    use std::ptr::{null, null_mut};
+    let (service, path) = (c"org.freedesktop.Notifications", c"/org/freedesktop/Notifications");
+    // A server that reads the body as markup would take a `<` or `&` in Claude's answer for a tag.
+    let markup = bus_call(service, path, c"GetCapabilities", null_mut, |caps| unsafe { lists(caps, c"body-markup") })?;
+    let body = if markup { body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;") } else { body.into() };
+    let (title, body) = (cstring(title), cstring(&body));
     // Notify(app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout); a null array is empty.
-    bus_call(c"org.freedesktop.Notifications", c"/org/freedesktop/Notifications", c"Notify", || unsafe {
+    bus_call(service, path, c"Notify", || unsafe {
         let none = null::<u8>();
         g_variant_new(c"(susssasa{sv}i)".as_ptr(), c"nook".as_ptr(), 0u32, c"".as_ptr(), title.as_ptr(), body.as_ptr(), none, none, -1i32)
-    })
+    }, drop)
 }

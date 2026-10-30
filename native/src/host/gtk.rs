@@ -160,6 +160,7 @@ extern "C" {
     fn g_variant_is_of_type(v: Ptr, kind: *const c_char) -> c_int;
     fn g_variant_get_uint32(v: Ptr) -> u32;
     fn g_variant_get_string(v: Ptr, len: *mut usize) -> *const c_char;
+    fn g_variant_get(v: Ptr, format: *const c_char, ...);
 }
 
 #[link(name = "gio-2.0")]
@@ -1057,8 +1058,15 @@ pub(crate) unsafe fn error_text(error: Ptr) -> String {
 }
 
 /// Calls `method` of a freedesktop service on the session bus, on the interface named as the service is, and waits for
-/// its reply. `args` makes the call's arguments, a new GVariant tuple, which the call takes.
-pub(crate) fn bus_call(service: &CStr, path: &CStr, method: &CStr, args: impl FnOnce() -> Ptr) -> Result<(), String> {
+/// its reply, which `read` reads. `args` makes the call's arguments, a new GVariant tuple or null for none, which the
+/// call takes.
+pub(crate) fn bus_call<T>(
+    service: &CStr,
+    path: &CStr,
+    method: &CStr,
+    args: impl FnOnce() -> Ptr,
+    read: impl FnOnce(Ptr) -> T,
+) -> Result<T, String> {
     unsafe {
         let mut error = null_mut();
         let bus = g_bus_get_sync(G_BUS_TYPE_SESSION, null_mut(), &mut error);
@@ -1071,7 +1079,20 @@ pub(crate) fn bus_call(service: &CStr, path: &CStr, method: &CStr, args: impl Fn
         if reply.is_null() {
             return Err(error_text(error));
         }
+        let read = read(reply);
         g_variant_unref(reply);
+        Ok(read)
     }
-    Ok(())
+}
+
+/// Whether `reply`, a tuple of one string array, lists `name`.
+pub(crate) unsafe fn lists(reply: Ptr, name: &CStr) -> bool {
+    if g_variant_is_of_type(reply, c"(as)".as_ptr()) == 0 {
+        return false;
+    }
+    let mut list: *mut *const c_char = null_mut();
+    g_variant_get(reply, c"(^a&s)".as_ptr(), &mut list); // a NULL-ended array of the reply's own strings, freed here
+    let found = (0..).map(|i| *list.add(i)).take_while(|s| !s.is_null()).any(|s| CStr::from_ptr(s) == name);
+    g_free(list.cast());
+    found
 }
