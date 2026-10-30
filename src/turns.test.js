@@ -16,7 +16,7 @@ test("Claude's own rows, quotes and blank prompts are not", () => {
   assert.equal(isPrompt('❯ '), false)
 })
 
-// Claude's fullscreen view as xterm reads it: the pinned prompt, the transcript, then its input box.
+// Claude's fullscreen view as the terminal reads it: the pinned prompt, the transcript, then its input box.
 const rule = '─'.repeat(40)
 const view = (...rows) => [...rows, '', rule, '❯ a draft', rule, '  ⏸ manual mode on']
 

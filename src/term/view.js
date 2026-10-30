@@ -26,7 +26,8 @@ function slot(n) {
   const rgb = n < 232 ? [cube[((n - 16) / 36 | 0) % 6], cube[((n - 16) / 6 | 0) % 6], cube[(n - 16) % 6]] : Array(3).fill(8 + 10 * (n - 232))
   return '#' + rgb.map(c => c.toString(16).padStart(2, '0')).join('')
 }
-const PALETTE = Array.from({ length: 256 }, (_, n) => slot(n))
+/** Each palette slot's color as CSS. */
+export const PALETTE = Array.from({ length: 256 }, (_, n) => slot(n))
 const hex = c => '#' + (c & 0xffffff).toString(16).padStart(6, '0')
 /** A color word (mode and value) as CSS, with bold's brightening of the first 8 palette colors. */
 const css = (c, bold) => ((c & CM) === RGB ? hex(c) : PALETTE[(c & 0xff) + (bold && (c & 0xff) < 8 ? 8 : 0)])
@@ -76,14 +77,14 @@ export class Term {
 
     const root = this.element = document.createElement('div')
     root.className = 'terminal xterm'
-    root.innerHTML = '<div class="xterm-screen"><div class="xterm-marks"></div><div class="xterm-selection"></div>'
-      + '<div class="xterm-rows"></div></div><div class="scrollbar vertical"><div class="slider"></div></div>'
+    root.innerHTML = '<div class="xterm-screen"><div class="xterm-selection"></div><div class="xterm-rows"></div>'
+      + '<div class="xterm-marks"></div></div><div class="scrollbar vertical"><div class="slider"></div></div>'
       + '<div class="xterm-helpers"><textarea class="xterm-helper-textarea" aria-label="Terminal input" autocorrect="off"'
       + ' autocapitalize="off" spellcheck="false" tabindex="0"></textarea><div class="composition-view"></div>'
       + '<div class="xterm-width-cache-measure-container"></div></div>'
     host.appendChild(root)
     this.screen = root.firstChild
-    ;[this.marks, this.selLayer, this.rowsEl] = this.screen.children
+    ;[this.selLayer, this.rowsEl, this.marks] = this.screen.children
     this.bar = root.children[1]
     this.slider = this.bar.firstChild
     this.helpers = root.lastChild
@@ -670,13 +671,13 @@ export class Term {
 
   // ---- marks
 
-  /** A box over `width` cells of buffer line `y` from cell `x`, under the text, in the buffer now in use; it
+  /** A box over `width` cells of buffer line `y` from cell `x`, over the text, in the buffer now in use; it
    * keeps to its line as the view scrolls. Returns `{ el, dispose }`. */
   mark(y, { x = 0, width = this.vt.cols, className = '' } = {}) {
     const b = this.vt.buffer
     const el = this.marks.appendChild(document.createElement('div'))
     el.className = className
-    const m = { el, buffer: b, line: b.trimmed + y, x, width, dispose: () => { el.remove(); this.marksList.delete(m) } }
+    const m = { el, buffer: b, line: b.trimmed + y, x, width, css: '', dispose: () => { el.remove(); this.marksList.delete(m) } }
     this.marksList.add(m)
     this.placeMark(m, b.trimmed + b.ydisp)
     return m
@@ -685,7 +686,8 @@ export class Term {
   placeMark(m, view) {
     const y = m.line - view
     const shown = m.buffer === this.vt.buffer && y >= 0 && y < this.vt.rows
-    m.el.style.cssText = shown ? `top:${y * this.cellH}px;left:${m.x * this.cellW}px;width:${m.width * this.cellW}px;height:${this.cellH}px` : 'display:none'
+    const css = shown ? `top:${y * this.cellH}px;left:${m.x * this.cellW}px;width:${m.width * this.cellW}px;height:${this.cellH}px` : 'display:none'
+    if (css !== m.css) m.el.style.cssText = m.css = css
   }
 
   // ---- scrolling

@@ -1,5 +1,5 @@
 // The composer: a card nook paints over Claude's prompt. It draws the draft Claude draws between its two
-// prompt rules and never takes input. Keys go to xterm, and a click on the card becomes a click on the
+// prompt rules and never takes input. Keys go to the terminal, and a click on the card becomes a click on the
 // cell under the same character. It hides whenever the screen stops matching the prompt's shape.
 import { invoke, convertFileSrc } from './host.js'
 import { el, openMenu } from './ui.js'
@@ -49,18 +49,17 @@ export function startComposer(term, host, id) {
   const frame = card.firstChild
   // Each part repaints only when its own HTML changes, so a keystroke leaves the menus and thumbnails be.
   const parts = Object.fromEntries(['thumbs', 'draft', 'hints', 'chips'].map(k => [k, frame.querySelector(`.${k}`)]))
-  const screen = host.querySelector('.xterm-screen')
-  const rows = host.querySelector('.xterm-rows')
-  // xterm's input textarea and IME text leave the screen, which moves and is a layer of its own, so they stay
-  // above the card. `follow` lines them up with the card's caret, so composing text shows there.
-  const helpers = term.element.appendChild(host.querySelector('.xterm-helpers'))
-  const cell = term.buffer.active.getNullCell()
-  const line = y => term.buffer.active.getLine(term.buffer.active.viewportY + y)
+  const { screen, rowsEl: rows } = term
+  // The terminal's input textarea and IME text sit beside the screen, which moves and is a layer of its own, so
+  // they stay above the card. `follow` lines them up with the card's caret, so composing text shows there.
+  const helpers = term.helpers
+  const cell = term.vt.buffer.getNullCell()
+  const line = y => term.vt.buffer.getLine(term.vt.buffer.viewportY + y)
   const images = new Map() // [Image #N] -> its file, once found
   let imageKey = ''
   let shown = {} // what each part of the card shows
   let geo = null // the screen's box inside the host, measured on resize
-  let held = null // the rows of the frame xterm holds while a resize waits for Claude's redraw
+  let held = null // the rows of the frame the terminal holds while a resize waits for Claude's redraw
   let tall = 0 // the card's height as last laid out, 0 while it or its tab is hidden
   let taller = false // whether the card is taller than Claude's prompt block
   let gap = null // blank rows under the transcript that take the card instead of the transcript's top: { from, to, top }
@@ -129,8 +128,8 @@ export function startComposer(term, host, id) {
 
   /** The prompt block at the bottom of Claude's fullscreen view, as the HTML of each part of the card, or null. */
   function read() {
-    const b = term.buffer.active
-    if (b.type !== 'alternate') return null
+    const b = term.vt.buffer
+    if (b !== term.vt.alt) return null
     const text = y => line(y)?.translateToString(true) ?? ''
     const rule = y => ruleLabel(text(y), term.cols)
     let bottom = term.rows - 1
@@ -201,7 +200,7 @@ export function startComposer(term, host, id) {
 
   /** Repaints the card from the screen. `moved` lays it out again even when nothing in it changed. */
   function render(moved = false) {
-    if (held != null) return // the card shows the prompt of the frame xterm holds
+    if (held != null) return // the card shows the prompt of the frame the terminal holds
     const next = read()
     if (!next) {
       if (!card.hidden || moved) {
@@ -229,8 +228,8 @@ export function startComposer(term, host, id) {
   /** Hides Claude's prompt block under the card, which sits on the terminal's bottom edge, and moves the screen
    * by the card's height less that block, so Claude's rows above the prompt, such as the slash menu, sit right
    * above the card. While the transcript is short, the blank rows under it take the card instead, so its top
-   * stays on screen and only the rows between them and the prompt move up. A frame xterm holds through a resize
-   * keeps its bottom row on the screen's bottom row. */
+   * stays on screen and only the rows between them and the prompt move up. A frame held through a resize keeps
+   * its bottom row on the screen's bottom row. */
   function layout() {
     if (!geo) return
     if (card.offsetHeight !== tall) {
@@ -278,26 +277,22 @@ export function startComposer(term, host, id) {
     raised = next
   }
 
-  // xterm finds the cell under the pointer from the screen's box, so a press, a move, or a link's hover over the
-  // raised rows goes to the rows they are: Claude's slash menu takes clicks.
-  const mouse = term._core?._mouseService
-  for (const f of ['getCoords', 'getMouseReportCoords']) {
-    const real = mouse?.[f]?.bind(mouse)
-    if (real) mouse[f] = (e, ...rest) => real(raised && held == null ? lower(e) : e, ...rest)
-  }
-  function lower(e) {
+  // The terminal finds the cell under the pointer from the screen's box, so a press, a move, or a link's hover
+  // over the raised rows goes to the rows they are: Claude's slash menu takes clicks.
+  term.mapPoint = (x, y) => {
+    if (!raised || held != null) return [x, y]
+    const at = y - screen.getBoundingClientRect().top + raised.px
     const h = geo.height / term.rows
-    const y = e.clientY - screen.getBoundingClientRect().top + raised.px
-    return y >= raised.from * h && y < raised.to * h ? { clientX: e.clientX, clientY: e.clientY + raised.px } : e
+    return [x, at >= raised.from * h && at < raised.to * h ? y + raised.px : y]
   }
 
-  /** Moves xterm's textarea, which sits at Claude's cursor cell, to the card's caret. */
+  /** Moves the terminal's textarea, which sits at Claude's cursor cell, to the card's caret. */
   function follow() {
     const caret = !card.hidden && parts.draft.querySelector('.caret')
     if (!caret) return void (helpers.style.transform = '')
     const at = caret.getBoundingClientRect()
     const box = host.getBoundingClientRect()
-    const b = term.buffer.active
+    const b = term.vt.buffer
     const x = at.left - box.left - geo.left - (b.cursorX * geo.width) / term.cols
     const y = at.top - box.top - geo.top - (b.cursorY * geo.height) / term.rows
     helpers.style.transform = `translate(${x}px, ${y}px)`
@@ -331,7 +326,7 @@ export function startComposer(term, host, id) {
   // The card sits on the terminal's bottom edge, from its left edge to the scrollbar, and takes at most 70% of
   // its height. CSS anchor positioning did this, but WebKit then laid out the whole page on each keystroke,
   // a fifth of the CPU that typing took.
-  const gutter = host.querySelector('.xterm .scrollbar.vertical')
+  const gutter = term.bar
   const measure = new ResizeObserver(() => {
     geo = { ...offset(screen), width: screen.offsetWidth, height: screen.offsetHeight }
     const box = term.element
@@ -339,7 +334,7 @@ export function startComposer(term, host, id) {
     const style = {
       left: `${at.left}px`,
       bottom: `${host.clientHeight - at.top - box.offsetHeight}px`,
-      right: `${host.clientWidth - (gutter ? offset(gutter).left : at.left + box.offsetWidth)}px`,
+      right: `${host.clientWidth - offset(gutter).left}px`,
       maxHeight: `${box.offsetHeight * 0.7}px`,
     }
     for (const k in style) if (card.style[k] !== style[k]) card.style[k] = style[k]
@@ -348,9 +343,9 @@ export function startComposer(term, host, id) {
   measure.observe(host)
   measure.observe(screen)
   measure.observe(card)
-  if (gutter) measure.observe(gutter)
+  measure.observe(gutter)
 
-  /** Sends xterm a left-button event at the middle of cell `at`, which reaches Claude's mouse tracking. */
+  /** Sends the terminal a left-button event at the middle of cell `at`, which reaches Claude's mouse tracking. */
   function send(type, at) {
     const s = screen.getBoundingClientRect()
     screen.dispatchEvent(new MouseEvent(type, {
@@ -365,13 +360,13 @@ export function startComposer(term, host, id) {
   // from there selects through Claude, which copies the selection on release.
   card.addEventListener('mousedown', e => {
     if (e.button !== 0 || e.target.closest('.thumbs, .chips')) return
-    e.preventDefault() // the focus stays in xterm
+    e.preventDefault() // the focus stays in the terminal
     term.focus()
     const from = hit(e.clientX, e.clientY)
     if (!from) return
     send('mousedown', from)
-    // xterm reads the drag from the document. Over the card, each real event stops at the window and goes on
-    // as the cell under its character. Off the card, xterm's own reading is right.
+    // The terminal reads the drag from the document. Over the card, each real event stops at the window and goes
+    // on as the cell under its character. Off the card, the terminal's own reading is right.
     const drag = m => {
       if (m.isTrusted && card.contains(m.target)) {
         m.stopPropagation()
@@ -393,7 +388,7 @@ export function startComposer(term, host, id) {
   // The wheel scrolls Claude's transcript, as it does over Claude's own prompt.
   card.addEventListener('wheel', e => {
     e.preventDefault()
-    screen.dispatchEvent(new WheelEvent('wheel', e))
+    term.wheel(e)
   }, { passive: false })
 
   /** The buffer cell under the card's character at (x, y), or null off the draft. */
@@ -459,7 +454,7 @@ export function startComposer(term, host, id) {
   }, 500)
 
   return {
-    /** xterm holds its last frame, `n` rows tall, until Claude redraws for the new size. */
+    /** The terminal holds its last frame, `n` rows tall, until Claude redraws for the new size. */
     hold(n) {
       held = n
       layout()

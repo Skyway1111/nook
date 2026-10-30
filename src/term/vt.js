@@ -25,12 +25,15 @@ export const EXT = 0x10000000 // bg: the cell's underline style, underline color
 export const OVERLINE = 0x40000000 // bg
 const COLOR = CM | 0xffffff
 
-/** Underline style (0-5), underline color (a color word without flags) and link id. Never changed once made. */
+/** Underline style (0-5), underline color (a color word without flags), link id, and a sixel or iTerm2
+ * picture's id and the tile of it the cell shows. Never changed once made. */
 class Ext {
-  constructor(ul = 0, ulc = 0, url = 0) {
+  constructor(ul = 0, ulc = 0, url = 0, img = 0, tile = 0) {
     this.ul = ul
     this.ulc = ulc
     this.url = url
+    this.img = img
+    this.tile = tile
   }
   /** A link's cells are underlined dashed, as xterm has it. */
   get style() { return this.url ? 5 : this.ul }
@@ -766,6 +769,7 @@ const TABLE = (() => {
 })()
 
 const LIMIT = 10000000 // the longest OSC, DCS or APC string taken
+const IIP_LIMIT = 26700000 // an iTerm2 picture's OSC 1337: 20 MB in base64
 // DEC Special Graphics, for ` to ~ while G0 or G1 holds it: the line-drawing set.
 const DEC = '◆▒␉␌␍␊°±␤␋┘┐┌└┼⎺⎻─⎼⎽├┤┴┬│≤≥π≠£·'
 const GLEVEL = { 0x28: 0, 0x29: 1, 0x2a: 2, 0x2b: 3, 0x2d: 1, 0x2e: 2 } // ( ) * + - .
@@ -1721,7 +1725,7 @@ export class Vt {
         o.id = (o.id === -1 ? 0 : o.id) * 10 + code - 48
       }
     }
-    if (o.state === 2 && end > start && o.length <= LIMIT) {
+    if (o.state === 2 && end > start && o.length <= (o.id === 1337 ? IIP_LIMIT : LIMIT)) {
       o.parts.push(s.slice(start, end))
       o.length += end - start
     }
@@ -1729,7 +1733,7 @@ export class Vt {
   oscEnd(ok) {
     const o = this.osc
     this.osc = null
-    if (!o || o.state === 3 || !ok || o.length > LIMIT) return
+    if (!o || o.state === 3 || !ok || o.length > (o.id === 1337 ? IIP_LIMIT : LIMIT)) return
     const data = o.parts.join('')
     switch (o.id) {
       case 0: case 2:
@@ -1793,6 +1797,26 @@ export class Vt {
   }
   /** The uri of link `id`, as a cell's `getLink` gives it. */
   linkUri(id) { return this.links.get(id)?.uri }
+
+  /** Covers `cols` x `rows` cells from the cursor with the tiles of picture `id`, as xterm's image addon did:
+   * the cursor ends on the picture's last row, in the column it started. */
+  picture(id, cols, rows) {
+    const b = this.buffer
+    const x0 = Math.min(b.x, this.cols - 1)
+    for (let r = 0; r < rows; r++) {
+      const line = b.row(b.y)
+      const at = 2 * line.cap
+      for (let c = 0; c < cols && x0 + c < this.cols; c++) {
+        const x = x0 + c
+        const old = line.d[at + x] & EXT ? line.ext.get(x) : NO_EXT
+        line.d[at + x] |= EXT
+        ;(line.ext ??= new Map()).set(x, new Ext(old.ul, old.ulc, old.url, id, r * cols + c))
+      }
+      if (r < rows - 1) this.lineFeed()
+      b.x = x0
+    }
+    this.changed = true
+  }
 
   apcEnd(ok) {
     const a = this.apc

@@ -60,11 +60,11 @@ const PLACEHOLDER = '\u{10EEEE}' // a picture's cell, colored with its id; see p
 /** Links every path on disk in `term`'s rows, and each picture that names a file. `where()` gives
  * `{ cwd, home }`; `open(path, kind, line, col)` opens one; `pathOf(id)` is the file of picture `id`. */
 export function startLinks(term, where, open, pathOf = () => undefined) {
-  const cell = term.buffer.active.getNullCell()
+  const cell = term.vt.buffer.getNullCell()
   /** The file of the edit whose diff holds row `y`: the nearest `Update(...)` above, unless another of
    * Claude's messages starts between them. */
   function editOver(y) {
-    const b = term.buffer.active
+    const b = term.vt.buffer
     for (let i = y - 1; i >= Math.max(0, y - 400); i--) {
       const text = b.getLine(i)?.translateToString(true) ?? ''
       const path = editedPath(text)
@@ -105,7 +105,7 @@ export function startLinks(term, where, open, pathOf = () => undefined) {
 
   const provider = term.registerLinkProvider({
     async provideLinks(y, callback) {
-      const line = term.buffer.active.getLine(y - 1)
+      const line = term.vt.buffer.getLine(y - 1)
       if (!line) return callback(undefined)
       if (line.translateToString(true).includes(PLACEHOLDER)) {
         const links = pictureLinks(line, y)

@@ -3,16 +3,14 @@
 // and that slot takes `--claude-<token>`.
 import nook from '../src-tauri/mod/themes/nook.json'
 
-export const ANSI = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white']
+const ANSI = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white']
 const SLOTS = new Map(Object.entries(nook.overrides).map(([token, color]) => [Number(/\d+(?=\))/.exec(color)), token]))
 
-/** The variable that colors palette slot `c`, or null for a slot xterm keeps. */
+/** The variable that colors palette slot `c`, or null for a slot that keeps xterm's color. */
 export function slotVar(c) {
   if (c < 16) return `--ansi-${c < 8 ? ANSI[c] : 'bright-' + ANSI[c - 8]}`
   return SLOTS.has(c) ? `--claude-${SLOTS.get(c)}` : null
 }
-
-export const CLAUDE_SLOTS = [...SLOTS.keys()]
 
 const probe = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
 /** Any CSS color (oklch, named, with alpha) as [r, g, b, a] bytes, through a 1px canvas. */
