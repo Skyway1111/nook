@@ -330,7 +330,7 @@ fn head(s: &str, indent: usize, lang: Lang) -> Option<(String, u8)> {
     if before.contains('=') || before.contains("::") && lang != Lang::C {
         return None;
     }
-    let name_start = before.rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '~' || c == ':')).map_or(0, |i| i + 1);
+    let name_start = before.rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '~' || c == ':')).map_or(0, |i| i + before[i..].chars().next().map_or(1, char::len_utf8));
     let name = &before[name_start..];
     let short = name.rsplit("::").next().unwrap_or(name).trim_start_matches('~');
     let types = before[..name_start].trim();
