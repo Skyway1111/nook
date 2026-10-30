@@ -4,8 +4,10 @@ import { path as paths } from './paths.js'
 
 export const $ = id => document.getElementById(id)
 export const el = (tag, props) => Object.assign(document.createElement(tag), props)
-/** Adds the stylesheet at `url` to the page's head, after the others; resolves once it applies. */
-export const sheet = url => new Promise(done => document.head.append(el('link', { rel: 'stylesheet', href: url, onload: done, onerror: done })))
+const sheets = {} // href -> its load
+/** Adds the stylesheet at `url` to the page's head, after the others, once: a sheet two views load keeps the place
+ * the first gave it, so it never moves after a sheet that overrides it. Resolves once it applies. */
+export const sheet = url => (sheets[url] ??= new Promise(done => document.head.append(el('link', { rel: 'stylesheet', href: url, onload: done, onerror: done }))))
 /** The letter a key names as a shortcut, lowercased: the a-z the layout types, or where it types another script's
  * letter (Cyrillic, Greek), the US key's in that place. '' for any other key, such as AltGr's ć. */
 export const letter = e => (/^[a-z]$/i.test(e.key) ? e.key.toLowerCase()
