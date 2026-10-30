@@ -50,9 +50,9 @@ const RUN = {
   r: /\/(?:[^/\\[\n\r]|\\.|\[(?:[^\]\\\n\r]|\\.)*\])+\/[\w$]*/y,
 }
 
-/** JS as tokens `[type, text]`: w a word or number, s a string, t a piece of a template, r a regex, p punctuation,
- * c a comment, n a line break, ' ' spaces. A `)` closing an if, for, while, or with head is marked, since a slash
- * after it starts a regex. */
+/** JS as tokens `[type, text, mark, index]`: w a word or number, s a string, t a piece of a template, r a regex,
+ * p punctuation, c a comment, n a line break, ' ' spaces. A `)` closing an if, for, while, or with head is marked,
+ * since a slash after it starts a regex. */
 function tokenize(js, file) {
   const out = []
   const braces = [] // per open brace, whether it opened a template's ${
@@ -61,7 +61,7 @@ function tokenize(js, file) {
   let i = 0
   const fail = what => { throw new Error(`${file}:${js.slice(0, i).split('\n').length}: ${what}`) }
   const push = (type, end, mark) => {
-    const t = [type, js.slice(i, end), mark]
+    const t = [type, js.slice(i, end), mark, out.length]
     out.push(t)
     if (type !== ' ' && type !== 'n' && type !== 'c') prev = t
     i = end
@@ -152,17 +152,19 @@ function squeeze(tokens) {
 
 /** CSS without comments, and with whitespace only where it means something. */
 function squeezeCss(css) {
-  let out = ''
+  const out = []
   let gap = false
   for (const [, string, comment, space, other] of css.matchAll(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\/\*[\s\S]*?\*\/)|(\s+)|([^"'/\s]+|\/)/g)) {
     if (comment) continue
     if (space) { gap = true; continue }
     const text = string ?? other
-    if (gap && out && !'{};,>:'.includes(out.at(-1)) && !'{};,>'.includes(text[0])) out += ' '
-    out += text
+    const end = out.at(-1)?.at(-1)
+    if (gap && end && !'{};,>:'.includes(end) && !'{};,>'.includes(text[0])) out.push(' ')
+    if (text[0] === '}' && end === ';') out[out.length - 1] = out.at(-1).slice(0, -1)
+    out.push(text)
     gap = false
   }
-  return out
+  return out.join('')
 }
 
 const mods = new Map() // path → module
@@ -172,15 +174,14 @@ function parse(file) {
   const tokens = tokenize(readFileSync(file, 'utf8').replace(/\r\n?/g, '\n'), file)
   const m = { file, tokens, imports: [], dynamic: [], assets: [], exports: [] }
   const code = tokens.filter(t => t[0] !== ' ' && t[0] !== 'n' && t[0] !== 'c')
-  const at = new Map(tokens.map((t, k) => [t, k]))
-  const fail = (t, what) => { throw new Error(`${relative(root, file)}:${tokens.slice(0, at.get(t)).map(t => t[1]).join('').split('\n').length}: ${what}`) }
+  const fail = (t, what) => { throw new Error(`${relative(root, file)}:${tokens.slice(0, t[3]).map(t => t[1]).join('').split('\n').length}: ${what}`) }
   const target = t => {
     if (t?.[0] !== 's' || !/^['"]\.\.?\//.test(t[1])) fail(t, 'expected a relative path in quotes')
     return resolve(dirname(file), t[1].slice(1, -1))
   }
   // Leaves out code[a] to code[b], and ends the statement there if the next line could continue the one before.
   const drop = (a, b) => {
-    for (let k = at.get(code[a]); k <= at.get(code[b]); k++) tokens[k][0] = 'x'
+    for (let k = code[a][3]; k <= code[b][3]; k++) tokens[k][0] = 'x'
     if (code[b + 1] && '([`+-/'.includes(code[b + 1][1][0])) code[b].splice(0, 2, 'p', ';')
   }
   // From the { at code[k]: the names in it, as [name, alias], and the index of its }.

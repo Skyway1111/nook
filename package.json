@@ -4,17 +4,13 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
-    "build": "tauri build",
+    "dev": "cargo run --manifest-path src-tauri/Cargo.toml",
+    "build": "node scripts/build.mjs",
     "test": "node --test \"src/**/*.test.js\"",
     "bench:windows": "node bench/windows.mjs",
     "gate": "node bench/gate.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "^2.12.1",
-    "vite": "^8.3.2"
   }
 }
