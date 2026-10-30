@@ -997,15 +997,24 @@ export class Vt {
 
   print(s, start, end) {
     const b = this.buffer
-    const cols = this.cols
-    const fg = this.fg
-    const bg = this.bg
-    const ext = this.ext
+    const { cols, fg, bg, ext, charset, insert } = this
     let line = b.row(b.y)
-    if (b.x && end > start && line.width(b.x - 1) === 2) line.set(b.x - 1, W1, fg, bg, ext)
+    let d = line.d
+    let c = line.cap
+    let x = b.x
+    if (x && end > start && line.width(x - 1) === 2) line.set(x - 1, W1, fg, bg, ext)
     let join = this.join
     for (let pos = start; pos < end; pos++) {
       let code = s.charCodeAt(pos)
+      if (code < 0x7f && x < cols && !insert && (code < 0x60 || !charset)) { // ASCII: one cell, never joins
+        d[x] = code | W1
+        d[c + x] = fg
+        d[2 * c + x] = bg
+        if (bg & EXT) (line.ext ??= new Map()).set(x, ext)
+        x++
+        join = 2
+        continue
+      }
       if (code >= 0xd800 && code <= 0xdbff && pos + 1 < end) {
         const low = s.charCodeAt(pos + 1)
         if (low >= 0xdc00 && low <= 0xdfff) {
@@ -1013,18 +1022,18 @@ export class Vt {
           pos++
         }
       } else if (code === 0xfeff) continue // a byte order mark
-      else if (code < 127 && this.charset && code >= 0x60) code = this.charset.charCodeAt(code - 0x60)
+      else if (code < 127 && charset && code >= 0x60) code = charset.charCodeAt(code - 0x60)
       let width = wcwidth(code)
       const oldWidth = join >> 1 & 3
       const joins = width === 0 && oldWidth !== 0
       if (joins) width = oldWidth
       join = width << 1 | (joins ? 1 : 0)
       const back = joins ? oldWidth : 0
-      if (b.x + width - back > cols) {
+      if (x + width - back > cols) {
         if (this.wrap) {
           const oldRow = line
-          let oldCol = b.x - back
-          b.x = back
+          let oldCol = x - back
+          x = back
           b.y++
           if (b.y === b.scrollBottom + 1) {
             b.y--
@@ -1034,39 +1043,42 @@ export class Vt {
             b.row(b.y).isWrapped = true
           }
           line = b.row(b.y)
+          d = line.d
+          c = line.cap
           if (back > 0) line.copyCellsFrom(oldRow, oldCol, 0, back)
           for (; oldCol < cols; oldCol++) oldRow.set(oldCol, W1, fg, bg, ext)
         } else {
-          b.x = cols - 1
+          x = cols - 1
           if (width === 2) continue
         }
       }
-      if (joins && b.x) {
-        const x = b.x - (line.width(b.x - 1) ? 1 : 2)
-        if (x >= 0) {
-          let c = line.d[x]
-          if (c & COMBINED) line.comb.set(x, line.comb.get(x) + String.fromCodePoint(code))
-          else if (c & CP) {
-            (line.comb ??= new Map()).set(x, String.fromCodePoint(c & CP, code))
-            c = c & ~CP | COMBINED
-          } else c = code | W1
-          line.d[x] = c & ~(3 << 22) | width << 22
+      if (joins && x) {
+        const at = x - (line.width(x - 1) ? 1 : 2)
+        if (at >= 0) {
+          let cell = d[at]
+          if (cell & COMBINED) line.comb.set(at, line.comb.get(at) + String.fromCodePoint(code))
+          else if (cell & CP) {
+            (line.comb ??= new Map()).set(at, String.fromCodePoint(cell & CP, code))
+            cell = cell & ~CP | COMBINED
+          } else cell = code | W1
+          d[at] = cell & ~(3 << 22) | width << 22
         }
         continue
       }
-      if (this.insert) {
-        line.insertCells(b.x, width - back, fg, bg, ext)
+      if (insert) {
+        line.insertCells(x, width - back, fg, bg, ext)
         if (line.width(cols - 1) === 2) line.set(cols - 1, W1, fg, bg, ext)
       }
-      if (b.x < cols) line.set(b.x, code | width << 22, fg, bg, ext)
-      b.x++
+      if (x < cols) line.set(x, code | width << 22, fg, bg, ext)
+      x++
       while (width-- > 1) {
-        if (b.x < cols) line.set(b.x, 0, fg, bg, ext)
-        b.x++
+        if (x < cols) line.set(x, 0, fg, bg, ext)
+        x++
       }
     }
+    b.x = x
     this.join = join
-    if (b.x < cols && end > start && line.width(b.x) === 0 && !line.hasContent(b.x)) line.set(b.x, W1, fg, bg, ext)
+    if (x < cols && end > start && line.width(x) === 0 && !line.hasContent(x)) line.set(x, W1, fg, bg, ext)
   }
 
   execute(code) {
