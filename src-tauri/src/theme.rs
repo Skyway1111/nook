@@ -219,7 +219,15 @@ fn offer_bundled(bundled: &Path, themes: &Path) {
         let _ = fs::write(&list, offered.join("\n") + "\n");
         // read_theme's stamp follows the folder's time, and a new stamp makes every open window reload its
         // theme's pictures. Nothing in use changed, so put the time back (or far back, for a new folder).
-        let _ = fs::File::open(themes).and_then(|f| f.set_modified(before.unwrap_or(UNIX_EPOCH)));
+        let mut open = fs::OpenOptions::new();
+        #[cfg(windows)] // a folder opens only with FILE_FLAG_BACKUP_SEMANTICS, and its time takes FILE_WRITE_ATTRIBUTES
+        std::os::windows::fs::OpenOptionsExt::custom_flags(
+            std::os::windows::fs::OpenOptionsExt::access_mode(&mut open, 0x100),
+            0x0200_0000,
+        );
+        #[cfg(not(windows))]
+        open.read(true);
+        let _ = open.open(themes).and_then(|f| f.set_modified(before.unwrap_or(UNIX_EPOCH)));
     }
 }
 
