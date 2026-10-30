@@ -17,7 +17,7 @@ const PLAIN = { name: 'Plain text', lex: '' }
 const SPECIAL = /[\u{0}-\u{8}\u{b}-\u{1f}\u{7f}-\u{9f}\u{ad}\u{61c}\u{200b}\u{200e}\u{200f}\u{2028}\u{2029}\u{202d}\u{202e}\u{2066}\u{2067}\u{2069}\u{feff}\u{fff9}-\u{fffc}]/gu
 const SIMPLE = /^[\t\x20-\x7e]*$/ // a line whose caret positions are columns times the character width
 const LONG = 1024 // past this many characters an unwrapped line draws only around the viewport
-const MAX_W = 3e7 // the widest the text gets, in device pixels: browsers lay out no farther than 2^25
+const MAX_W = 2 ** 24 // the widest and tallest the text gets, in device pixels: past it a float skips whole pixels, and rows paint askew
 const HUGE = 10_000 // past this many characters a wrapped line draws only the rows around the viewport...
 const ROWS = 16 // ...in blocks of this many rows
 const INDENT = /^(\t)|^( {2,})(?=\S)/
@@ -102,6 +102,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   // all of it can show: every row draws `shiftX` pixels left of its place and `shiftY` above it. Column 0 sits at
   // `x0` and line 0's top at `y0`.
   let scaleX = 1, shiftX = 0, x0 = 0, scaleY = 1, shiftY = 0, y0 = 0
+  let wheeling = false // whether `wheel` listens
   let metrics = true // measure again before the next draw
   let hsFor = [] // the line height and character width the heights were estimated for
   let leftDirty = true // the gutters changed width
@@ -768,6 +769,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       const drift = top(anchor) - anchorTop
       if (drift) scroller.scrollTop = st + drift / scaleY
     }
+    const scaled = scaleY > 1 || (!wrap && scaleX > 1)
+    if (scaled !== wheeling) scroller[(wheeling = scaled) ? 'addEventListener' : 'removeEventListener']('wheel', wheel, { passive: false })
     layers()
     paintStatus()
     lexLater()
@@ -1399,6 +1402,15 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   ta.addEventListener('keyup', cross)
 
   scroller.addEventListener('scroll', () => { box = null; draw() })
+  // A wheel turn moves scaled text as far as other text. The listener is there only while text is scaled: one that
+  // can cancel makes every wheel turn wait on this thread. Shift turns it sideways, as the browser does.
+  function wheel(e) {
+    if (e.ctrlKey || e.deltaMode) return
+    e.preventDefault()
+    const side = e.shiftKey && !e.deltaX, dx = side ? e.deltaY : e.deltaX, dy = side ? 0 : e.deltaY
+    if (dx) scroller.scrollLeft += dx / scaleX
+    if (dy) scroller.scrollTop += dy / scaleY
+  }
   const resized = new ResizeObserver(() => { metrics = true; leftDirty = true; dirty() })
   resized.observe(scroller)
   resized.observe(probe)

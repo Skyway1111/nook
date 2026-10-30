@@ -448,11 +448,11 @@ mod tests {
 
     #[test]
     fn finds_the_repo_above_a_file_and_none_for_a_relative_path() {
-        let here = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let file = here.join("src").join("git.rs");
-        let root = repo_root(&file).unwrap();
-        assert!(root.join(".git").exists() && here.starts_with(root));
+        let root = std::env::temp_dir().join(format!("nook-git-root-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        assert_eq!(repo_root(&root.join("src").join("git.rs")), Some(root.as_path()));
         assert_eq!(repo_root(Path::new("src")), None);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// A session's review shows only the files it names, tracked or new, staged or not.

@@ -55,6 +55,38 @@ fn lock_dir() -> PathBuf {
         .join("ide")
 }
 
+/// Deletes the sessions' state files (`state_file` in pty.rs, `<pid>-<id>`) of nooks that no longer run, as one
+/// ended by force leaves. Its lockfile here needs nothing: the next Claude that looks for its IDE deletes each
+/// one whose pid is gone, any editor's.
+pub fn sweep() {
+    for e in std::fs::read_dir(std::env::temp_dir().join("nook")).into_iter().flatten().flatten() {
+        let pid = e.file_name().to_str().and_then(|n| n.split_once('-')?.0.parse().ok());
+        if pid.is_some_and(|pid| !running(pid)) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
+/// Whether process `pid` may still run: false only when it surely doesn't.
+#[cfg(windows)]
+fn running(pid: u32) -> bool {
+    use crate::sys::*;
+    unsafe {
+        let h = OpenProcess(SYNCHRONIZE, 0, pid);
+        if h.is_null() {
+            return std::io::Error::last_os_error().raw_os_error() != Some(87); // ERROR_INVALID_PARAMETER: no such process
+        }
+        let runs = WaitForSingleObject(h, 0) != WAIT_OBJECT_0;
+        CloseHandle(h);
+        runs
+    }
+}
+
+#[cfg(not(windows))]
+fn running(pid: u32) -> bool {
+    std::path::Path::new(&format!("/proc/{pid}")).exists()
+}
+
 /// 128 random bits as hex. Each `RandomState` is seeded from the system's randomness.
 fn token() -> String {
     (0..2).map(|i| format!("{:016x}", RandomState::new().hash_one(i))).collect()

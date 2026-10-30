@@ -22,7 +22,8 @@ const made = new Map() // a Bash call's tool_use_id -> the pictures it wrote, as
 const ITEM = /(?:[-*+]|\d{1,9}[.)])(?: {1,4}|\t|$)/my // a list item's marker and the space after it
 const SVG = /^(?:[ \t]*<\?xml[^\n]*\n)?[ \t]*<svg\b[\s\S]*<\/svg>\s*$/ // a fenced block's code that is one SVG, whole
 const SVG_ROWS = 8 // the fewest rows a reply's SVG takes: it scales, and an icon's own size is a few cells
-const MATH = /^[ \t]*(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])[ \t]*$/gm // a reply's display formulas, $$ … $$ or \[ … \], on lines of their own
+const OPENS = /^[ \t]*(\$\$|\\\[)/gm // a line that opens a display formula, $$ … $$ or \[ … \]
+const CLOSES = { $: /\$\$(?=[ \t]*$)/gm, '\\': /\\\](?=[ \t]*$)/gm } // and the closer that ends one, at a line's end
 const MATH_ROWS = 20 // the tallest formula, in rows
 // An inline formula's TeX commands, and what each writes in plain text
 const SYMBOLS = {
@@ -644,26 +645,22 @@ export function linkTarget(raw) {
   return path
 }
 
-/** Where a reply's code blocks open and close: a test for whether line i is inside one, or its fence. */
-function fences(lines) {
-  const inside = []
-  let fence = null
-  for (const line of lines) {
-    const mark = /^\s*(`{3,}|~{3,})/.exec(line)?.[1]
-    inside.push(Boolean(fence || mark))
-    if (!mark) continue
-    if (!fence) fence = mark
-    else if (mark[0] === fence[0] && mark.length >= fence.length) fence = null
+/** A reply's lines, each with whether it's in a fenced code block, fences included. */
+function* codeLines(text) {
+  const blocks = codeBlocks(text)
+  let k = 0
+  for (let at = 0, end; at <= text.length; at = end + 1) {
+    end = text.indexOf('\n', at)
+    if (end < 0) end = text.length
+    while (k < blocks.length && blocks[k][1] < at) k++
+    yield [text.slice(at, end), k < blocks.length && blocks[k][0] <= at]
   }
-  return i => inside[i]
 }
 
 /** The pictures a reply links with ![alt](path), outside its code blocks, each target once, as written. */
 export function pictureLinks(text) {
-  const lines = text.split('\n')
-  const code = fences(lines)
   const links = new Set()
-  for (const [i, line] of lines.entries()) if (!code(i)) for (const m of line.matchAll(LINK)) {
+  for (const [line, code] of codeLines(text)) if (!code) for (const m of line.matchAll(LINK)) {
     const target = linkTarget(m[2])
     if (target) links.add(target)
   }
@@ -673,8 +670,6 @@ export function pictureLinks(text) {
 /** A reply's text cut after each paragraph that links a picture in `shown`: [text, [target, …], text, …].
  * A line of such links alone goes, and a link inside a sentence leaves its alt text, or its file's name. */
 export function splitPictures(text, shown) {
-  const lines = text.split('\n')
-  const code = fences(lines)
   const pieces = []
   let words = []
   let found = []
@@ -683,9 +678,9 @@ export function splitPictures(text, shown) {
     words = []
     found = []
   }
-  for (const [i, line] of lines.entries()) {
-    if (found.length && !code(i) && !line.trim()) cut()
-    if (code(i) || !line.includes('![')) {
+  for (const [line, code] of codeLines(text)) {
+    if (found.length && !code && !line.trim()) cut()
+    if (code || !line.includes('![')) {
       words.push(line)
       continue
     }
@@ -707,9 +702,8 @@ export function splitPictures(text, shown) {
 /** A reply as one plain line for nook's cards and notifications: code blocks dropped, Markdown's marks taken
  * off, spaces collapsed, cut at a word near `room` characters. */
 export function gist(text, room = 280) {
-  const plain = text
-    .replace(/```[\s\S]*?(```|$)/g, ' ')
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+  const plain = outsideCode(text, part => part, ' ')
+    .replace(/!?\[([^[\]]*)\]\([^)[]*\)/g, '$1')
     .replace(/^\s{0,3}(#{1,6}|[-*+]|\d+\.|>)\s+/gm, '')
     .replace(/(\*\*|__|`)/g, '')
     .replace(/\s+/g, ' ')
@@ -744,8 +738,19 @@ export function plainMath(tex) {
 /** A reply's text with each inline $…$ formula that has a plain form written out in Unicode, as x² or
  * a ≠ 0. Code, fenced or in backticks and unclosed while it streams, stays as written. */
 export function plainInline(text) {
-  return text.split(/(^[ \t]*(?:```|~~~)[\s\S]*?(?:^[ \t]*(?:```|~~~)[ \t]*$|(?![\s\S]))|`[^`\n]*`)/m)
-    .map((part, i) => (i % 2 ? part : part.replace(INLINE, (m, tex) => plainMath(tex) ?? m))).join('')
+  const plain = part => part.split(/(`[^`\n]*`)/).map((p, i) => (i % 2 ? p : p.replace(INLINE, (m, tex) => plainMath(tex) ?? m))).join('')
+  return outsideCode(text, plain)
+}
+
+/** `text` with `f` applied to each stretch outside its fenced code blocks, and each block kept, or replaced by
+ * `block` when given. */
+function outsideCode(text, f, block) {
+  let out = '', at = 0
+  for (const [start, end] of codeBlocks(text)) {
+    out += f(text.slice(at, start)) + (block ?? text.slice(start, end))
+    at = end
+  }
+  return out + f(text.slice(at))
 }
 
 /** A reply's fenced code blocks, in order: [at, end, indent, info, code], from its opening fence's line to the end
@@ -753,7 +758,9 @@ export function plainInline(text) {
  * streaming in, which runs to the end. As in CommonMark, a backtick fence's info holds no backtick, a closing fence
  * is at least as long as its opening one, and a fence 4 columns deeper than the text above it, or than the text of
  * the list item it's in, is an indented code block's text. */
+let blocksOf = [null, []] // the text codeBlocks read last, and its blocks: one reply's render asks several times
 function codeBlocks(text) {
+  if (text === blocksOf[0]) return blocksOf[1]
   const out = [], ins = [], tops = [] // the lines above, each less indented than the next: indents, and their text's starts
   let open = null // the block in progress: [at, indent, fence character, fence length, info, its code's start]
   for (let at = 0, end; at < text.length; at = end + 1) {
@@ -778,6 +785,7 @@ function codeBlocks(text) {
     else { ins.push(n); tops.push(i) }
   }
   if (open) out.push([open[0], text.length, open[1], open[4], null])
+  blocksOf = [text, out]
   return out
 }
 
@@ -792,6 +800,29 @@ function textColumn(text, ins, tops) {
 /** A fenced block's lines with its fence's indent, `n` columns, taken off, as far as each line has it. */
 const dedent = (code, n) => (n ? code.split('\n').map(l => l.slice(Math.min(n, l.length - l.trimStart().length))).join('\n') : code)
 
+/** A reply's display formulas, $$ … $$ or \[ … \]: [index, length, source], from the start of a line that opens
+ * one to the end of the first line after it that ends with its closer. Each search for a closer starts past the
+ * last formula, and one that finds none ends its kind's, so no stretch of the reply is searched twice. */
+function displayMath(text) {
+  const out = [], none = {}
+  OPENS.lastIndex = 0
+  for (let m; (m = OPENS.exec(text)); ) {
+    const kind = m[1][0], from = OPENS.lastIndex, close = CLOSES[kind]
+    if (none[kind]) continue
+    close.lastIndex = from + 1 // the source holds a character
+    const c = close.exec(text)
+    if (!c) {
+      none[kind] = true
+      continue
+    }
+    let end = c.index + 2
+    while (text[end] === ' ' || text[end] === '\t') end++
+    out.push([m.index, end - m.index, text.slice(from, c.index)])
+    OPENS.lastIndex = end
+  }
+  return out
+}
+
 /** A reply's text cut at its mermaid blocks, display formulas, and SVG blocks: [text, [kind, source], text, …],
  * where kind is `mermaid`, `math`, or `svg`. One inside another code block stays in the text, and an SVG block
  * stays at the end of the text before its picture, so its source still shows. */
@@ -804,10 +835,10 @@ export function splitBlocks(text) {
     else if (/^(?:svg|xml|html)?$/.test(info) && SVG.test(source)) found.push([at, end - at, 'svg', source.trimEnd()])
   }
   let k = 0 // the first block that ends past the formula
-  for (const m of text.matchAll(MATH)) {
-    while (k < blocks.length && blocks[k][1] <= m.index) k++
-    const source = (m[1] ?? m[2]).trim()
-    if (source && !(k < blocks.length && blocks[k][0] <= m.index)) found.push([m.index, m[0].length, 'math', source])
+  for (const [index, length, tex] of displayMath(text)) {
+    while (k < blocks.length && blocks[k][1] <= index) k++
+    const source = tex.trim()
+    if (source && !(k < blocks.length && blocks[k][0] <= index)) found.push([index, length, 'math', source])
   }
   found.sort((a, b) => a[0] - b[0])
   const pieces = []

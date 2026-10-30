@@ -52,10 +52,9 @@ body.blurred .brand, body.blurred #tabs, body.blurred .caption { opacity: .5; }
 #tabs { display: flex; gap: 2px; min-width: 0; overflow: auto hidden; scrollbar-width: none; }
 #tabs::-webkit-scrollbar { display: none; }
 /* Tabs past the strip's edge: tabs.js marks each side that has more, and that side fades out. */
-#tabs.more-left { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px); mask-image: linear-gradient(to right, transparent, #000 32px); }
-#tabs.more-right { -webkit-mask-image: linear-gradient(to left, transparent, #000 32px); mask-image: linear-gradient(to left, transparent, #000 32px); }
+#tabs.more-left { mask-image: linear-gradient(to right, transparent, #000 32px); }
+#tabs.more-right { mask-image: linear-gradient(to left, transparent, #000 32px); }
 #tabs.more-left.more-right {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
   mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
 }
 .tab {

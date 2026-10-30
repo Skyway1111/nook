@@ -25,7 +25,7 @@ pub struct Theme {
     name: Option<String>,
     /// Its theme.css. None when no theme is in use or its folder is gone.
     pack: Option<String>,
-    /// When a file beside either theme.css last changed, such as a picture or font it names.
+    /// Changes when a file beside either theme.css does, such as a picture or font it names.
     stamp: u64,
     /// Whether this read seeded theme.css: nook's first run, when it shows its welcome.
     first: bool,
@@ -59,20 +59,26 @@ pub fn read_theme() -> Theme {
     let name = read_settings().ok().and_then(|s| s.theme);
     let pack_dir = name.as_ref().map(|n| dir.join("themes").join(n));
     let pack = pack_dir.as_ref().and_then(|d| read(&d.join("theme.css")));
-    let stamp = newest_change(&dir).max(pack_dir.map_or(0, |d| newest_change(&d)));
+    let stamp = changes(&dir, pack_dir.map_or(0, |d| changes(&d, 0))) >> 11; // a JSON number holds 53 bits
     Theme { css: read(&path), name, pack, stamp, first }
 }
 
-/// The newest change to an entry of `dir`, in milliseconds since the epoch. settings.json and
-/// theme.css don't count.
-fn newest_change(dir: &Path) -> u64 {
+/// `seed` hashed with each entry of `dir`'s modified time and a file's size, so it changes even when a copy of
+/// an older file replaces one: the copy keeps its source's modified time, and on Windows its change time too.
+/// On Linux a file's change time, which every write sets, goes in as well. settings.json and theme.css
+/// don't count.
+fn changes(dir: &Path, seed: u64) -> u64 {
     let entries = fs::read_dir(dir).into_iter().flatten().flatten();
-    entries
-        .filter(|e| !matches!(e.file_name().to_str(), Some("theme.css" | "settings.json")))
-        .filter_map(|e| e.metadata().ok()?.modified().ok()?.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as u64)
-        .max()
-        .unwrap_or(0)
+    let entries = entries.filter(|e| !matches!(e.file_name().to_str(), Some("theme.css" | "settings.json")));
+    entries.filter_map(|e| e.metadata().ok()).fold(seed, |h, m| {
+        let time = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as u64);
+        #[cfg(unix)]
+        let changed = { use std::os::unix::fs::MetadataExt; (m.ctime() as u64) << 30 | m.ctime_nsec() as u64 };
+        #[cfg(windows)]
+        let changed = 0;
+        let file = if m.is_dir() { [0, 0] } else { [m.len(), changed] };
+        [time, file[0], file[1]].into_iter().fold(h, |h, x| (h ^ x).wrapping_mul(0x100_0000_01b3))
+    })
 }
 
 /// `install` for a folder or a .zip on disk.
@@ -288,7 +294,7 @@ pub fn save_backdrop(body: &[u8]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{install, list_zip, newest_change, offer_bundled};
+    use super::{changes, install, list_zip, offer_bundled};
     use std::{
         fs,
         time::{Duration, UNIX_EPOCH},
@@ -302,19 +308,18 @@ mod tests {
     }
 
     #[test]
-    fn stamps_a_change_to_a_picture_and_not_to_theme_css() {
+    fn stamps_a_change_to_a_picture_even_to_an_older_copy_and_not_to_theme_css() {
         let dir = scratch("theme-stamp");
-        // Writes `name`, changed `secs` after the epoch.
-        let write = |name: &str, secs| {
-            fs::write(dir.join(name), name).unwrap();
+        // Writes `text` to `name`, modified `secs` after the epoch, and returns the stamp.
+        let write = |name: &str, text: &str, secs| {
+            fs::write(dir.join(name), text).unwrap();
             let file = fs::File::options().write(true).open(dir.join(name)).unwrap();
             file.set_modified(UNIX_EPOCH + Duration::from_secs(secs)).unwrap();
+            changes(&dir, 0)
         };
-        write("moon.jpg", 1);
-        write("theme.css", 2);
-        assert_eq!(newest_change(&dir), 1000);
-        write("moon.jpg", 3);
-        assert_eq!(newest_change(&dir), 3000);
+        let first = write("moon.jpg", "moon", 2);
+        assert_eq!(write("theme.css", "css", 3), first);
+        assert_ne!(write("moon.jpg", "old moon", 1), first);
         fs::remove_dir_all(dir).unwrap();
     }
 
