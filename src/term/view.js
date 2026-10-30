@@ -90,6 +90,7 @@ export class Term {
     host.appendChild(root)
     this.screen = root.firstChild
     ;[this.selLayer, this.rowsEl, this.marks] = this.screen.children
+    this.layers = [...this.screen.children] // the rows and what lies under and over them, which move and clip as one
     this.bar = root.children[1]
     this.slider = this.bar.firstChild
     this.helpers = root.lastChild
@@ -699,6 +700,14 @@ export class Term {
       this.drawnTop = view
       for (const m of this.marksList) this.placeMark(m, view)
     }
+  }
+
+  /** A new layer over the rows, of class `className`, that moves and clips with them. */
+  layer(className) {
+    const el = this.screen.appendChild(document.createElement('div'))
+    el.className = className
+    this.layers.push(el)
+    return el
   }
 
   // ---- marks

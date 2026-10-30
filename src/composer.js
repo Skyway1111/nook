@@ -50,9 +50,8 @@ export function startComposer(term, host, id) {
   // Each part repaints only when its own HTML changes, so a keystroke leaves the menus and thumbnails be.
   const parts = Object.fromEntries(['thumbs', 'draft', 'hints', 'chips'].map(k => [k, frame.querySelector(`.${k}`)]))
   const screen = term.screen
-  // The rows and what sits under and over them, the selection and marks such as search hits, move and clip as one.
-  const layers = [term.selLayer, term.rowsEl, term.marks]
-  const style = (k, v) => { for (const l of layers) l.style[k] = v }
+  // The rows, the selection, marks such as search hits, and pictures move and clip as one.
+  const style = (k, v) => { for (const l of term.layers) l.style[k] = v }
   // The terminal's input textarea and IME text sit beside the screen, which moves and is a layer of its own, so
   // they stay above the card. `follow` lines them up with the card's caret, so composing text shows there.
   const helpers = term.helpers

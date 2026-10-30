@@ -190,8 +190,7 @@ const SIZE = /^(auto|\d+(px|%)?)$/
  * `iterm(data)` for an OSC 1337, and `dispose()`. */
 export function startImages(term) {
   term.vt.images = true // DA1 now says sixel, and CSI 18 t answers
-  const layer = term.screen.appendChild(document.createElement('div'))
-  layer.className = 'pictures'
+  const layer = term.layer('pictures')
   const pics = new Map() // id -> { el, url, w, h, cw, ch, cols, buffer, end, css }, oldest first
   const palette = DEFAULTS.slice()
   let resets = term.vt.resets // a reset since sets the palette back

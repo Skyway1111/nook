@@ -57,7 +57,7 @@ async function pictureUrl(k, base64) {
 /** `reply(text)` answers a query on the terminal's input, as kitty does. */
 export function startPictures(term, reply = () => {}) {
   const screen = term.screen
-  const layer = screen.appendChild(el('div', { className: 'pictures' }))
+  const layer = term.layer('pictures')
   const cell = term.vt.buffer.getNullCell()
   // id -> { url, columns, rows, blob, left, page: an HTML page's folder, path: a named file's, math: a formula's
   // element, size: its own size in font sizes }, oldest first
