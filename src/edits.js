@@ -711,7 +711,7 @@ export function foldable(v, i, tokens) {
 function unclosed(text, tokens) {
   const stack = []
   let t = 0
-  for (let k = 0; k < text.length; k++) {
+  for (let k = 0, end = Math.min(text.length, 10_000); k < end; k++) {
     const x = text.charCodeAt(k)
     if (x !== 40 && x !== 41 && x !== 91 && x !== 93 && x !== 123 && x !== 125) continue
     while (t < tokens.length && tokens[t + 1] <= k) t += 3

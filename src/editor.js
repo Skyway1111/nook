@@ -16,6 +16,7 @@ const PLAIN = { name: 'Plain text', lex: '' }
 // Characters drawn as a placeholder dot, as CodeMirror's highlightSpecialChars does by default.
 const SPECIAL = /[\u{0}-\u{8}\u{b}-\u{1f}\u{7f}-\u{9f}\u{ad}\u{61c}\u{200b}\u{200e}\u{200f}\u{2028}\u{2029}\u{202d}\u{202e}\u{2066}\u{2067}\u{2069}\u{feff}\u{fff9}-\u{fffc}]/gu
 const SIMPLE = /^[\t\x20-\x7e]*$/ // a line whose caret positions are columns times the character width
+const LONG = 4096 // past this many characters an unwrapped line draws only around the viewport
 const BARS = [null, ['add', 'Added since git\'s copy'], ['change', 'Changed since git\'s copy'],
   ['delete', 'Lines taken out above'], ['delete below', 'Lines taken out below']]
 const JOINS = new Set(['type', 'delete', 'compose']) // what an undo step joins while typing goes on
@@ -89,12 +90,14 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   let states = new Int32Array(doc.count + 1)
   let valid = 0, stale = 0, editEnd = 0
   const out = []
-  function lexTo(target) {
+  /** Lexes ahead until line `target`'s start state is known, or the clock passes `until`. */
+  function lexTo(target, until = Infinity) {
     if (!lexes) return
     const lines = doc.lines
     target = Math.min(target, lines.length)
     while (valid < target) {
       const i = valid
+      if (!(i & 63) && performance.now() > until) break
       out.length = 0
       const end = lexLine(L, lines[i], states[i], out, lines[i + 1])
       if (i + 1 >= editEnd && i + 1 <= stale && states[i + 1] === end) {
@@ -114,17 +117,34 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     idle(() => {
       lexing = false
       if (destroyed) return
-      const stop = performance.now() + 5
-      while (valid < doc.count && performance.now() < stop) lexTo(valid + 256)
+      lexTo(doc.count, performance.now() + 5)
+      if (guess.size && valid > first) dirty() // rows drawn from a guess get their real colors
       lexLater()
     })
   }
+  // Lines past `valid` that show get a state guessed from the 64 lines before them lexed from scratch: right but
+  // for a comment or string longer than that, and redrawn once the lexer gets there.
+  const guess = new Map()
+  function guessFrom(i) {
+    let j = Math.max(valid, i - 64), st = j === valid ? states[valid] : 0
+    for (; j < i; j++) {
+      out.length = 0
+      st = lexLine(L, doc.lines[j], st, out, doc.lines[j + 1])
+    }
+    return st
+  }
+  /** Line i's start state, known or guessed. */
+  function stateOf(i) {
+    if (!lexes) return 0
+    if (i > valid) lexTo(i, performance.now() + 4)
+    return i <= valid ? states[i] : guess.get(i) ?? guessFrom(i)
+  }
   function tokensOf(i) {
-    lexTo(i)
+    const st = stateOf(i)
     const row = rows.get(i)
-    if (row && row.text === doc.lines[i] && row.state === states[i]) return row.tokens
+    if (row && row.text === doc.lines[i] && row.state === st) return row.tokens
     out.length = 0
-    if (lexes) lexLine(L, doc.lines[i], states[i], out, doc.lines[i + 1])
+    if (lexes) lexLine(L, doc.lines[i], st, out, doc.lines[i + 1])
     return out.slice()
   }
 
@@ -368,27 +388,42 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   /** Writes line i's text and colors into row r, unless they're as drawn. */
   function paintLine(r, i) {
     const text = doc.lines[i]
-    const st = lexes ? states[i] : 0
+    const st = !lexes ? 0 : i <= valid ? states[i] : guess.get(i) ?? 0
     const next = md ? doc.lines[i + 1] : undefined
     const shut = !!foldAt(i)
-    if (r.text === text && r.state === st && r.next === next && r.shut === shut) return
+    // A long unwrapped line shows only the stretch around the viewport, in blocks of LONG characters.
+    let s = 0, e = text.length
+    if (!wrap && e > LONG) {
+      const c0 = Math.max(0, (scroller.scrollLeft - lineLeft) / cw)
+      s = Math.max(0, Math.floor(offsetAt(text, c0) / LONG) * LONG - LONG)
+      e = Math.min(text.length, s + 3 * LONG + Math.ceil(scroller.clientWidth / cw))
+    }
+    if (r.text === text && r.state === st && r.next === next && r.shut === shut && r.offset === s && r.end === e) return
     let tokens = r.tokens
     if (!(r.text === text && r.state === st && r.next === next)) {
       out.length = 0
       if (lexes) lexLine(L, text, st, out, next)
       tokens = out.slice()
     }
-    Object.assign(r, { text, state: st, next, shut, tokens, simple: SIMPLE.test(text) })
+    if (r.text !== text) r.simple = SIMPLE.test(text)
+    Object.assign(r, { text, state: st, next, shut, tokens, offset: s, end: e })
     const line = r.line
     if (!text && !shut) return line.replaceChildren(el('br'))
     const frag = document.createDocumentFragment()
-    let k = 0
-    for (let t = 0; t < tokens.length; t += 3) {
-      if (tokens[t] > k) piece(frag, text.slice(k, tokens[t]), '')
-      piece(frag, text.slice(tokens[t], tokens[t + 1]), className(tokens[t + 2]))
-      k = tokens[t + 1]
+    if (s) {
+      const gap = el('span', { className: 'cm-gap' })
+      gap.style.width = `${column(text, s) * cw}px`
+      frag.append(gap)
     }
-    if (k < text.length) piece(frag, text.slice(k), '')
+    let k = s
+    for (let t = 0; t < tokens.length; t += 3) {
+      const a = Math.max(tokens[t], s), b = Math.min(tokens[t + 1], e)
+      if (b <= a) continue
+      if (a > k) piece(frag, text.slice(k, a), '')
+      piece(frag, text.slice(a, b), className(tokens[t + 2]))
+      k = b
+    }
+    if (k < e) piece(frag, text.slice(k, e), '')
     if (shut) frag.append(el('span', { className: 'cm-foldPlaceholder', textContent: '\u{2026}', title: 'Unfold' }))
     line.replaceChildren(frag)
   }
@@ -475,7 +510,16 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       const st = scroller.scrollTop, h = scroller.clientHeight
       const margin = Math.max(h / 2, 200)
       const a = lineAtY(st - padTop - margin), b = lineAtY(st - padTop + h + margin)
-      lexTo(b + 1)
+      if (b - valid < 2000) lexTo(b + 1, performance.now() + 4) // farther off, the idle lexer catches up
+      guess.clear()
+      if (lexes && valid < b) {
+        let st = guessFrom(Math.max(a, valid))
+        for (let i = Math.max(a, valid); i <= b; i++) {
+          guess.set(i, st)
+          out.length = 0
+          st = lexLine(L, doc.lines[i], st, out, doc.lines[i + 1])
+        }
+      }
       const actives = new Set(ranges.map(r => doc.lineOf(r.head)))
       const next = new Map()
       const order = []
@@ -576,10 +620,12 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   const contentBox = () => (box ??= content.getBoundingClientRect())
   /** Line i's text node and offset holding character ch, in row r. */
   function domAt(r, ch) {
+    ch -= r.offset
+    if (ch < 0 || ch > r.end - r.offset) return null
     let k = 0
     for (let n = r.line.firstChild; n; n = n.nextSibling) {
       const t = n.nodeType === 3 ? n : n.firstChild
-      if (!t || t.nodeType !== 3 || n.className === 'cm-foldPlaceholder') continue
+      if (!t || t.nodeType !== 3 || n.className === 'cm-foldPlaceholder' || n.className === 'cm-gap') continue
       const len = t.data.length
       if (ch <= k + len) return [t, ch - k]
       k += len
@@ -587,13 +633,14 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     return null
   }
   function charOf(r, node, offset) {
-    let k = 0
+    let k = r.offset
     for (let n = r.line.firstChild; n; n = n.nextSibling) {
       if (n.className === 'cm-foldPlaceholder') return r.text.length
+      if (n.className === 'cm-gap') continue
       if (n === node || n.contains(node)) return k + (n.nodeType === 3 || node.nodeType === 3 ? offset : 0)
       k += n.textContent.length
     }
-    return r.text.length
+    return r.end
   }
   const range = document.createRange()
   /** The client rects of characters a to b in row r. */
