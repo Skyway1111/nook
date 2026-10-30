@@ -210,7 +210,9 @@ function parse(file) {
     } else if (t[1] === 'import' && code[k + 1][1] === '.') {
       const [n, u, open, path, comma] = code.slice(k - 5, k)
       if (n?.[1] !== 'new' || u[1] !== 'URL' || open[1] !== '(' || comma[1] !== ',' || code.slice(k + 1, k + 6).map(t => t[1]).join('') !== '.meta.url)') fail(t, "import.meta goes only in new URL('./file', import.meta.url)")
-      m.assets.push({ to: target(path), token: path, sheet: code[k - 7]?.[1] === 'sheet' && code[k - 6][1] === '(' })
+      const sheet = code[k - 7]?.[1] === 'sheet' && code[k - 6][1] === '('
+      if (sheet && !/\.css['"]$/.test(path[1])) fail(t, 'sheet() takes a stylesheet')
+      m.assets.push({ to: target(path), token: path, sheet })
     } else if (t[1] === 'import') {
       const i = {}
       let j = k + 1
@@ -624,6 +626,7 @@ function bundle() {
   // Lazy modules in chunks by the set of import() targets that need them, each chunk named for a module in it
   // that no other there imports.
   const targets = [...new Set(all.flatMap(m => m.dynamic.map(d => d.module)))]
+  if (targets.includes(main)) throw new Error(`${entry[1]} runs first, so nothing imports it`)
   const needs = new Map(targets.map(t => [t, evaluation(t, eager)]))
   const chunks = new Map()
   for (const m of all) {
