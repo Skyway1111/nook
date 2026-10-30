@@ -99,20 +99,20 @@ export function startTurns(term, send) {
   }
 
   function show(row) {
-    term.scrollLines(row - term.vt.buffer.viewportY - 1) // a row of what came before stays in view above it
+    term.scrollLines(row - term.vt.buffer.ydisp - 1) // a row of what came before stays in view above it
     mark(row)
   }
 
   /** The prompt above the view's top row, or below it; past the last one, the bottom. */
   function jump(up) {
     const b = term.vt.buffer
-    if (b.type === 'alternate') return fullscreen(up)
-    const top = b.viewportY + 1 // the row under the one `show` keeps above a prompt
+    if (b === term.vt.alt) return fullscreen(up)
+    const top = b.ydisp + 1 // the row under the one `show` keeps above a prompt
     const text = y => b.getLine(y)?.translateToString(true) ?? ''
     if (up) {
       for (let y = top - 1; y >= 0; y--) if (isPrompt(text(y))) return show(y)
     } else {
-      for (let y = top + 1; y < b.baseY; y++) if (isPrompt(text(y))) return show(y)
+      for (let y = top + 1; y < b.ybase; y++) if (isPrompt(text(y))) return show(y)
       term.scrollToBottom()
     }
   }

@@ -281,7 +281,7 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 .pictures > .page { overflow: hidden; border-radius: 4px; outline: 1px solid var(--line); }
 .pictures > .page > iframe { width: 1280px; border: 0; transform-origin: 0 0; background: #fff; pointer-events: none; }
 
-/* Composer: the card over Claude's prompt. It sits under xterm's helpers, so IME text shows above it at its caret. */
+/* Composer: the card over Claude's prompt. It sits under the terminal's helpers, so IME text shows above it at its caret. */
 /* Anchored to the terminal, as tall as the screen and never shifted, so no script sizes the card. */
 /* composer.js places it on the terminal's bottom edge, clear of the scrollbar. */
 .composer { position: absolute; z-index: 4; display: flex; }

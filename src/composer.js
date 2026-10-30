@@ -49,12 +49,12 @@ export function startComposer(term, host, id) {
   const frame = card.firstChild
   // Each part repaints only when its own HTML changes, so a keystroke leaves the menus and thumbnails be.
   const parts = Object.fromEntries(['thumbs', 'draft', 'hints', 'chips'].map(k => [k, frame.querySelector(`.${k}`)]))
-  const { screen, rowsEl: rows } = term
+  const { screen, rowsEl: rows, marks } = term // marks over the rows, such as search hits, move and clip with them
   // The terminal's input textarea and IME text sit beside the screen, which moves and is a layer of its own, so
   // they stay above the card. `follow` lines them up with the card's caret, so composing text shows there.
   const helpers = term.helpers
   const cell = term.vt.buffer.getNullCell()
-  const line = y => term.vt.buffer.getLine(term.vt.buffer.viewportY + y)
+  const line = y => term.vt.buffer.getLine(term.vt.buffer.ydisp + y)
   const images = new Map() // [Image #N] -> its file, once found
   let imageKey = ''
   let shown = {} // what each part of the card shows
@@ -63,7 +63,6 @@ export function startComposer(term, host, id) {
   let tall = 0 // the card's height as last laid out, 0 while it or its tab is hidden
   let taller = false // whether the card is taller than Claude's prompt block
   let gap = null // blank rows under the transcript that take the card instead of the transcript's top: { from, to, top }
-  let raised = null // the rows between that gap and the prompt, raised with the card: { from, to, px }
   let report = '' // the mod's last report, as JSON
   let state = {} // ...and parsed
   let chips = ''
@@ -149,7 +148,7 @@ export function startComposer(term, host, id) {
     let all = ''
     for (let y = top + 1; y < bottom; y++) {
       const l = line(y)
-      const caret = y === b.cursorY ? b.cursorX : -1
+      const caret = y === b.y ? b.x : -1
       const row = words(l)
       lines.push({ y, ...row, html: runs(l, 2, Math.max(row.len + 2, caret), caret) })
       all += text(y)
@@ -239,21 +238,21 @@ export function startComposer(term, host, id) {
     const h = geo.height / term.rows
     const snap = px => Math.round(px * devicePixelRatio) / devicePixelRatio
     const hold = held == null ? 0 : snap((term.rows - held) * h)
-    rows.style.transform = hold ? `translateY(${hold}px)` : ''
+    rows.style.transform = marks.style.transform = hold ? `translateY(${hold}px)` : ''
     if (card.hidden) {
-      rows.style.clipPath = ''
+      rows.style.clipPath = marks.style.clipPath = ''
       screen.style.transform = helpers.style.transform = ''
-      raise(null)
+      term.raise(null)
       return
     }
     const below = shown.block * h
-    rows.style.clipPath = `inset(0 0 ${below + hold}px 0)`
+    rows.style.clipPath = marks.style.clipPath = `inset(0 0 ${below + hold}px 0)`
     const shift = snap(tall - below)
     taller = shift > 0
     if (held == null) gap = taller ? blanks(term.rows - shown.block) : null // a held frame keeps its rows
     const lift = gap ? Math.min(shift, snap((gap.to - gap.from) * h)) : 0
     screen.style.transform = shift - lift ? `translateY(${lift - shift}px)` : ''
-    raise(lift ? { from: gap.to, to: gap.top, px: lift } : null)
+    term.raise(lift ? { from: gap.to, to: gap.top, px: lift } : null) // the rows between the gap and the prompt
     follow()
   }
 
@@ -268,18 +267,10 @@ export function startComposer(term, host, id) {
     return null
   }
 
-  /** Moves rows `next.from` up to `next.to` up `next.px` more than the screen. */
-  function raise(next) {
-    if (same(raised, next)) return
-    const set = ({ from, to }, transform) => { for (let y = from; y < to; y++) if (rows.children[y]) rows.children[y].style.transform = transform }
-    if (raised) set(raised, '')
-    if (next) set(next, `translateY(${-next.px}px)`)
-    raised = next
-  }
-
   // The terminal finds the cell under the pointer from the screen's box, so a press, a move, or a link's hover
   // over the raised rows goes to the rows they are: Claude's slash menu takes clicks.
   term.mapPoint = (x, y) => {
+    const raised = term.raised
     if (!raised || held != null) return [x, y]
     const at = y - screen.getBoundingClientRect().top + raised.px
     const h = geo.height / term.rows
@@ -293,8 +284,8 @@ export function startComposer(term, host, id) {
     const at = caret.getBoundingClientRect()
     const box = host.getBoundingClientRect()
     const b = term.vt.buffer
-    const x = at.left - box.left - geo.left - (b.cursorX * geo.width) / term.cols
-    const y = at.top - box.top - geo.top - (b.cursorY * geo.height) / term.rows
+    const x = at.left - box.left - geo.left - (b.x * geo.width) / term.cols
+    const y = at.top - box.top - geo.top - (b.y * geo.height) / term.rows
     helpers.style.transform = `translate(${x}px, ${y}px)`
   }
 

@@ -165,7 +165,7 @@ export function startPictures(term, reply = () => {}) {
     const boxes = new Map() // id -> the picture's first cell, and its cells on screen
     for (let y = 0; y < term.rows; y++) {
       // A picture's cell carries its row and column as marks, so it is among the row's graphemes.
-      const line = b.getLine(b.viewportY + y)
+      const line = b.getLine(b.ydisp + y)
       if (!line?.comb) continue
       for (const x of line.comb.keys()) {
         const chars = x < term.cols ? line.getCell(x, cell).getChars() : ''

@@ -12,7 +12,7 @@ const { send, evaluate, trace, close } = await connect(process.argv[2])
 const raster = async f => (await trace(['disabled-by-default-devtools.timeline'], f)).filter(e => e.name === 'RasterTask').map(e => e.dur / 1000)
 
 // Each frame: rows showing text, whether the card shows, the rows' text length, and the screen's size,
-// which changes with each resize xterm sends Claude.
+// which changes with each resize the terminal sends Claude.
 await evaluate(`(() => {
   const host = document.querySelector('.view:not([hidden]) .xterm-host')
   const [rows, card, screen] = ['.xterm-rows', '.composer', '.xterm-screen'].map(s => host.querySelector(s))

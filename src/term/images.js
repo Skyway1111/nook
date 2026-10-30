@@ -1,5 +1,5 @@
 // Sixel and iTerm2 pictures (OSC 1337 File= with inline=1), loaded the first time output holds one. A
-// picture covers cells from the cursor as xterm's image addon placed it: each cell keeps its tile in its
+// picture covers cells from the cursor, and each cell keeps its tile in its
 // extras, so text written over it, an erase, or a scroll takes the picture's cells with it. Pictures draw
 // over the text where their cells show. A terminal keeps 32 MB of pixels, oldest dropped first.
 import { bytes } from '../palette.js'
@@ -316,7 +316,7 @@ export function startImages(term) {
     const { cols, rows } = term
     const boxes = new Map() // id -> its first cell, and its cells on screen
     for (let y = 0; y < rows; y++) {
-      const line = b.getLine(b.viewportY + y)
+      const line = b.getLine(b.ydisp + y)
       if (!line?.ext) continue
       for (const x of line.ext.keys()) {
         const e = x < cols && line.getCell(x, cell).ext

@@ -12,8 +12,6 @@ import { WINDOWS } from './paths.js'
 import { quote } from './files.js'
 
 const open = path => invoke('open_path', { path })
-// The only link schemes a program's output may hand to the system. Any other could run something.
-const WEB = /^(https?|mailto):/i
 const HOLD_MS = 500 // the longest the terminal holds the last frame for Claude's redraw, once Claude has the size
 const QUIET_MS = 16 // how long a redraw's last chunk waits for more when it leaves the cursor hidden
 const MIN_COLS = 20 // the smallest size Claude gets: narrower, its layout falls apart
@@ -79,16 +77,9 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     osc,
     apc: data => pictures.apc(data),
     dcs: (ident, params) => (ident === 0x71 ? images?.sixel(params) : undefined), // q: sixel
-    link,
+    link: open, // an OSC 8 link to the web
     keys,
   })
-  /** An OSC 8 link: a file opens in nook, a web page in the browser, and nothing else goes anywhere. */
-  function link(uri) {
-    if (WEB.test(uri)) return open(uri)
-    if (!/^file:/i.test(uri)) return
-    const { path, line } = fileUrl(uri)
-    invoke('path_kinds', { paths: [path] }).then(([kind]) => kind && openPath(path, kind === 2 ? 'dir' : 'file', line))
-  }
   term.registerLinkProvider(urlLinks(term, open))
   /** The size the host fits, no smaller than MIN_COLS x MIN_ROWS, or null while it has none. */
   const fits = () => {

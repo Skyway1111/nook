@@ -1,8 +1,8 @@
 // A terminal on the page: a Vt's screen drawn as DOM rows, and keys, the mouse, and the clipboard turned into
-// what the program reads. It behaves as xterm.js did for nook (its DOM renderer and the addons nook loaded),
-// with the classes nook's CSS and benches use: .xterm, .xterm-screen, .xterm-rows, .xterm-cursor,
-// .xterm-helper-textarea. Each frame compares every row with what it drew last and rewrites only the rows that
-// changed. Colors are classes bound to theme variables, so a theme change redraws nothing.
+// what the program reads, as xterm.js turns them. Its classes are the ones nook's CSS and benches use: .xterm,
+// .xterm-screen, .xterm-rows, .xterm-cursor, .xterm-helper-textarea. Each frame compares every row with what it
+// drew last and rewrites only the rows that changed. Colors are classes bound to theme variables, so a theme
+// change redraws nothing.
 import { Vt, CP, COMBINED, CM, RGB, INVERSE, BOLD, UNDERLINE, INVISIBLE, STRIKE, ITALIC, DIM, EXT, OVERLINE } from './vt.js'
 import { keyData } from './keys.js'
 import { slotVar, bytes } from '../palette.js'
@@ -18,8 +18,11 @@ const OUTLINE = 'xterm-cursor xterm-cursor-outline' // the cursor while the term
 const PLACEHOLDER = 0x10eeee // a picture's cell (pictures.js): drawn as a blank, as no font has it
 const COLOR = CM | 0xffffff
 const W = 'W'
+// The OSC 8 links the view takes: the only schemes a program's output may hand to the system, as any other
+// could run something. A file: link's text is left to the path links links.js finds.
+const WEB = /^(https?|mailto):/i
 
-/** Palette slot `n` as CSS: its theme variable, or xterm's own color for a slot the theme doesn't name. */
+/** Palette slot `n` as CSS: its theme variable, or the standard 256-color value for a slot the theme doesn't name. */
 function slot(n) {
   const v = slotVar(n)
   if (v) return `var(${v})`
@@ -55,10 +58,11 @@ const cancel = e => {
 }
 
 /** The terminal in `host`. Hooks: `osc(id, data)`, `apc(data)`, `dcs(ident, params)` as Vt's, and `link(uri)`
- * for an OSC 8 hyperlink clicked; `keys(e)` sees each keydown first and returns false to keep it from the
- * program; `pull` grows rows from scrollback, as on Linux. */
+ * for a clicked OSC 8 hyperlink to the web (http, https, mailto; other schemes are left to the registered link
+ * providers); `keys(e)` sees each keydown first and returns false to keep it from the program; `pull` grows rows
+ * from scrollback, as on Linux. */
 export class Term {
-  constructor(host, { scrollback = 10000, pull = false, osc, apc, dcs, link, keys } = {}) {
+  constructor(host, { pull = false, osc, apc, dcs, link, keys } = {}) {
     palette()
     this.host = host
     this.keys = keys
@@ -73,7 +77,7 @@ export class Term {
         const rgb = name => bytes(style.getPropertyValue(name)).slice(0, 3)
         return [rgb('--term-fg'), [0, 0, 0], rgb('--cursor')] // the background is transparent: dark
       },
-    }, { scrollback, pull })
+    }, { pull })
     this.decoder = new TextDecoder()
 
     const root = this.element = document.createElement('div')
@@ -92,14 +96,16 @@ export class Term {
     ;[this.textarea, this.compView, this.measureBox] = this.helpers.children
     this.rowEls = []
 
-    // What each row shows: its cells' words, its graphemes and extras, its cursor and selection, and its HTML.
+    // What each row shows: its cells' words, its line's `gen` (graphemes and extras), its cursor and selection,
+    // and its HTML.
     this.snaps = []
-    this.sigs = []
+    this.gens = []
     this.html = []
     this.state = new Int32Array(0)
     this.force = true
-    // Glyph widths, measured in the DOM in batches: printable Latin-1 in a flat table, anything else by text.
-    this.flat = new Float32Array(256).fill(NaN)
+    // Glyph widths, measured in the DOM in batches: Latin-1 in a flat table by code | bold << 8 | italic << 9,
+    // anything else by text.
+    this.flat = new Float32Array(1024).fill(NaN)
     this.widths = new Map()
     this.pending = new Map() // key -> [chars, bold, italic], waiting to be measured
     this.unmeasured = false // the row being built met a glyph not measured yet
@@ -125,7 +131,7 @@ export class Term {
     this.over = false // the pointer is over the terminal: the scrollbar shows
     this.barTimer = 0
 
-    // Selection, as xterm's model, its lines counted from the first line the buffer ever had (`trimmed + y`).
+    // Selection: cells of lines counted from the first line the buffer ever had (`trimmed + y`), so trims don't move it.
     this.sel = { start: null, end: null, len: 0, mode: 0 } // mode: 0 cells, 1 words, 2 lines
     this.dragScroll = 0
     this.dragTimer = 0
@@ -145,12 +151,13 @@ export class Term {
     this.openLink = link
 
     this.marksList = new Set()
+    this.raised = null // screen rows drawn higher than their place, with their marks: { from, to, px }
     this.cellRead = this.vt.buffer.getNullCell()
     this.missed = false // a frame was asked for while off screen
     this.linkView = -1
     this.barDrag = false
     this.ratio = 0
-    this.disposed = false
+    this.dpr = null // the media query that sees the device pixel ratio change
     this.seen = null
 
     // Keys and IME composition.
@@ -185,7 +192,7 @@ export class Term {
 
   // ---- metrics
 
-  /** Reads the font from the theme and measures a cell, as xterm does: 'W' on a canvas. */
+  /** Reads the font from the theme and measures a cell: 'W' on a canvas. */
   measureFont() {
     const style = getComputedStyle(this.host)
     const v = name => style.getPropertyValue(name).trim()
@@ -203,7 +210,7 @@ export class Term {
     this.charW = m.width
     this.charH = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent
     if (!this.charH) {
-      // A WebKit without font metrics on the canvas: 32 W's in the DOM, as xterm fell back to.
+      // A WebKit without font metrics on the canvas: 32 W's in the DOM.
       const s = this.measureBox.appendChild(document.createElement('span'))
       s.textContent = W.repeat(32)
       this.charW = s.offsetWidth / 32 || this.charW
@@ -215,7 +222,7 @@ export class Term {
     return true
   }
 
-  /** The screen's size from the cell's, with xterm's rounding to device pixels. */
+  /** The screen's size from the cell's, rounded to device pixels. */
   dims() {
     const dpr = devicePixelRatio
     const { cols, rows } = this.vt
@@ -246,7 +253,7 @@ export class Term {
     this.refresh()
   }
 
-  /** The size that fills the host, as xterm's fit addon proposes it, or undefined while a cell has no size. */
+  /** The size that fills the host beside the scrollbar, or undefined while a cell has no size. */
   fit() {
     if (!this.charH) this.restyle() // measured in the DOM while hidden: measure again
     if (!this.cellW || !this.cellH || !this.element.parentElement) return undefined
@@ -257,12 +264,10 @@ export class Term {
 
   /** A glyph's width in px, measured if new: -1 then, and the row is built again once it is. */
   widthOf(chars, bold, italic) {
-    if (!bold && !italic && chars.length === 1) {
-      const code = chars.charCodeAt(0)
-      if (code < 256) {
-        const w = this.flat[code]
-        if (w === w) return w
-      }
+    const code = chars.length === 1 ? chars.charCodeAt(0) : 256
+    if (code < 256) {
+      const w = this.flat[code | (bold ? 256 : 0) | (italic ? 512 : 0)]
+      if (w === w) return w
     }
     const key = bold || italic ? chars + (bold ? 'B' : '') + (italic ? 'I' : '') : chars
     const w = this.widths.get(key)
@@ -286,16 +291,16 @@ export class Term {
     box.textContent = ''
     if (!box.offsetParent) return // hidden: nothing measures
     list.forEach(([chars, bold, italic], i) => {
-      const code = chars.length === 1 && !bold && !italic ? chars.charCodeAt(0) : 256
-      if (code < 256) this.flat[code] = widths[i]
+      const code = chars.length === 1 ? chars.charCodeAt(0) : 256
+      if (code < 256) this.flat[code | (bold ? 256 : 0) | (italic ? 512 : 0)] = widths[i]
       else this.widths.set(bold || italic ? chars + (bold ? 'B' : '') + (italic ? 'I' : '') : chars, widths[i])
     })
   }
 
   // ---- size
 
-  /** Sets the size; the same size does nothing. As xterm's DOM renderer did, the rows repaint at once, even
-   * while a synchronized update holds the frame, and onRender waits for the frame after the hold. */
+  /** Sets the size; the same size does nothing. The rows repaint at once, even while a synchronized update
+   * holds the frame, and onRender waits for the frame after the hold. */
   resize(cols, rows) {
     if (!this.vt.resize(cols, rows)) return
     this.resizeRows()
@@ -316,7 +321,7 @@ export class Term {
     if (this.snaps[0]?.length !== cols * 3) this.snaps.length = 0
     for (let y = this.snaps.length; y < rows; y++) this.snaps.push(new Uint32Array(cols * 3))
     this.snaps.length = rows
-    this.sigs.length = this.html.length = rows
+    this.gens.length = this.html.length = rows
     const state = new Int32Array(rows * 5).fill(-2)
     this.state = state
     this.force = true
@@ -434,7 +439,8 @@ export class Term {
 
   draw = () => {
     this.frame = 0
-    if (this.paused || this.vt.sync || this.burstTimer) return
+    if (this.paused) return void (this.missed = true)
+    if (this.vt.sync || this.burstTimer) return
     this.paint()
     this.emit('render')
   }
@@ -500,12 +506,9 @@ export class Term {
       state[k + 3] = h0
       state[k + 4] = h1
       let cells = copy(line, this.snaps[y], cols)
-      if (line.comb || line.ext || this.sigs[y]) {
-        const sig = extras(line, cols)
-        if (sig !== this.sigs[y]) {
-          this.sigs[y] = sig
-          cells = true
-        }
+      if (line.gen !== this.gens[y]) {
+        this.gens[y] = line.gen
+        cells = true
       }
       if (cells && this.link && top + y >= this.link.range.start.y - 1 && top + y <= this.link.range.end.y - 1) rebuilt = true
       if (changed || cells) dirty.push(y, line, cur, s0, s1, h0, h1)
@@ -595,9 +598,9 @@ export class Term {
       const bold = fg & BOLD
       const italic = bg & ITALIC
       let g
-      if (code >= 0 && code < 256 && !bold && !italic) {
-        g = flat[code]
-        if (g !== g) g = this.widthOf(ch, 0, 0)
+      if (code >= 0 && code < 256) {
+        g = flat[code | (bold ? 256 : 0) | (italic ? 512 : 0)]
+        if (g !== g) g = this.widthOf(ch, bold, italic)
       } else g = this.widthOf(ch, bold, italic)
       const sp = g < 0 ? base : w * cellW - g
       const sel = x >= s0 && x < s1
@@ -709,8 +712,23 @@ export class Term {
   placeMark(m, view) {
     const y = m.line - view
     const shown = m.buffer === this.vt.buffer && y >= 0 && y < this.vt.rows
-    const css = shown ? `top:${y * this.cellH}px;left:${m.x * this.cellW}px;width:${m.width * this.cellW}px;height:${this.cellH}px` : 'display:none'
+    const r = this.raised
+    const top = y * this.cellH - (r && y >= r.from && y < r.to ? r.px : 0)
+    const css = shown ? `top:${top}px;left:${m.x * this.cellW}px;width:${m.width * this.cellW}px;height:${this.cellH}px` : 'display:none'
     if (css !== m.css) m.el.style.cssText = m.css = css
+  }
+
+  /** Draws screen rows `r.from` to `r.to` `r.px` px higher than their place, with their marks; null puts them
+   * back. The composer raises the rows between a short transcript and Claude's prompt. */
+  raise(r) {
+    const old = this.raised
+    if (old?.from === r?.from && old?.to === r?.to && old?.px === r?.px) return
+    const set = ({ from, to }, transform) => { for (let y = from; y < to && y < this.rowEls.length; y++) this.rowEls[y].style.transform = transform }
+    if (old) set(old, '')
+    if (r) set(r, `translateY(${-r.px}px)`)
+    this.raised = r
+    const b = this.vt.buffer
+    for (const m of this.marksList) this.placeMark(m, b.trimmed + b.ydisp)
   }
 
   // ---- scrolling
@@ -747,7 +765,7 @@ export class Term {
     this.bar.classList.toggle('need', need)
     if (!need) return
     this.slider.style.cssText = `top:${at}px;height:${size}px`
-    this.revealBar() // as VS Code's scrollbar, which nook's xterm had: it shows while the view or its length moves
+    this.revealBar() // it shows while the view or its length moves
   }
 
   revealBar() {
@@ -798,7 +816,7 @@ export class Term {
     if (this.composing || cy < 0 || cy >= this.vt.rows) return
     const b = this.vt.buffer
     const line = b.lines.get(b.ybase + b.y)
-    const w = (line?.getCell(cx)?.getWidth() ?? 1) * this.cellW
+    const w = (line && cx < line.length ? line.width(cx) : 1) * this.cellW
     const key = `${cx}|${cy}|${w}|${this.cellH}`
     if (key === this.areaKey) return
     this.areaKey = key
@@ -864,7 +882,7 @@ export class Term {
     this.input(e.data)
   }
 
-  // IME composition, as xterm's CompositionHelper: the composing text shows at the cursor and goes out whole.
+  // IME composition: the composing text shows at the cursor and goes out whole.
   compositionstart = () => {
     this.composing = true
     this.compStart = this.textarea.value.length
@@ -949,7 +967,7 @@ export class Term {
     return [x - r.left, y - r.top]
   }
 
-  /** The 1-based cell under `e`, as xterm's getCoords; `half` rounds to the nearer cell edge, for selections. */
+  /** The 1-based cell under `e`; `half` rounds to the nearer cell edge, for selections. */
   cell(e, half = false) {
     if (!this.cellW) return null
     const [px, py] = this.point(e)
@@ -958,7 +976,7 @@ export class Term {
     return [Math.min(Math.max(x, 1), this.vt.cols + (half ? 1 : 0)), Math.min(Math.max(y, 1), this.vt.rows)]
   }
 
-  /** Reports a mouse event to the program as SGR, under xterm's rules for each tracking mode. */
+  /** Reports a mouse event to the program as SGR, under each tracking mode's rules. */
   report(e, type) {
     const vt = this.vt
     if (vt.mouse === 'none' || vt.mouseEncoding === 'default') return
@@ -1000,7 +1018,7 @@ export class Term {
     this.input(`\x1b[<${code};${pixels ? `${x};${y}` : `${col + 1};${row + 1}`}${end}`)
   }
 
-  /** The wheel's lines for one event, as xterm counts them for the program: a part of a line waits. */
+  /** The wheel's lines for one event, for the program: a part of a line waits. */
   wheelLines(e) {
     if (!e.deltaY || e.shiftKey) return 0
     let n = e.deltaY * (e.altKey || e.ctrlKey ? 5 : 1)
@@ -1148,7 +1166,7 @@ export class Term {
       this.sel = { start: at, end: null, len: 0, mode: 0 }
       if (at) {
         const line = this.lineAt(at[1])
-        if (line && at[0] < line.length && line.getCell(at[0]).getWidth() === 0) at[0]++
+        if (line && at[0] < line.length && line.width(at[0]) === 0) at[0]++
       }
     }
     document.addEventListener('mousemove', this.selectMove)
@@ -1185,7 +1203,7 @@ export class Term {
       s.end[0] = this.dragScroll > 0 ? cols : 0
     } else this.dragScroll = 0
     const line = this.lineAt(s.end[1])
-    if (line && s.end[0] < line.length && line.getCell(s.end[0]).getWidth() === 0 && s.end[0] < cols) s.end[0]++
+    if (line && s.end[0] < line.length && line.width(s.end[0]) === 0 && s.end[0] < cols) s.end[0]++
     if (s.end.join() !== before) this.refresh()
   }
 
@@ -1202,28 +1220,35 @@ export class Term {
   selectUp = e => {
     const elapsed = e.timeStamp - this.downAt
     this.stopSelecting()
+    const text = this.getSelection()
+    // On Linux the textarea holds the selection, selected, so the desktop's PRIMARY has it for a middle click.
+    if (!WINDOWS && text) {
+      this.textarea.value = text
+      this.textarea.select()
+    }
     // Alt+click moves the prompt's cursor to the cell, with arrow keys.
     const b = this.vt.buffer
-    if (this.getSelection().length <= 1 && elapsed < 500 && e.altKey && b.ybase === b.ydisp) {
+    if (text.length <= 1 && elapsed < 500 && e.altKey && b.ybase === b.ydisp) {
       const c = this.cell(e)
       if (c) this.input(this.moveTo(c[0] - 1, c[1] - 1))
     }
   }
 
-  /** Arrow keys that move the cursor to cell (x, y) of the screen, along the text as a shell's line editor does. */
+  /** Arrow keys that move the cursor to cell (x, y) of the screen: on the normal screen along the text, as a
+   * shell's line editor moves it; on the alternate screen, as an editor's, up or down to the row, then along it. */
   moveTo(x, y) {
-    const b = this.vt.buffer
-    const arrow = d => `\x1b${this.vt.appCursor ? 'O' : '['}${d}`
-    if (y === b.y) return arrow(b.x > x ? 'D' : 'C').repeat(Math.abs(b.x - x))
+    const vt = this.vt
+    const b = vt.buffer
+    const arrow = (d, n) => `\x1b${vt.appCursor ? 'O' : '['}${d}`.repeat(Math.max(0, n))
+    if (b === vt.alt) return arrow(y < b.y ? 'A' : 'B', Math.abs(b.y - y)) + arrow(x < b.x ? 'D' : 'C', Math.abs(b.x - x))
+    if (y === b.y) return arrow(b.x > x ? 'D' : 'C', Math.abs(b.x - x))
     const up = b.y > y
-    const n = this.vt.cols - (up ? x : b.x) + (Math.abs(b.y - y) - 1) * this.vt.cols + 1 + (up ? b.x : x) - 1
-    return arrow(up ? 'D' : 'C').repeat(Math.max(0, n))
+    return arrow(up ? 'D' : 'C', vt.cols - (up ? x : b.x) + (Math.abs(b.y - y) - 1) * vt.cols + (up ? b.x : x))
   }
 
-  /** Whether `cell` ends a word: a separator, or an empty cell. */
+  /** Whether cell `x` of `line` ends a word: a separator, or an empty cell. */
   separates(line, x) {
-    const c = line.getCell(x)
-    return !!c && c.getWidth() !== 0 && SEPARATORS.includes(c.getChars())
+    return x >= 0 && x < line.length && line.width(x) !== 0 && SEPARATORS.includes(line.chars(x))
   }
 
   /** The word at cell `x` of line `abs`, as { start, length } in cells, following wrapped rows; start may be
@@ -1232,22 +1257,22 @@ export class Term {
     const cols = this.vt.cols
     const line = this.lineAt(abs)
     if (x >= cols || !line) return null
-    const blank = i => !(line.getCell(i)?.getChars().trim())
+    const blank = i => !(i >= 0 && i < line.length && line.chars(i).trim())
     let start = x
     let end = x
-    if (blank(x) && line.getCell(x).getWidth()) {
-      while (start > 0 && blank(start - 1) && line.getCell(start - 1).getWidth()) start--
+    if (blank(x) && line.width(x)) {
+      while (start > 0 && blank(start - 1) && line.width(start - 1)) start--
       while (end + 1 < line.length && blank(end + 1)) end++
     } else {
-      if (line.getCell(start).getWidth() === 0) start--
+      if (line.width(start) === 0) start--
       while (start > 0 && !this.separates(line, start - 1)) start--
       while (end + 1 < line.length && !this.separates(line, end + 1)) end++
     }
     let length = Math.min(cols, end + 1 - start)
     if (!blanks && !line.translateToString(false, start, end + 1).trim()) return null
-    if (above && start === 0 && line.isWrapped && line.getCell(0).getChars() !== ' ') {
+    if (above && start === 0 && line.isWrapped && line.chars(0) !== ' ') {
       const prev = this.lineAt(abs - 1)
-      if (prev && prev.getCell(cols - 1)?.getChars() !== ' ') {
+      if (prev && prev.chars(cols - 1) !== ' ') {
         const w = this.wordAt(cols - 1, abs - 1, false, true, false)
         if (w) {
           start -= cols - w.start
@@ -1255,9 +1280,9 @@ export class Term {
         }
       }
     }
-    if (below && start + length === cols && line.getCell(cols - 1)?.getChars() !== ' ') {
+    if (below && start + length === cols && line.chars(cols - 1) !== ' ') {
       const next = this.lineAt(abs + 1)
-      if (next?.isWrapped && next.getCell(0).getChars() !== ' ') {
+      if (next?.isWrapped && next.chars(0) !== ' ') {
         const w = this.wordAt(0, abs + 1, false, false, true)
         if (w) length += w.length
       }
@@ -1322,7 +1347,7 @@ export class Term {
     return { dispose: () => { const i = this.providers.indexOf(provider); if (i >= 0) this.providers.splice(i, 1) } }
   }
 
-  /** The OSC 8 hyperlinks on 1-based buffer line `y`. */
+  /** The OSC 8 hyperlinks to the web on 1-based buffer line `y`. */
   hyperlinks(y) {
     const vt = this.vt
     const line = vt.buffer.getLine(y - 1)
@@ -1336,7 +1361,7 @@ export class Term {
       const at = x < n ? line.getCell(x, cell).getLink() : 0
       if (at === id) continue
       const uri = id && vt.linkUri(id)
-      if (uri) {
+      if (uri && WEB.test(uri)) {
         const range = { start: { x: from + 1, y }, end: { x, y } }
         links.push({ text: uri, range, activate: () => this.openLink?.(uri) })
       }
@@ -1505,6 +1530,7 @@ export class Term {
       e.preventDefault()
     })
     el.addEventListener('mousedown', this.mousedown)
+    if (!WINDOWS) el.addEventListener('auxclick', this.middleClick)
     el.addEventListener('mousemove', this.mousemove)
     el.addEventListener('wheel', e => this.wheel(e), { passive: false })
     el.addEventListener('mouseover', () => {
@@ -1530,6 +1556,16 @@ export class Term {
     })
     this.seen.observe(s)
     this.watchDpr()
+  }
+
+  /** A middle click on Linux pastes the desktop's PRIMARY selection where it lands: the textarea goes under the
+   * pointer to take it, and back to the cursor at the next frame. */
+  middleClick = e => {
+    if (e.button !== 1) return
+    const r = this.helpers.getBoundingClientRect()
+    Object.assign(this.textarea.style, { left: `${e.clientX - r.left - 10}px`, top: `${e.clientY - r.top - 10}px`, width: '20px', height: '20px', zIndex: '1000' })
+    this.areaKey = ''
+    this.focus()
   }
 
   /** Dragging the slider scrolls; a press beside it jumps there first. */
@@ -1561,20 +1597,20 @@ export class Term {
 
   /** A change of device pixel ratio, as when the window moves to another screen, measures again. */
   watchDpr() {
-    const query = matchMedia(`(resolution: ${devicePixelRatio}dppx)`)
-    const change = () => {
-      if (this.disposed) return
-      this.flat.fill(NaN)
-      this.widths.clear()
-      this.dims()
-      this.refresh()
-      this.watchDpr()
-    }
-    query.addEventListener('change', change, { once: true })
+    this.dpr = matchMedia(`(resolution: ${devicePixelRatio}dppx)`)
+    this.dpr.addEventListener('change', this.dprChange, { once: true })
+  }
+
+  dprChange = () => {
+    this.flat.fill(NaN)
+    this.widths.clear()
+    this.dims()
+    this.refresh()
+    this.watchDpr()
   }
 
   dispose() {
-    this.disposed = true
+    this.dpr.removeEventListener('change', this.dprChange)
     this.stopSelecting()
     document.removeEventListener('mouseup', this.reportUp)
     document.removeEventListener('mousemove', this.reportDrag)
@@ -1607,14 +1643,6 @@ function copy(line, snap, cols) {
     snap.fill(0, 2 * cols + n, 3 * cols)
   }
   return true
-}
-
-/** A row's graphemes and extras as one string, to see a change the cells' words don't show. */
-function extras(line, cols) {
-  let s = ''
-  if (line.comb) for (const [x, v] of line.comb) if (x < cols) s += x + v + '\0'
-  if (line.ext) for (const [x, e] of line.ext) if (x < cols) s += `${x},${e.ul},${e.ulc},${e.url};`
-  return s
 }
 
 function inLink(link, pos, cols) {

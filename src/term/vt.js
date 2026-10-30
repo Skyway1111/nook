@@ -35,10 +35,11 @@ class Ext {
     this.img = img
     this.tile = tile
   }
-  /** A link's cells are underlined dashed, as xterm has it. */
+  /** A link's cells are underlined dashed. */
   get style() { return this.url ? 5 : this.ul }
 }
 const NO_EXT = new Ext()
+let GEN = 0 // bumped by each write to a line's graphemes or extras, so `line.gen` names what they hold
 
 /** One row of cells, kept in planes: content, then fg, then bg, each `cap` long. */
 class Line {
@@ -49,6 +50,7 @@ class Line {
     this.isWrapped = wrapped
     this.comb = null // Map x -> grapheme, for cells with COMBINED
     this.ext = null // Map x -> Ext, for cells whose bg has EXT
+    this.gen = 0 // changes whenever `comb` or `ext` does
     this.d.fill(W1, 0, cols)
     if (bg) this.d.fill(bg, 2 * cols, 3 * cols)
   }
@@ -59,7 +61,9 @@ class Line {
     d.fill(W1, 0, n)
     d.fill(0, c, c + n)
     d.fill(bg, 2 * c, 2 * c + n)
+    if (!this.comb && !this.ext) return
     this.comb = this.ext = null
+    this.gen = ++GEN
   }
 
   /** Empties cells `from` to `to`, keeping `bg`. */
@@ -75,7 +79,10 @@ class Line {
     d[x] = content
     d[c + x] = fg
     d[2 * c + x] = bg
-    if (bg & EXT) (this.ext ??= new Map()).set(x, ext)
+    if (bg & EXT) {
+      (this.ext ??= new Map()).set(x, ext)
+      this.gen = ++GEN
+    }
   }
 
   width(x) { return this.d[x] >>> 22 }
@@ -87,7 +94,7 @@ class Line {
     return c & COMBINED ? this.comb.get(x) : c & CP ? String.fromCodePoint(c & CP) : ''
   }
 
-  /** Loads cell `x` into `cell`, as xterm's `getCell`. */
+  /** Loads cell `x` into `cell`, or a new Cell; undefined past the row's end. */
   getCell(x, cell = new Cell()) {
     if (x < 0 || x >= this.length) return undefined
     const { d, cap: c } = this
@@ -141,6 +148,7 @@ class Line {
         else if (x < to || x >= to + n) moved.set(x, v)
       }
       this[key] = moved
+      this.gen = ++GEN
     }
   }
 
@@ -173,11 +181,12 @@ class Line {
   }
 
   /** Sets the row's width, emptying cells it gains. Room grows in steps of 32 cells, so a dragged window edge
-   * doesn't make every line of scrollback copy itself at each step. */
+   * doesn't make every line of scrollback copy itself at each step, and is given back once under half is used. */
   resize(cols) {
-    if (cols > this.cap) {
-      const { d, cap: c, length: n } = this
-      const cap = cols + 31 & ~31
+    if (cols > this.cap || cols * 2 < this.cap) {
+      const { d, cap: c } = this
+      const n = Math.min(this.length, cols)
+      const cap = cols > this.cap ? cols + 31 & ~31 : cols
       const next = new Uint32Array(cap * 3)
       next.set(d.subarray(0, n))
       next.set(d.subarray(c, c + n), cap)
@@ -209,6 +218,7 @@ class Line {
     }
     if (src.comb) for (const [x, v] of src.comb) if (x >= srcCol && x < srcCol + n) (this.comb ??= new Map()).set(x - srcCol + destCol, v)
     if (src.ext) for (const [x, v] of src.ext) if (x >= srcCol && x < srcCol + n) (this.ext ??= new Map()).set(x - srcCol + destCol, v)
+    if (src.comb || src.ext) this.gen = ++GEN
   }
 }
 
@@ -237,7 +247,7 @@ export class Cell {
   isAttributeDefault() { return this.fg === 0 && this.bg === 0 }
 }
 
-/** A ring of lines, as xterm's CircularList: the oldest drop off the front once it holds `max`. */
+/** A ring of lines: the oldest drop off the front once it holds `max`. */
 class Ring {
   constructor(max) {
     this.a = new Array(max)
@@ -284,7 +294,7 @@ class Ring {
     this.drop(n)
     this.length -= n
   }
-  /** Moves `count` lines at `start` by `offset`, as xterm's shiftElements. */
+  /** Moves `count` lines at `start` by `offset`; past the end the ring grows, dropping its oldest when full. */
   shift(start, count, offset) {
     if (count <= 0) return
     if (offset > 0) {
@@ -309,7 +319,7 @@ class Ring {
   }
 }
 
-/** The normal buffer (with scrollback) or the alternate one. Its getters are the read API nook's views use. */
+/** The normal buffer (with scrollback) or the alternate one. Views read `ydisp`, `ybase`, `x`, `y` and lines. */
 class Buffer {
   constructor(vt, scrollback) {
     this.vt = vt
@@ -318,7 +328,7 @@ class Buffer {
     this.ydisp = 0 // the line at the view's top
     this.ybase = 0 // the line at the screen's top
     this.x = 0 // can be cols: the next character wraps first
-    this.y = 0
+    this.y = 0 // the cursor's screen row
     this.scrollTop = 0
     this.scrollBottom = vt.rows - 1
     this.tabs = new Set()
@@ -330,11 +340,6 @@ class Buffer {
     this.setupTabStops()
   }
 
-  get type() { return this.scrollback ? 'normal' : 'alternate' }
-  get viewportY() { return this.ydisp }
-  get baseY() { return this.ybase }
-  get cursorX() { return this.x }
-  get cursorY() { return this.y }
   get length() { return this.lines.length }
   /** Lines ever dropped off the scrollback's top, so `trimmed + y` names a line for good. */
   get trimmed() { return this.lines.trimmed }
@@ -378,7 +383,7 @@ class Buffer {
     return x >= cols ? cols - 1 : x < 0 ? 0 : x
   }
 
-  /** xterm's Buffer.resize: rows below the cursor go first, then the top scrolls off; a Linux PTY pulls
+  /** Rows below the cursor go first, then the top scrolls off; a Linux PTY pulls
    * scrollback back down as rows grow, ConPTY gets blank rows. The normal buffer reflows wrapped lines. */
   resize(cols, rows, oldCols, oldRows) {
     const { lines, vt } = this
@@ -429,7 +434,7 @@ class Buffer {
       if (cols > oldCols) this.reflowLarger(cols, rows, oldCols)
       else this.reflowSmaller(cols, rows, oldCols)
     }
-    // xterm leaves the alternate buffer's rows long; cutting them keeps text past the edge out of reads.
+    // Every row is cut to the width, so text past the edge stays out of reads.
     if (cols < oldCols) for (let i = 0; i < lines.length; i++) lines.get(i).resize(cols)
   }
 
@@ -580,7 +585,7 @@ class Buffer {
     let inserted = 0
     for (let i = Math.min(lines.max - 1, originalLength + countToInsert - 1); i >= 0; i--) {
       if (next && next.start > originalIndex + inserted) {
-        // xterm goes on past index 0 here, and its ring wraps those writes onto the newest lines
+        // Stops at index 0: the ring would wrap writes below it onto the newest lines, the screen's
         for (let k = next.lines.length - 1; k >= 0 && i >= 0; k--) lines.set(i--, next.lines[k])
         i++
         inserted += next.lines.length
@@ -626,7 +631,7 @@ function newLineLengths(wrapped, oldCols, cols) {
   return lengths
 }
 
-// The parser's states and actions: xterm's port of Paul Williams' DEC parser.
+// The parser's states and actions: Paul Williams' DEC parser, with xterm.js's transitions.
 const GROUND = 0
 const ESCAPE = 1
 const ESCAPE_INTERMEDIATE = 2
@@ -760,7 +765,7 @@ const IIP_LIMIT = 26700000 // an iTerm2 picture's OSC 1337: 20 MB in base64
 // DEC Special Graphics, for ` to ~ while G0 or G1 holds it: the line-drawing set.
 const DEC = '◆▒␉␌␍␊°±␤␋┘┐┌└┼⎺⎻─⎼⎽├┤┴┬│≤≥π≠£·'
 const GLEVEL = { 0x28: 0, 0x29: 1, 0x2a: 2, 0x2b: 3, 0x2d: 1, 0x2e: 2 } // ( ) * + - .
-const NATIONAL = new Set('AB4C5RQKYE6ZH7='.split('').map(c => c.charCodeAt(0))) // sets xterm knows; all print as ASCII here
+const NATIONAL = new Set('AB4C5RQKYE6ZH7='.split('').map(c => c.charCodeAt(0))) // national sets: taken, but all print as ASCII
 const MOUSE = { 9: 'x10', 1000: 'vt200', 1002: 'drag', 1003: 'any' }
 const RANK = { none: 0, x10: 1, vt200: 2, drag: 3, any: 4 }
 
@@ -793,7 +798,6 @@ export class Vt {
     this.alt = new Buffer(this, 0)
     this.buffer = this.normal
     this.focused = false
-    this.title = ''
     this.userScrolling = false
     this.links = new Map() // id -> { uri, key }
     this.linkKeys = new Map() // `${id};;${uri}` -> link id, for links an OSC 8 names with id=
@@ -825,7 +829,6 @@ export class Vt {
     this.sync = false
     this.wrap = true
     this.cursorStyle = undefined
-    this.cursorBlink = undefined
     this.mouse = 'none' // 'none' | 'x10' | 'vt200' | 'drag' | 'any'
     this.mouseEncoding = 'default' // 'default' | 'sgr' | 'sgr-pixels'
     this.charsets = [null, null, null, null]
@@ -934,7 +937,7 @@ export class Vt {
     if (n) this.changed = true
   }
 
-  // Params, as xterm's: up to 32, each with up to 32 colon subparams shared, -1 for an empty subparam.
+  // Params: up to 32, each with up to 32 colon subparams shared, -1 for an empty subparam.
   clearParams() {
     this.plen = 0
     this.sublen = 0
@@ -972,7 +975,7 @@ export class Vt {
   }
   hasSub(i) { return (this.subIdx[i] & 0xff) - (this.subIdx[i] >> 8) > 0 }
   getSub(i) { return this.sub.subarray(this.subIdx[i] >> 8, this.subIdx[i] & 0xff) }
-  /** The params as xterm's `toArray`: a number each, then an array of its subparams if it has any. */
+  /** The params as the `dcs` hook takes them: a number each, then an array of its subparams if it has any. */
   paramArray() {
     const out = []
     for (let i = 0; i < this.plen; i++) {
@@ -1015,7 +1018,10 @@ export class Vt {
               d[2 * c + k] = bg
             }
           }
-          if (bg & EXT) for (let k = from; k < x; k++) (line.ext ??= new Map()).set(k, ext)
+          if (bg & EXT) {
+            for (let k = from; k < x; k++) (line.ext ??= new Map()).set(k, ext)
+            line.gen = ++GEN
+          }
           join = 2
           continue
         }
@@ -1073,6 +1079,7 @@ export class Vt {
             cell = cell & ~CP | COMBINED
           } else cell = code | W1
           d[at] = cell & ~(3 << 22) | width << 22
+          line.gen = ++GEN
         }
         continue
       }
@@ -1312,24 +1319,24 @@ export class Vt {
       case 0x47: case 0x60: this.setCursor((p0 || 1) - 1, b.y); break // G CHA, ` HPA
       case 0x48: case 0x66: this.setCursor(this.plen >= 2 ? (p[1] || 1) - 1 : 0, (p0 || 1) - 1); break // H CUP, f HVP
       case 0x49: // I CHT
-        if (b.x < this.cols) for (let n = p0 || 1; n--;) b.x = b.nextStop()
+        if (b.x < this.cols) for (let n = Math.min(p0 || 1, this.cols); n--;) b.x = b.nextStop()
         break
       case 0x4a: case 0x3f4a: this.eraseInDisplay(p0); break // J ED, ?J DECSED
       case 0x4b: case 0x3f4b: this.eraseInLine(p0); break // K EL, ?K DECSEL
-      case 0x4c: this.insertLines(p0 || 1); break // L IL
-      case 0x4d: this.deleteLines(p0 || 1); break // M DL
+      case 0x4c: this.insertLines(Math.min(p0 || 1, this.rows)); break // L IL
+      case 0x4d: this.deleteLines(Math.min(p0 || 1, this.rows)); break // M DL
       case 0x50: // P DCH
         this.restrictCursor()
         b.row(b.y).deleteCells(b.x, p0 || 1, this.eraseBg)
         break
       case 0x53: // S SU
-        for (let n = p0 || 1; n--;) {
+        for (let n = Math.min(p0 || 1, this.rows); n--;) {
           const line = b.lines.remove(b.ybase + b.scrollTop)
           b.lines.insert(b.ybase + b.scrollBottom, blank(line, this.cols, this.eraseBg))
         }
         break
       case 0x54: // T SD
-        for (let n = p0 || 1; n--;) {
+        for (let n = Math.min(p0 || 1, this.rows); n--;) {
           const line = b.lines.remove(b.ybase + b.scrollBottom)
           b.lines.insert(b.ybase + b.scrollTop, blank(line, this.cols, 0))
         }
@@ -1339,7 +1346,7 @@ export class Vt {
         b.row(b.y).replaceCells(b.x, b.x + (p0 || 1), this.eraseBg)
         break
       case 0x5a: // Z CBT
-        if (b.x < this.cols) for (let n = p0 || 1; n--;) b.x = b.prevStop()
+        if (b.x < this.cols) for (let n = Math.min(p0 || 1, this.cols); n--;) b.x = b.prevStop()
         break
       case 0x62: this.repeat(p0 || 1); break // b REP
       case 0x63: // c DA1
@@ -1375,13 +1382,10 @@ export class Vt {
       case 0x2170: this.softReset(); break // !p DECSTR
       case 0x2071: { // SP q DECSCUSR
         const style = this.plen === 0 ? 1 : p0
-        if (style === 0) this.cursorStyle = this.cursorBlink = undefined
-        else {
-          if (style <= 2) this.cursorStyle = 'block'
-          else if (style <= 4) this.cursorStyle = 'underline'
-          else if (style <= 6) this.cursorStyle = 'bar'
-          this.cursorBlink = style % 2 === 1
-        }
+        if (style === 0) this.cursorStyle = undefined
+        else if (style <= 2) this.cursorStyle = 'block'
+        else if (style <= 4) this.cursorStyle = 'underline'
+        else if (style <= 6) this.cursorStyle = 'bar'
         break
       }
       case 0x72: { // r DECSTBM
@@ -1416,7 +1420,7 @@ export class Vt {
     } else if (mode === 1) {
       b.row(b.y).replaceCells(0, b.x + 1, bg)
       b.row(b.y).isWrapped = false
-      // xterm unwraps line y + 1 counted from the scrollback's top, not the screen's
+      // erased to the row's end: the next row no longer continues it
       if (b.x + 1 >= this.cols && b.y + 1 < this.rows) b.row(b.y + 1).isWrapped = false
       for (let y = b.y; y--;) this.resetLine(y, bg)
     } else if (mode === 2) {
@@ -1545,7 +1549,7 @@ export class Vt {
     this.insert = this.appCursor = this.appKeypad = this.bracketedPaste = this.origin = false
     this.reverseWrap = this.sendFocus = this.sync = false
     this.wrap = true
-    this.cursorStyle = this.cursorBlink = undefined
+    this.cursorStyle = undefined
     this.charsets = [null, null, null, null]
     this.glevel = 0
     this.charset = null
@@ -1634,7 +1638,7 @@ export class Vt {
       else if (n === 38 || n === 48 || n === 58) i += this.extractColor(i)
       else if (n === 53) this.bg |= OVERLINE
       else if (n === 55) this.bg &= ~OVERLINE
-      else if (n === 59) this.setExt(this.ext.ul, 0x3ffffff, this.ext.url) // xterm's -1: white, not the fg
+      else if (n === 59) this.setExt(this.ext.ul, 0x3ffffff, this.ext.url) // the underline draws white, not in the text's color
     }
   }
   sgr0() {
@@ -1709,7 +1713,7 @@ export class Vt {
     if (d.sink) d.sink.end(ok)
     else if (d.parts && ok && d.length <= LIMIT) this.requestStatus(d.parts.join(''))
   }
-  /** DECRQSS: the settings xterm reports; anything else is invalid. */
+  /** DECRQSS: five settings are reported; anything else is invalid. */
   requestStatus(data) {
     const b = this.buffer
     const ok = { '"q': '0"q', '"p': '61;1"p', r: `${b.scrollTop + 1};${b.scrollBottom + 1}r`, m: '0m', ' q': `${2 - (this.blink ? 1 : 0)} q` }[data]
@@ -1744,10 +1748,7 @@ export class Vt {
     if (!o || o.state === 3 || !ok || o.length > (o.id === 1337 ? IIP_LIMIT : LIMIT)) return
     const data = o.parts.join('')
     switch (o.id) {
-      case 0: case 2:
-        this.title = data
-        this.h.title?.(data)
-        break
+      case 0: case 2: this.h.title?.(data); break
       case 1: case 4: case 104: case 110: case 111: case 112: break
       case 8: this.hyperlink(data); break
       case 10: case 11: case 12: {
@@ -1806,8 +1807,8 @@ export class Vt {
   /** The uri of link `id`, as a cell's `getLink` gives it. */
   linkUri(id) { return this.links.get(id)?.uri }
 
-  /** Covers `cols` x `rows` cells from the cursor with the tiles of picture `id`, as xterm's image addon did:
-   * the cursor ends on the picture's last row, in the column it started. */
+  /** Covers `cols` x `rows` cells from the cursor with the tiles of picture `id`. The cursor ends on the
+   * picture's last row, in the column it started. */
   picture(id, cols, rows) {
     const b = this.buffer
     const x0 = Math.min(b.x, this.cols - 1)
@@ -1820,6 +1821,7 @@ export class Vt {
         line.d[at + x] |= EXT
         ;(line.ext ??= new Map()).set(x, new Ext(old.ul, old.ulc, old.url, id, r * cols + c))
       }
+      line.gen = ++GEN
       if (r < rows - 1) this.lineFeed()
       b.x = x0
     }

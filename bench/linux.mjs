@@ -8,7 +8,7 @@
 //   idle      CPU, as % of one core, over 10 s with nothing happening (5 s with --quick)
 //   typing    CPU over 10 s of typing a key every 100 ms (6 s with --quick)
 //   memory    MB of PSS once idle, and again after the flood fills the scrollback
-//   resize full  resize again, once the flood has filled the scrollback, which xterm reflows each time
+//   resize full  resize again, once the flood has filled the scrollback, which the terminal reflows each time
 //   diff      with --repo: ms from asking for the diff of every change to the frame that shows it, and the CPU
 //             seconds nook spends in the 5 s after (3 s with --quick), colors included
 //   history   with --repo: ms from asking for the history to the frame that shows its commits; - for a build
@@ -239,7 +239,7 @@ async function session(app) {
   await sleep(300)
   const scrolls = app.since(from, 'scroll')
   Object.assign(r, { scroll: median(scrolls), scrollP95: quantile(scrolls, 0.95) })
-  // With the scrollback full, xterm reflows all of it on each resize.
+  // With the scrollback full, the terminal reflows all of it on each resize.
   Object.assign(r, await resizes(app, win, P.resizesFull, 'resizeFull'), { marks })
   if (repo) {
     xdotool('windowsize', '--sync', win, String(W), String(H))
@@ -259,7 +259,7 @@ async function session(app) {
 }
 
 /** Typing and resizing in a stand-in for Claude's fullscreen view, bench/tui.mjs, which redraws the whole
- * screen for each key, so the composer paints its card and xterm patches rows as they do under Claude. */
+ * screen for each key, so the composer paints its card and the terminal patches rows as they do under Claude. */
 async function tuiSession(app) {
   await sleep(P.settle)
   const win = xdotool('search', '--sync', '--onlyvisible', '--pid', String(app.child.pid)).split('\n')[0]
