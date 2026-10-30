@@ -82,12 +82,17 @@ fn mods(p: u32) -> u32 {
     (if m & 1 != 0 { SHIFT } else { 0 }) | (if m & 2 != 0 { LALT } else { 0 }) | (if m & 4 != 0 { LCTRL } else { 0 })
 }
 
-/// The sequence at the start of `s`, if it is one keys.js sends: (length, vk, ch, state). A vk of 0 is a
-/// sequence that makes no key, such as a focus report or a paste's brackets.
+/// The sequence at the start of `s`, if it is one the terminal sends: (length, vk, ch, state). A vk of 0 is a
+/// sequence that makes no key, such as a focus report, a mouse report, or a paste's brackets.
 fn sequence(s: &[u16]) -> Option<(usize, u16, u16, u32)> {
     let ss3 = s.get(1) == Some(&(b'O' as u16));
     if s.first() != Some(&0x1b) || s.get(1) != Some(&(b'[' as u16)) && !ss3 {
         return None;
+    }
+    if !ss3 && s.get(2) == Some(&(b'<' as u16)) {
+        // An SGR mouse report, which a program that left mouse tracking on makes the terminal send.
+        let end = 3 + s[3..].iter().take_while(|&&c| c == 0x3b || (0x30..=0x39).contains(&c)).count();
+        return matches!(s.get(end), Some(&0x4d | &0x6d)).then_some((end + 1, 0, 0, 0)); // M, m
     }
     let mut i = 2;
     let mut params = [0u32; 4];
