@@ -19,9 +19,8 @@ const TOUCHED = 200 // the most files a report lists
 const sizes = new Map() // a pasted image's path -> its size, as a promise
 const MADE = 3 // the most pictures shown under a command that wrote them
 const made = new Map() // a Bash call's tool_use_id -> the pictures it wrote, as a promise of [path, size]
-// A reply's mermaid blocks, each closed, and its SVG blocks, whole: at any indent, as in a list item
-const MERMAID = /^([ \t]*)```mermaid[^\n]*\n([\s\S]*?)\n[ \t]*```[ \t]*$/gm
-const SVG = /^([ \t]*)```(?:svg|xml|html)?[ \t]*\n((?:[ \t]*<\?xml[^\n]*\n)?[ \t]*<svg\b[\s\S]*?<\/svg>)[ \t]*\n[ \t]*```[ \t]*$/gm
+const ITEM = /(?:[-*+]|\d{1,9}[.)])(?: {1,4}|\t|$)/my // a list item's marker and the space after it
+const SVG = /^(?:[ \t]*<\?xml[^\n]*\n)?[ \t]*<svg\b[\s\S]*<\/svg>\s*$/ // a fenced block's code that is one SVG, whole
 const SVG_ROWS = 8 // the fewest rows a reply's SVG takes: it scales, and an icon's own size is a few cells
 const MATH = /^[ \t]*(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])[ \t]*$/gm // a reply's display formulas, $$ … $$ or \[ … \], on lines of their own
 const MATH_ROWS = 20 // the tallest formula, in rows
@@ -749,6 +748,47 @@ export function plainInline(text) {
     .map((part, i) => (i % 2 ? part : part.replace(INLINE, (m, tex) => plainMath(tex) ?? m))).join('')
 }
 
+/** A reply's fenced code blocks, in order: [at, end, indent, info, code], from its opening fence's line to the end
+ * of its closing fence's, the opening fence's indent, and the lines between, or null code for a block still
+ * streaming in, which runs to the end. As in CommonMark, a backtick fence's info holds no backtick, a closing fence
+ * is at least as long as its opening one, and a fence 4 columns deeper than the text above it, or than the text of
+ * the list item it's in, is an indented code block's text. */
+function codeBlocks(text) {
+  const out = [], ins = [], tops = [] // the lines above, each less indented than the next: indents, and their text's starts
+  let open = null // the block in progress: [at, indent, fence character, fence length, info, its code's start]
+  for (let at = 0, end; at < text.length; at = end + 1) {
+    end = text.indexOf('\n', at)
+    if (end < 0) end = text.length
+    let i = at, c
+    while ((c = text.charCodeAt(i)) === 32 || c === 9) i++
+    if (i === end) continue
+    const n = i - at
+    let j = i
+    if (c === 96 || c === 126) while (text.charCodeAt(j) === c) j++
+    if (open) {
+      if (c === open[2] && j - i >= open[3] && !text.slice(j, end).trim()) {
+        out.push([open[0], end, open[1], open[4], text.slice(open[5], at - 1)])
+        open = null
+      }
+      continue
+    }
+    while (ins.length && ins[ins.length - 1] >= n) { ins.pop(); tops.pop() }
+    const info = j - i >= 3 ? text.slice(j, end) : null
+    if (info !== null && !(c === 96 && info.includes('`')) && (n < 4 || n < textColumn(text, ins, tops) + 4)) open = [at, n, c, j - i, info.trim(), end + 1]
+    else { ins.push(n); tops.push(i) }
+  }
+  if (open) out.push([open[0], text.length, open[1], open[4], null])
+  return out
+}
+
+/** The column the text of the last line in `ins`/`tops` starts at, past a list item's marker; 0 with no line. */
+function textColumn(text, ins, tops) {
+  const k = ins.length - 1
+  if (k < 0) return 0
+  ITEM.lastIndex = tops[k]
+  return ITEM.test(text) ? ITEM.lastIndex - tops[k] + ins[k] : ins[k]
+}
+
 /** A fenced block's lines with its fence's indent, `n` columns, taken off, as far as each line has it. */
 const dedent = (code, n) => (n ? code.split('\n').map(l => l.slice(Math.min(n, l.length - l.trimStart().length))).join('\n') : code)
 
@@ -756,15 +796,19 @@ const dedent = (code, n) => (n ? code.split('\n').map(l => l.slice(Math.min(n, l
  * where kind is `mermaid`, `math`, or `svg`. One inside another code block stays in the text, and an SVG block
  * stays at the end of the text before its picture, so its source still shows. */
 export function splitBlocks(text) {
-  const code = []
-  for (const m of text.matchAll(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*\1[ \t]*$|(?![\s\S]))/gm)) code.push([m.index, m.index + m[0].length])
-  const fenced = kind => m => [m.index, m[0].length, kind, dedent(m[2], m[1].length)]
-  const found = [
-    ...Array.from(text.matchAll(MERMAID), fenced('mermaid')),
-    ...Array.from(text.matchAll(SVG), fenced('svg')),
-  ].filter(([at]) => !code.some(([a, b]) => at > a && at < b)) // a block's own fence starts its code
-  found.push(...Array.from(text.matchAll(MATH), m => [m.index, m[0].length, 'math', (m[1] ?? m[2]).trim()])
-    .filter(([at, , , source]) => source && !code.some(([a, b]) => at >= a && at < b)))
+  const blocks = codeBlocks(text), found = []
+  for (const [at, end, indent, info, code] of blocks) {
+    if (code === null) continue
+    const source = dedent(code, indent)
+    if (info.split(/\s/, 1)[0] === 'mermaid') { if (source.trim()) found.push([at, end - at, 'mermaid', source]) }
+    else if (/^(?:svg|xml|html)?$/.test(info) && SVG.test(source)) found.push([at, end - at, 'svg', source.trimEnd()])
+  }
+  let k = 0 // the first block that ends past the formula
+  for (const m of text.matchAll(MATH)) {
+    while (k < blocks.length && blocks[k][1] <= m.index) k++
+    const source = (m[1] ?? m[2]).trim()
+    if (source && !(k < blocks.length && blocks[k][0] <= m.index)) found.push([m.index, m[0].length, 'math', source])
+  }
   found.sort((a, b) => a[0] - b[0])
   const pieces = []
   let at = 0
@@ -784,11 +828,11 @@ export function splitBlocks(text) {
 export function splitCode(text) {
   const pieces = []
   let at = 0
-  for (const m of text.matchAll(/^([ \t]*)(`{3,}|~{3,})([^\n]*)\n([\s\S]*?)\n?^[ \t]*\2[ \t]*$/gm)) {
-    const code = dedent(m[4], m[1].length)
+  for (const [, end, indent, info, block] of codeBlocks(text)) {
+    const code = block === null ? '' : dedent(block, indent)
     if (!code.trim()) continue
-    pieces.push(text.slice(at, m.index + m[0].length).trim(), { code, lang: m[3].trim().split(/\s/)[0].toLowerCase() })
-    at = m.index + m[0].length
+    pieces.push(text.slice(at, end).trim(), { code, lang: info.split(/\s/, 1)[0].toLowerCase() })
+    at = end
   }
   pieces.push(at ? text.slice(at).trim() : text)
   return pieces
