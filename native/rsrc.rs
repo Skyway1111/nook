@@ -1,8 +1,22 @@
-//! The exe's resources, written by a build script as a COFF object that GNU ld and MSVC link.exe both
-//! take: icon group 32512 from an .ico, VERSIONINFO, and a manifest for Common Controls 6 and
-//! per-monitor DPI.
+//! For nook's and setup's build scripts: the build's identity, and the exe's resources, written as a COFF
+//! object that GNU ld and MSVC link.exe both take: icon group 32512 from an .ico, VERSIONINFO, and a
+//! manifest for Common Controls 6 and per-monitor DPI.
 
 const MANIFEST: &str = r#"<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"><dependency><dependentAssembly><assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/></dependentAssembly></dependency><application xmlns="urn:schemas-microsoft-com:asm.v3"><windowsSettings><dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness></windowsSettings></application></assembly>"#;
+
+/// The build's identity, `NOOK_NAME` and `NOOK_ID`, passed on to the crate (nook's own by default); returns the
+/// name. Each names a folder or registry key, never a path.
+pub fn identity() -> String {
+    let var = |k: &str, default: &str| {
+        println!("cargo:rerun-if-env-changed={k}");
+        let v = std::env::var(k).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.into());
+        assert!(!v.contains(['\\', '/']), "{k} names a folder or key, not a path");
+        println!("cargo:rustc-env={k}={v}");
+        v
+    };
+    var("NOOK_ID", "dev.nook.app");
+    var("NOOK_NAME", "nook")
+}
 
 /// Writes `$OUT_DIR/rsrc.o` and links it into the package's binaries.
 pub fn link(ico: &str, name: &str, version: &str) {
