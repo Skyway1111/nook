@@ -1,14 +1,16 @@
 //! A PDF's first page as a PNG, for its picture in Claude's transcript. The OS draws it: Windows.Data.Pdf on a
 //! software Direct3D device, encoded by WIC, or on Linux poppler-glib and cairo, loaded with `dlopen`, so a
-//! system without poppler draws nothing. Neither runs the file's scripts.
+//! system without poppler draws nothing. Neither runs the file's scripts. Both draw its annotations and form
+//! fields, as a viewer does.
 use tauri::ipc::Response;
 
-/// The first page of the PDF at `path`, fit inside `width` by `height` pixels on white, as PNG bytes.
+/// The first page of the PDF at `path`, fit inside `width` by `height` pixels and 4096 on its longer side, on
+/// white, as PNG bytes.
 #[tauri::command(async)]
 pub fn pdf_page(path: String, width: u32, height: u32) -> Result<Response, String> {
     os::first_page(&path, |w, h| {
-        let s = (width as f64 / w).min(height as f64 / h);
-        let px = |v: f64| (v * s).round().clamp(1., 4096.) as u32;
+        let s = (width as f64 / w).min(height as f64 / h).min(4096. / w.max(h));
+        let px = |v: f64| (v * s).round().max(1.) as u32;
         (px(w), px(h))
     })
     .map(Response::new)
@@ -41,7 +43,7 @@ mod os {
     const WIC_FACTORY_CLASS: Guid = guid(0xcacaf262_9370_4615_a13b_9f5539da4c0a);
     const WIC_FACTORY: Guid = guid(0xec5ec8a9_c395_4314_9c77_54d7a935ff70);
     const PNG: Guid = guid(0x1b7cfaf4_713f_473c_bbcd_6137425faeaf);
-    const BGRA: Guid = guid(0x6fddc324_4e03_4bfe_b185_3d77768dc90f);
+    const BGR: Guid = guid(0x6fddc324_4e03_4bfe_b185_3d77768dc90c);
     const E_POINTER: i32 = 0x80004003_u32 as i32;
     const E_TIMEOUT: i32 = 0x800705b4_u32 as i32;
 
@@ -138,7 +140,7 @@ mod os {
                 loop {
                     match info.get::<i32>(7)? {
                         1 => return Ok(()),
-                        0 if Instant::now() < end => sleep(Duration::from_millis(1)),
+                        0 if Instant::now() < end => sleep(Duration::from_micros(100)),
                         0 => {
                             info.at::<unsafe extern "system" fn(P) -> i32>(9)(info.0); // Cancel
                             return Err(E_TIMEOUT);
@@ -191,9 +193,20 @@ mod os {
         render(path, fit).map_err(|hr| format!("Windows.Data.Pdf can't draw {path}: {hr:#010x}"))
     }
 
+    /// `path` in full behind `\\?\`, so a path past MAX_PATH opens too, as std's own file calls do.
+    fn verbatim(path: &str) -> Option<Vec<u16>> {
+        let full = std::path::absolute(path).ok()?.into_os_string().into_string().ok()?;
+        let full = match full.strip_prefix(r"\\") {
+            None => format!(r"\\?\{full}"),
+            Some(share) if !share.starts_with(['?', '.']) => format!(r"\\?\UNC\{share}"),
+            _ => full,
+        };
+        Some(full.encode_utf16().chain([0]).collect())
+    }
+
     fn render(path: &str, fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, i32> {
         let &(create_device, create_renderer) = FNS.get_or_init(load).as_ref().ok_or(0x8007007e_u32 as i32)?; // ERROR_MOD_NOT_FOUND
-        let path: Vec<u16> = path.encode_utf16().chain([0]).collect();
+        let path = verbatim(path).ok_or(0x800700a1_u32 as i32)?; // ERROR_BAD_PATHNAME
         let class: Vec<u16> = "Windows.Data.Pdf.PdfDocument".encode_utf16().chain([0]).collect();
         unsafe {
             let mut file = null_mut();
@@ -209,8 +222,7 @@ mod os {
             let page = doc.make(6, 0u32)?; // GetPage
             let [w, h] = page.get::<[f32; 2]>(10)?; // Size, rotation applied
             let (w, h) = fit(w as f64, h as f64);
-            // WARP, the software device. Windows.Data.Pdf's own renderer starts the GPU's driver in this process,
-            // which takes 130 ms and keeps 50 MB.
+            // WARP, the software device. Windows.Data.Pdf's own renderer would start the GPU's driver in this process.
             let (mut device, mut context) = (null_mut(), null_mut());
             ok(create_device(null_mut(), 5, null_mut(), 0x20, null(), 0, 7, &mut device, null_mut(), &mut context))?; // WARP, BGRA
             let (device, context) = (Com::new(device)?, Com::new(context)?);
@@ -238,8 +250,8 @@ mod os {
         }
     }
 
-    /// `height` rows of BGRA pixels, `pitch` bytes apart, as a PNG.
-    unsafe fn encode(pixels: *mut u8, pitch: u32, width: u32, height: u32) -> Result<Vec<u8>, i32> {
+    /// `height` rows of BGRA pixels, `pitch` bytes apart, as an RGB PNG: the page is opaque.
+    unsafe fn encode(pixels: *const u8, pitch: u32, width: u32, height: u32) -> Result<Vec<u8>, i32> {
         unsafe {
             let (mut factory, mut encoder, mut frame) = (null_mut(), null_mut(), null_mut());
             ok(CoCreateInstance(&WIC_FACTORY_CLASS, null_mut(), 1, &WIC_FACTORY, &mut factory))?; // in-process
@@ -252,9 +264,14 @@ mod os {
             let frame = Com::new(frame)?;
             frame.set(3, null_mut::<c_void>())?; // Initialize
             ok(frame.at::<unsafe extern "system" fn(P, u32, u32) -> i32>(4)(frame.0, width, height))?; // SetSize
-            let mut format = BGRA;
+            let mut format = BGR;
             frame.set(6, &mut format as *mut Guid)?; // SetPixelFormat, which PNG takes as is
-            ok(frame.at::<unsafe extern "system" fn(P, u32, u32, u32, *mut u8) -> i32>(10)(frame.0, height, pitch, pitch * height, pixels))?; // WritePixels
+            let mut bgr = vec![[0u8; 3]; width as usize * height as usize];
+            for (y, row) in bgr.chunks_exact_mut(width as usize).enumerate() {
+                let bgra = std::slice::from_raw_parts(pixels.add(y * pitch as usize).cast::<[u8; 4]>(), width as usize);
+                row.iter_mut().zip(bgra).for_each(|(d, &[b, g, r, _])| *d = [b, g, r]);
+            }
+            ok(frame.at::<unsafe extern "system" fn(P, u32, u32, u32, *const [u8; 3]) -> i32>(10)(frame.0, height, width * 3, width * height * 3, bgr.as_ptr()))?; // WritePixels
             frame.call(12)?; // Commit
             encoder.call(11)?; // Commit
             let seek = memory.at::<unsafe extern "system" fn(P, i64, u32, *mut u64) -> i32>(5);
@@ -276,7 +293,7 @@ mod os {
     use std::{
         ffi::{c_char, c_int, c_uint, c_void, CStr, CString},
         ptr::{null, null_mut},
-        sync::OnceLock,
+        sync::{Mutex, OnceLock},
     };
 
     type P = *mut c_void;
@@ -305,20 +322,22 @@ mod os {
         surface_destroy: unsafe extern "C" fn(P),
     }
 
-    static FNS: OnceLock<Option<Fns>> = OnceLock::new();
+    /// Locked for a whole render: every poppler document draws its fonts through one FreeType library, which
+    /// takes one thread at a time.
+    static FNS: OnceLock<Option<Mutex<Fns>>> = OnceLock::new();
 
     unsafe fn sym<F>(lib: P, name: &CStr) -> Option<F> {
         let f = unsafe { dlsym(lib, name.as_ptr()) };
         (!f.is_null()).then(|| unsafe { std::mem::transmute_copy::<P, F>(&f) })
     }
 
-    fn load() -> Option<Fns> {
+    fn load() -> Option<Mutex<Fns>> {
         unsafe {
             let lib = dlopen(c"libpoppler-glib.so.8".as_ptr(), 2); // RTLD_NOW
             if lib.is_null() {
                 return None;
             }
-            Some(Fns {
+            Some(Mutex::new(Fns {
                 filename_to_uri: sym(lib, c"g_filename_to_uri")?,
                 free: sym(lib, c"g_free")?,
                 object_unref: sym(lib, c"g_object_unref")?,
@@ -334,7 +353,7 @@ mod os {
                 destroy: sym(lib, c"cairo_destroy")?,
                 write_to_png_stream: sym(lib, c"cairo_surface_write_to_png_stream")?,
                 surface_destroy: sym(lib, c"cairo_surface_destroy")?,
-            })
+            }))
         }
     }
 
@@ -345,7 +364,7 @@ mod os {
 
     /// The first page of the PDF at `path` as PNG bytes, at the pixel size `fit` picks for the page's size.
     pub fn first_page(path: &str, fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, String> {
-        let f = FNS.get_or_init(load).as_ref().ok_or("poppler-glib isn't installed")?;
+        let f = FNS.get_or_init(load).as_ref().ok_or("poppler-glib isn't installed")?.lock().unwrap_or_else(|e| e.into_inner());
         let path = CString::new(path).map_err(|e| e.to_string())?;
         let mut png = Vec::new();
         unsafe {
