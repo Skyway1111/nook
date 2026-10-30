@@ -155,8 +155,8 @@ function trimBlank(s) {
 }
 
 const isPara = t => t && (t.t === 'paragraph' || t.t === 'text')
-function append(last, raw, text) {
-  last.raw += (last.raw.endsWith('\n') ? '' : '\n') + raw
+/** Continues paragraph `last` with `text`. */
+function append(last, text) {
   last.text += '\n' + text
   queue[queue.length - 1].src = last.text
 }
@@ -197,7 +197,9 @@ function lex(s, tokens, clipped = false) {
     const last = tokens[tokens.length - 1]
     const e = blanks(s, i)
     if (e > i) {
-      if (e - i === 1 && last) last.raw += '\n'
+      if (e - i === 1 && last) {
+        if (last.raw !== undefined) last.raw += '\n'
+      }
       else tokens.push({ t: 'space', raw: s.slice(i, e) })
       i = e
       continue
@@ -209,8 +211,8 @@ function lex(s, tokens, clipped = false) {
       const raw = trimBlank(s.slice(i, codeEnd(s, i)))
       const text = raw.replace(/^(?: {0,3}\t| {1,4})/gm, '')
       i += raw.length
-      if (isPara(last)) append(last, raw, text)
-      else tokens.push({ t: 'code', raw, text })
+      if (isPara(last)) append(last, text)
+      else tokens.push({ t: 'code', text })
       continue
     }
     if (c === 96 || c === 126) {
@@ -218,7 +220,7 @@ function lex(s, tokens, clipped = false) {
       if ((m = B_FENCES.exec(s))) {
         const indent = m[1], text = m[4] || ''
         tokens.push({
-          t: 'code', raw: m[0], lang: m[3] ? m[3].trim().replace(ANY_PUNCT, '$1') : m[3],
+          t: 'code', lang: m[3] ? m[3].trim().replace(ANY_PUNCT, '$1') : m[3],
           text: indent && m[2][0] === '`' ? text.split('\n').map(l => {
             const w = /^\s+/.exec(l)
             return w ? l.slice(Math.min(w[0].length, indent.length)) : l
@@ -235,18 +237,16 @@ function lex(s, tokens, clipped = false) {
           const t = rtrim(text, '#')
           if (!t || /[ \t]$/.test(t)) text = t.trim()
         }
-        const raw = rtrim(m[0], '\n')
-        tokens.push({ t: 'heading', raw, depth: m[1].length, e: later(text) })
-        i += raw.length
+        tokens.push({ t: 'heading', depth: m[1].length, e: later(text) })
+        i += rtrim(m[0], '\n').length
         continue
       }
     }
     if (c === 45 || c === 95 || c === 42) {
       B_HR.lastIndex = i
       if ((m = B_HR.exec(s))) {
-        const raw = rtrim(m[0], '\n')
-        tokens.push({ t: 'hr', raw })
-        i += raw.length
+        tokens.push({ t: 'hr' })
+        i += rtrim(m[0], '\n').length
         continue
       }
     }
@@ -269,9 +269,9 @@ function lex(s, tokens, clipped = false) {
     if (c === 60) {
       B_HTML.lastIndex = i
       if ((m = B_HTML.exec(s))) {
-        const raw = trimBlank(m[0])
-        tokens.push({ t: 'html', raw })
-        i += raw.length
+        const text = trimBlank(m[0])
+        tokens.push({ t: 'html', text })
+        i += text.length
         continue
       }
     }
@@ -280,7 +280,7 @@ function lex(s, tokens, clipped = false) {
       if ((m = B_DEF.exec(s))) {
         const raw = rtrim(m[0], '\n')
         i += raw.length
-        if (isPara(last)) append(last, raw, raw)
+        if (isPara(last)) append(last, raw)
         else {
           const tag = label(m[1]).replace(/\s+/g, ' ')
           if (!links[tag]) {
@@ -288,7 +288,7 @@ function lex(s, tokens, clipped = false) {
               href: m[2] ? m[2].replace(/^<(.*)>$/, '$1').replace(ANY_PUNCT, '$1') : '',
               title: m[3] ? m[3].slice(1, -1).replace(ANY_PUNCT, '$1') : m[3],
             }
-            tokens.push({ t: 'def', raw })
+            tokens.push({ t: 'def' })
           }
         }
         continue
@@ -301,30 +301,23 @@ function lex(s, tokens, clipped = false) {
       continue
     }
     if (i >= noSetext && (noSetext = setextStop(s, i)) < 0 && (B_LHEADING.lastIndex = i, m = B_LHEADING.exec(s))) {
-      const raw = rtrim(m[0], '\n')
-      tokens.push({ t: 'heading', raw, depth: m[2][0] === '=' ? 1 : 2, e: later(m[1].trim()) })
-      i += raw.length
+      tokens.push({ t: 'heading', depth: m[2][0] === '=' ? 1 : 2, e: later(m[1].trim()) })
+      i += rtrim(m[0], '\n').length
       continue
     }
     if (top) {
       B_PARA.lastIndex = i
       const raw = B_PARA.exec(s)[0]
       i += raw.length
-      if (clipped && last?.t === 'paragraph') {
-        last.raw += (last.raw.endsWith('\n') ? '' : '\n') + raw
-        last.text += '\n' + raw
-        queue[queue.length - 1].src = last.text
-      } else tokens.push({ t: 'paragraph', raw, text: raw, e: later(raw) })
+      if (clipped && last?.t === 'paragraph') append(last, raw)
+      else tokens.push({ t: 'paragraph', text: raw, e: later(raw) })
       clipped = false
       continue
     }
     const raw = lineAt(s, i)
     i += raw.length
-    if (last?.t === 'text') {
-      last.raw += (last.raw.endsWith('\n') ? '' : '\n') + raw
-      last.text += '\n' + raw
-      queue[queue.length - 1].src = last.text
-    } else tokens.push({ t: 'text', raw, text: raw, e: later(raw) })
+    if (last?.t === 'text') append(last, raw)
+    else tokens.push({ t: 'text', text: raw, e: later(raw) })
   }
   top = true
   return tokens
@@ -334,7 +327,7 @@ function blockquote(s, i) {
   B_QUOTE.lastIndex = i
   const cap = B_QUOTE.exec(s)
   if (!cap) return
-  let lines = rtrim(cap[0], '\n').split('\n'), raw = '', text = ''
+  let lines = rtrim(cap[0], '\n').split('\n'), raw = ''
   const tokens = []
   while (lines.length > 0) {
     let inQuote = false, j
@@ -350,7 +343,6 @@ function blockquote(s, i) {
     const curRaw = cur.join('\n')
     const curText = curRaw.replace(/\n {0,3}((?:=+|-+) *)(?=\n|$)/g, '\n    $1').replace(/^ {0,3}>[ \t]?/gm, '')
     raw = raw ? `${raw}\n${curRaw}` : curRaw
-    text = text ? `${text}\n${curText}` : curText
     const was = top
     top = true
     lex(curText, tokens, true)
@@ -366,7 +358,6 @@ function blockquote(s, i) {
       const count = left ? left.split('\n').length : 0
       const used = count ? lines.slice(0, -count) : lines
       if (used.length > 0) raw = `${raw}\n${used.join('\n')}`
-      text = text.substring(0, text.length - last.text.length) + t.text
       break
     }
     if (last?.t === 'list') {
@@ -374,11 +365,10 @@ function blockquote(s, i) {
       const t = list(next, 0)
       tokens[tokens.length - 1] = t
       raw = raw.substring(0, raw.length - last.raw.length) + t.raw
-      text = text.substring(0, text.length - last.raw.length) + t.raw
       lines = next.substring(t.raw.length).split('\n')
     }
   }
-  return { t: 'blockquote', raw, tokens, text }
+  return { t: 'blockquote', raw, tokens }
 }
 
 const expandTabs = (s, col) => {
@@ -586,7 +576,7 @@ function render(tokens) {
         break
       }
       case 'checkbox': out += box(t.checked); break
-      case 'html': out += t.raw; break
+      case 'html': out += t.text; break
       case 'paragraph': out += `<p>${t.check === undefined ? '' : box(t.check)}${t.e.html}</p>\n`; break
       case 'text': out += t.e.html; break
     }
