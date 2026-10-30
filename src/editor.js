@@ -74,9 +74,10 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
 
   // ---- Metrics, measured while the editor shows; a hidden one is never measured
   let lh = 21, cw = 8, th = 16, padTop = 16, padBottom = 24, padLeft = 6, padRight = 2, lineLeft = 0, textWidth = 600
-  // Unwrapped text wider than MAX_W device pixels scrolls `scale` times faster than its scrollbar: every row draws
-  // `shift` pixels left of its place, and column 0 sits at `origin`.
-  let scale = 1, shift = 0, origin = 0
+  // Text wider or taller than MAX_W device pixels scrolls `scaleX` or `scaleY` times faster than its scrollbar, so
+  // all of it can show: every row draws `shiftX` pixels left of its place and `shiftY` above it. Column 0 sits at
+  // `x0` and line 0's top at `y0`.
+  let scaleX = 1, shiftX = 0, x0 = 0, scaleY = 1, shiftY = 0, y0 = 0
   let metrics = true // measure again before the next draw
   let leftDirty = true // the gutters changed width
   function measure() {
@@ -87,6 +88,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     th = t.height
     const cs = getComputedStyle(content)
     padTop = parseFloat(cs.paddingTop)
+    y0 = padTop - shiftY
     padBottom = parseFloat(cs.paddingBottom)
     metrics = false
     leftDirty = true
@@ -404,16 +406,16 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     // the viewport.
     let s = 0, e = text.length, per = 0
     if (!wrap && e > LONG) {
-      const c0 = Math.max(0, (scroller.scrollLeft + shift - lineLeft) / cw)
+      const c0 = Math.max(0, (scroller.scrollLeft + shiftX - lineLeft) / cw)
       s = Math.max(0, Math.floor(offsetAt(text, c0) / LONG) * LONG - LONG)
       e = Math.min(text.length, s + 3 * LONG + Math.ceil(scroller.clientWidth / cw))
     } else if (wrap && e > HUGE) {
       per = perRow()
-      const block = ROWS * per, at = Math.max(0, scroller.scrollTop - padTop - top(i)) / lh * per
+      const block = ROWS * per, at = Math.max(0, scroller.scrollTop - y0 - top(i)) / lh * per
       s = Math.max(0, Math.floor(at / block) * block - block)
       e = Math.min(text.length, s + 3 * block + Math.ceil(scroller.clientHeight / lh) * per)
     }
-    const indent = wrap ? 0 : column(text, s) * cw - shift
+    const indent = wrap ? 0 : column(text, s) * cw - shiftX
     if (r.indent !== indent) r.line.style.textIndent = (r.indent = indent) ? `${indent}px` : ''
     if (r.text === text && r.state === st && r.next === next && r.shut === shut && r.offset === s && r.end === e &&
       r.per === per) return
@@ -530,11 +532,13 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
         want = null
         reveal(pos, center)
       }
-      shift = wrap ? 0 : scroller.scrollLeft * (scale - 1)
-      origin = lineLeft - shift
+      shiftX = wrap ? 0 : scroller.scrollLeft * (scaleX - 1)
+      x0 = lineLeft - shiftX
+      shiftY = scroller.scrollTop * (scaleY - 1)
+      y0 = padTop - shiftY
       const st = scroller.scrollTop, h = scroller.clientHeight
       const margin = Math.max(h / 2, 200)
-      const a = lineAtY(st - padTop - margin), b = lineAtY(st - padTop + h + margin)
+      const a = lineAtY(st - y0 - margin), b = lineAtY(st - y0 + h + margin)
       if (b - valid < 2000) lexTo(b + 1, performance.now() + 4) // farther off, the idle lexer catches up
       guess.clear()
       if (lexes && valid < b) {
@@ -569,13 +573,12 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       }
       first = a
       last = b
-      rowsBox.style.paddingTop = `${top(a)}px`
-      content.style.height = `${padTop + top(doc.count) + padBottom}px`
+      size(a, h)
       if (leftDirty && order.length) {
         leftDirty = false
         const ln = order[0].line
         lineLeft = ln.offsetLeft + padLeft
-        origin = lineLeft - shift
+        x0 = lineLeft - shiftX
         const w = content.clientWidth - lineLeft - padRight
         if (wrap && Math.abs(w - textWidth) > 1 && !rewrapped) {
           rewrapped = true
@@ -592,11 +595,11 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
         const w = `max(100%, ${Math.min(full, most)}px)`
         if (w !== minWidth) content.style.minWidth = minWidth = w
         const k = full > most ? (full - vw) / (most - vw) : 1
-        if (k !== scale) { scale = k; dirty() }
+        if (k !== scaleX) { scaleX = k; dirty() }
       } else if (minWidth) content.style.minWidth = minWidth = ''
       // Wrapped lines, and lines of other scripts, are as tall as they lay out.
       let moved = 0
-      const anchor = lineAtY(st - padTop), anchorTop = top(anchor)
+      const anchor = lineAtY(st - y0), anchorTop = top(anchor)
       for (const [i, r] of rows) {
         if (!wrap && r.simple) continue
         const ht = r.el.getBoundingClientRect().height
@@ -608,14 +611,22 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
         }
       }
       if (!moved) break
-      rowsBox.style.paddingTop = `${top(a)}px`
-      content.style.height = `${padTop + top(doc.count) + padBottom}px`
+      size(a, h)
       const drift = top(anchor) - anchorTop
-      if (drift) scroller.scrollTop = st + drift
+      if (drift) scroller.scrollTop = st + drift / scaleY
     }
     layers()
     paintStatus()
     lexLater()
+  }
+  /** Places the rows from line a down, and makes the content as tall as the text, or MAX_W device pixels; `vh` is
+   * the viewport's height. */
+  function size(a, vh) {
+    const full = padTop + top(doc.count) + padBottom, most = Math.floor(MAX_W / devicePixelRatio)
+    rowsBox.style.marginTop = `${top(a) - shiftY}px`
+    content.style.height = `${Math.min(full, most)}px`
+    const k = full > most ? (full - vh) / (most - vh) : 1
+    if (k !== scaleY) { scaleY = k; dirty() }
   }
   function hsAll() {
     hs = new Float32Array(doc.count).fill(lh)
@@ -632,17 +643,17 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     const i = doc.lineOf(pos)
     const h = scroller.clientHeight
     let y = padTop + top(i), y2 = y + (hs ? hs[i] || lh : lh)
-    if (y2 - y > h) { y = coords(pos).y; y2 = y + lh } // a line taller than the view shows the caret's row
-    let st = scroller.scrollTop
+    if (y2 - y > h) { y = coords(pos).y + shiftY; y2 = y + lh } // a line taller than the view shows the caret's row
+    let st = scroller.scrollTop * scaleY
     if (center) st = (y + y2) / 2 - h / 2
     else if (y < st + 4) st = y - 4 - (i === 0 ? padTop : 0)
     else if (y2 > st + h - 4) st = y2 - h + 4 + (i === doc.count - 1 ? padBottom : 0)
-    if (st !== scroller.scrollTop) scroller.scrollTop = Math.max(0, st)
+    if (st !== scroller.scrollTop * scaleY) scroller.scrollTop = Math.max(0, st) / scaleY
     if (!wrap) {
-      const x = lineLeft + column(doc.lines[i], pos - doc.start(i)) * cw, at = scroller.scrollLeft * scale
+      const x = lineLeft + column(doc.lines[i], pos - doc.start(i)) * cw, at = scroller.scrollLeft * scaleX
       const w = scroller.clientWidth
-      if (x < at + lineLeft) scroller.scrollLeft = Math.max(0, x - lineLeft - 20) / scale
-      else if (x > at + w - 20) scroller.scrollLeft = (x - w + 40) / scale
+      if (x < at + lineLeft) scroller.scrollLeft = Math.max(0, x - lineLeft - 20) / scaleX
+      else if (x > at + w - 20) scroller.scrollLeft = (x - w + 40) / scaleX
     }
   }
 
@@ -685,7 +696,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   /** Where offset pos is: { x, y, h }, its row's left, top and height. */
   function coords(pos) {
     const i = doc.lineOf(pos), ch = pos - doc.start(i), text = doc.lines[i]
-    const y = padTop + top(i)
+    const y = y0 + top(i)
     const r = rows.get(i)
     // A huge wrapped line's rows that aren't drawn hold `per` characters each.
     if (wrap && text.length > HUGE && (!r || ch < r.offset || ch > r.end || (r.below && ch === r.end))) {
@@ -693,7 +704,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       const y0 = below ? r.below.getBoundingClientRect().top - contentBox().top : y
       return { x: lineLeft + (k % per) * cw, y: y0 + Math.floor(k / per) * lh, h: lh, i }
     }
-    if (!r || (!wrap && r.simple)) return { x: origin + column(text, ch) * cw, y, h: lh, i }
+    if (!r || (!wrap && r.simple)) return { x: x0 + column(text, ch) * cw, y, h: lh, i }
     const c = contentBox()
     if (!text.length) {
       const lr = r.line.getBoundingClientRect()
@@ -704,17 +715,17 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     const b = end ? ch : ch + (isHigh(text, ch) ? 2 : 1)
     const rs = domRects(r, a, b)
     const q = end ? rs[rs.length - 1] : rs[0]
-    if (!q) return { x: origin + column(text, ch) * cw, y, h: lh, i }
+    if (!q) return { x: x0 + column(text, ch) * cw, y, h: lh, i }
     return { x: (end ? q.right : q.left) - c.left, y: q.top - c.top + (q.height - lh) / 2, h: lh, i }
   }
   /** The offset nearest the content point (x, y). */
   function posAt(x, y) {
-    const i = lineAtY(y - padTop)
+    const i = lineAtY(y - y0)
     const text = doc.lines[i], start = doc.start(i)
     const r = rows.get(i)
-    if (!wrap && (!r || r.simple)) return start + offsetAt(text, (x - origin) / cw)
+    if (!wrap && (!r || r.simple)) return start + offsetAt(text, (x - x0) / cw)
     if (!r) {
-      const up = Math.max(0, Math.floor((y - padTop - top(i)) / lh))
+      const up = Math.max(0, Math.floor((y - y0 - top(i)) / lh))
       return start + Math.min(text.length, offsetAt(text, up * perRow() + (x - lineLeft) / cw))
     }
     const c = contentBox()
@@ -733,7 +744,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     const hit = seen && (document.caretPositionFromPoint?.(cx, cy) ?? (p => p && { offsetNode: p.startContainer, offset: p.startOffset })(document.caretRangeFromPoint?.(cx, cy)))
     if (hit && r.line.contains(hit.offsetNode)) return start + Math.min(text.length, charOf(r, hit.offsetNode, hit.offset))
     if (wrap) return start + Math.min(text.length, measureAt(r, cx, cy))
-    return start + Math.min(text.length, offsetAt(text, (x - origin) / cw))
+    return start + Math.min(text.length, offsetAt(text, (x - x0) / cw))
   }
   /** The offset in drawn row r nearest client point (cx, cy), from its characters' boxes: visual rows run down, and
    * characters across each. */
@@ -760,11 +771,11 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       const i = c.i + dir
       if (i < 0) return { head: 0, goal }
       if (i >= doc.count) return { head: doc.length, goal }
-      return { head: doc.start(i) + offsetAt(doc.lines[i], (goal - origin) / cw), goal }
+      return { head: doc.start(i) + offsetAt(doc.lines[i], (goal - x0) / cw), goal }
     }
     const y = c.y + dir * (by || lh) + lh / 2
-    if (y < padTop) return { head: 0, goal }
-    if (y >= padTop + top(doc.count)) return { head: doc.length, goal }
+    if (y < y0) return { head: 0, goal }
+    if (y >= y0 + top(doc.count)) return { head: doc.length, goal }
     return { head: posAt(goal, y), goal }
   }
   /** The start (or with `forward`, the end) of the row that offset pos shows on. */
@@ -822,10 +833,10 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
       const f = Math.max(a, start + r.offset) - start, t = Math.min(b, start + r.end) - start
       const past = b > start + r.end
       if (f > t || (f === t && !past)) continue
-      const y = padTop + top(i)
+      const y = y0 + top(i)
       if (!wrap && r.simple) {
-        const x1 = origin + column(text, f) * cw
-        const x2 = past ? 1e6 : origin + column(text, t) * cw
+        const x1 = x0 + column(text, f) * cw
+        const x2 = past ? 1e6 : x0 + column(text, t) * cw
         if (x2 > x1) list.push([x1, y + dy, x2 - x1, h, cls])
         continue
       }
@@ -921,7 +932,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     set(statusBar.button, wrap ? 'Wrap' : 'No wrap')
   }
   function toggleWrap() {
-    const anchor = lineAtY(scroller.scrollTop - padTop)
+    const anchor = lineAtY(scroller.scrollTop - y0)
     wrap = !wrap
     dom.classList.toggle('cm-lineWrapping', wrap)
     if (minWidth) content.style.minWidth = minWidth = ''
@@ -929,7 +940,7 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
     textWidth = content.clientWidth - lineLeft - padRight
     heights()
     draw()
-    scroller.scrollTop = padTop + top(anchor)
+    scroller.scrollTop = (padTop + top(anchor)) / scaleY
     dirty()
     return true
   }
@@ -1131,8 +1142,8 @@ export function createEditor(name, text, { changed, picked, status } = {}) {
   function rectangle(e) {
     const c = contentBox()
     const x2 = e.clientX - c.left, y2 = e.clientY - c.top
-    const la = lineAtY(drag.y - padTop), lb = lineAtY(y2 - padTop)
-    const ca = Math.max(0, (drag.x - origin) / cw), cb = Math.max(0, (x2 - origin) / cw)
+    const la = lineAtY(drag.y - y0), lb = lineAtY(y2 - y0)
+    const ca = Math.max(0, (drag.x - x0) / cw), cb = Math.max(0, (x2 - x0) / cw)
     const out_ = []
     for (let i = Math.min(la, lb); i <= Math.max(la, lb); i++) {
       if (foldIn(i)) continue
