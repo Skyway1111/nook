@@ -391,9 +391,16 @@ export function startComposer(term, host, id) {
     term.wheel(e)
   }, { passive: false })
 
+  /** The text position at (x, y); a WebKit without caretPositionFromPoint has caretRangeFromPoint. */
+  function caretAt(x, y) {
+    if (document.caretPositionFromPoint) return document.caretPositionFromPoint(x, y)
+    const r = document.caretRangeFromPoint(x, y)
+    return r && { offsetNode: r.startContainer, offset: r.startOffset }
+  }
+
   /** The buffer cell under the card's character at (x, y), or null off the draft. */
   function hit(x, y) {
-    const pos = document.caretPositionFromPoint(x, y)
+    const pos = caretAt(x, y)
     const node = pos?.offsetNode
     const at = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node
     const row = at?.closest?.('[data-y]')

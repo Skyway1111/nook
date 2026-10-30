@@ -49,9 +49,9 @@ async function pictureUrl(k, base64) {
     rgba.set(bytes.subarray(j, j + 3), i * 4)
     rgba[i * 4 + 3] = step === 4 ? bytes[j + 3] : 255
   }
-  const canvas = new OffscreenCanvas(w, h)
+  const canvas = Object.assign(document.createElement('canvas'), { width: w, height: h })
   canvas.getContext('2d').putImageData(new ImageData(rgba, w, h), 0, 0)
-  return URL.createObjectURL(await canvas.convertToBlob())
+  return URL.createObjectURL(await new Promise(done => canvas.toBlob(done)))
 }
 
 /** `reply(text)` answers a query on the terminal's input, as kitty does. */

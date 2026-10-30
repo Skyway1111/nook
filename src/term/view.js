@@ -189,7 +189,7 @@ export class Term {
     const family = v('--font-term') || 'monospace'
     const size = parseFloat(v('--term-font-size')) || 14
     const lineHeight = parseFloat(v('--term-line-height')) || 1
-    if (family === this.fontFamily && size === this.fontSize && lineHeight === this.lineHeight && this.charW) return false
+    if (family === this.fontFamily && size === this.fontSize && lineHeight === this.lineHeight && this.charW && this.charH) return false
     this.fontFamily = family
     this.fontSize = size
     this.lineHeight = lineHeight
@@ -245,6 +245,7 @@ export class Term {
 
   /** The size that fills the host, as xterm's fit addon proposes it, or undefined while a cell has no size. */
   fit() {
+    if (!this.charH) this.restyle() // measured in the DOM while hidden: measure again
     if (!this.cellW || !this.cellH || !this.element.parentElement) return undefined
     const style = getComputedStyle(this.host)
     const width = Math.max(0, parseInt(style.width)) - SCROLLBAR
@@ -337,9 +338,13 @@ export class Term {
     const start = performance.now()
     while (this.at < q.length) {
       const i = this.at
-      this.vt.write(q[i])
       this.at = i + 2
-      q[i + 1]?.()
+      try {
+        this.vt.write(q[i])
+        q[i + 1]?.()
+      } catch (e) {
+        reportError(e) // a hook that throws costs the rest of its chunk, not the terminal
+      }
       if (performance.now() - start >= SLICE_MS) break
     }
     if (this.at < q.length) {

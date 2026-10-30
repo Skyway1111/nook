@@ -148,16 +148,16 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 .xterm-rows .bold { font-weight: bold; }
 .xterm-rows .italic { font-style: italic; }
 .xterm-rows .u1 { text-decoration: underline; }
-.xterm-rows .u2 { text-decoration: double underline; }
-.xterm-rows .u3 { text-decoration: wavy underline; }
-.xterm-rows .u4 { text-decoration: dotted underline; }
-.xterm-rows .u5 { text-decoration: dashed underline; }
+.xterm-rows .u2 { -webkit-text-decoration: double underline; text-decoration: double underline; }
+.xterm-rows .u3 { -webkit-text-decoration: wavy underline; text-decoration: wavy underline; }
+.xterm-rows .u4 { -webkit-text-decoration: dotted underline; text-decoration: dotted underline; }
+.xterm-rows .u5 { -webkit-text-decoration: dashed underline; text-decoration: dashed underline; }
 .xterm-rows .over { text-decoration: overline; }
-.xterm-rows .over.u1 { text-decoration: overline underline; }
-.xterm-rows .over.u2 { text-decoration: overline double underline; }
-.xterm-rows .over.u3 { text-decoration: overline wavy underline; }
-.xterm-rows .over.u4 { text-decoration: overline dotted underline; }
-.xterm-rows .over.u5 { text-decoration: overline dashed underline; }
+.xterm-rows .over.u1 { -webkit-text-decoration: overline underline; text-decoration: overline underline; }
+.xterm-rows .over.u2 { -webkit-text-decoration: overline double underline; text-decoration: overline double underline; }
+.xterm-rows .over.u3 { -webkit-text-decoration: overline wavy underline; text-decoration: overline wavy underline; }
+.xterm-rows .over.u4 { -webkit-text-decoration: overline dotted underline; text-decoration: overline dotted underline; }
+.xterm-rows .over.u5 { -webkit-text-decoration: overline dashed underline; text-decoration: overline dashed underline; }
 .xterm-rows .strike { text-decoration: line-through; }
 .xterm-rows .xterm-cursor-block { background-color: var(--cursor) !important; color: var(--bg) !important; }
 .xterm-rows .xterm-cursor-outline { outline: 1px solid var(--cursor); outline-offset: -1px; }
