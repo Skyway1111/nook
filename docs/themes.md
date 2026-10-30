@@ -1,6 +1,6 @@
 # Make a theme
 
-A theme is a folder with a `theme.css` and the pictures and fonts it names. nook keeps each installed theme in its own folder in `%APPDATA%\dev.nook.app\themes`. In this tutorial you build a theme called Harbor inside that folder, so each save shows in nook within a second.
+A theme is a folder with a `theme.css` and the pictures and fonts it names. nook keeps each installed theme in its own folder in `%APPDATA%\dev.nook.app\themes`, or `~/.config/dev.nook.app/themes` on Linux. In this tutorial you build a theme called Harbor inside that folder, so each save shows in nook within a second.
 
 [`themes/twilight`](../themes/twilight/theme.css) in this repository is a finished theme. Read it beside each step.
 
@@ -92,7 +92,7 @@ A theme is plain CSS, so any rule works. Themes restyle these parts most:
 | `.brand` | The name in the titlebar |
 | `.composer .frame` | The prompt card |
 
-[`index.html`](../index.html) and [`src/style.css`](../src/style.css) name the rest. For example:
+[`index.html`](../index.html) and [`src/style.css`](../src/style.css) name the rest of what the window opens with. A view nook loads later, such as the editor or a diff tab, keeps its selectors in a sheet of its own in [`src`](../src), such as `editor.css` or `diff.css`. A theme's rules win ties with all of them. For example:
 
 ```css
 .brand { letter-spacing: .3em; text-shadow: 0 0 12px var(--accent); }
@@ -121,7 +121,7 @@ nook can draw a scene in characters behind Claude tabs, always moving. Name one 
 
 ```css
 :root {
-  --wallpaper: fireflies; /* none, drift, turtles, koi, jellyfish, boats, fireflies, or moonlit */
+  --wallpaper: fireflies; /* or none, or another scene nook's defaults list */
   --wallpaper-opacity: .4;
   --wallpaper-light: #ffd98e; /* the fireflies */
 }
@@ -137,7 +137,7 @@ Save a screenshot of nook in your theme as `screenshot.png` in `harbor`. The the
 
 ## 10. Share it
 
-Zip the `harbor` folder. In Explorer, right-click it and pick **Compress to ZIP file**. On Windows 10, pick **Send to**, then **Compressed (zipped) folder**. A .zip that holds the folder installs as a theme named after the folder.
+In the Settings drawer, point at Harbor's card and click its share button, **Save as a .zip to share**. nook saves the folder, pictures and fonts included, as `harbor.zip` in Downloads. **Install…** in anyone's nook takes it, as a theme named after the folder.
 
 Ship a license for each picture and font in the theme. Use only pictures you made or pictures licensed for redistribution. Museum open-access collections, such as the Cleveland Museum of Art's, The Met's, and the Art Institute of Chicago's, release public-domain art under CC0. Most fonts on Google Fonts use the SIL Open Font License, which allows shipping them with a theme.
 
