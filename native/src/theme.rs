@@ -4,7 +4,7 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
-    sync::Once,
+    sync::{Mutex, Once},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -29,11 +29,14 @@ pub struct Theme {
     stamp: u64,
     /// Whether this read seeded theme.css: nook's first run, when it shows its welcome.
     first: bool,
+    /// Changes when any of the above does, from the files' stats alone.
+    version: u64,
 }
 
-object!(Theme { css, name, pack, stamp, first });
+object!(Theme { css, name, pack, stamp, first, version });
 
-pub fn read_theme() -> Theme {
+/// The theme, or None when its version is still `seen`: the page asks every second, and then only stats are read.
+pub fn read_theme(seen: Option<u64>) -> Option<Theme> {
     let dir = config_dir();
     let path = dir.join("theme.css");
     let first = !path.exists();
@@ -55,30 +58,51 @@ pub fn read_theme() -> Theme {
     if first {
         let _ = fs::create_dir_all(&dir).and_then(|()| fs::write(&path, THEME_SEED));
     }
-    let read = |p: &Path| fs::read(p).ok().map(decode);
-    let name = read_settings().ok().and_then(|s| s.theme);
+    let (name, settings) = theme_name(&dir.join("settings.json"));
     let pack_dir = name.as_ref().map(|n| dir.join("themes").join(n));
-    let pack = pack_dir.as_ref().and_then(|d| read(&d.join("theme.css")));
-    let stamp = changes(&dir, pack_dir.map_or(0, |d| changes(&d, 0))) >> 11; // a JSON number holds 53 bits
-    Theme { css: read(&path), name, pack, stamp, first }
+    let stamp = changes(&dir, pack_dir.as_ref().map_or(0, |d| changes(d, 0)));
+    let pack_css = pack_dir.map(|d| d.join("theme.css"));
+    let files = [Some(&path), pack_css.as_ref()].map(|p| p.and_then(|p| fs::metadata(p).ok()));
+    let version = files.into_iter().fold(stamp ^ settings, stat) >> 11; // a JSON number holds 53 bits
+    if seen == Some(version) {
+        return None;
+    }
+    let read = |p: &Path| fs::read(p).ok().map(decode);
+    Some(Theme { css: read(&path), name, pack: pack_css.and_then(|p| read(&p)), stamp: stamp >> 11, first, version })
 }
 
-/// `seed` hashed with each entry of `dir`'s modified time and a file's size, so it changes even when a copy of
-/// an older file replaces one: the copy keeps its source's modified time, and on Windows its change time too.
-/// On Linux a file's change time, which every write sets, goes in as well. settings.json and theme.css
-/// don't count.
+/// The installed theme settings.json names, and its stats hashed. It's parsed again only when they change.
+fn theme_name(settings: &Path) -> (Option<String>, u64) {
+    static LAST: Mutex<Option<(u64, Option<String>)>> = Mutex::new(None);
+    let now = stat(0, fs::metadata(settings).ok());
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.as_ref().is_none_or(|(was, _)| *was != now) {
+        *last = Some((now, read_settings().ok().and_then(|s| s.theme)));
+    }
+    (last.as_ref().and_then(|(_, name)| name.clone()), now)
+}
+
+/// `seed` hashed with each entry of `dir`'s stats, so it changes even when a copy of an older file replaces one.
+/// settings.json and theme.css don't count.
 fn changes(dir: &Path, seed: u64) -> u64 {
     let entries = fs::read_dir(dir).into_iter().flatten().flatten();
     let entries = entries.filter(|e| !matches!(e.file_name().to_str(), Some("theme.css" | "settings.json")));
-    entries.filter_map(|e| e.metadata().ok()).fold(seed, |h, m| {
+    entries.map(|e| e.metadata().ok()).fold(seed, stat)
+}
+
+/// `h` hashed with a file's modified time and size, or a folder's modified time. A copy keeps its source's modified
+/// time, and on Windows its change time too, so the size goes in; on Linux the change time, which every write
+/// sets, goes in as well. A missing file counts as zeros.
+fn stat(h: u64, m: Option<fs::Metadata>) -> u64 {
+    let parts = m.map_or([0; 3], |m| {
         let time = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as u64);
         #[cfg(unix)]
         let changed = { use std::os::unix::fs::MetadataExt; (m.ctime() as u64) << 30 | m.ctime_nsec() as u64 };
         #[cfg(windows)]
         let changed = 0;
-        let file = if m.is_dir() { [0, 0] } else { [m.len(), changed] };
-        [time, file[0], file[1]].into_iter().fold(h, |h, x| (h ^ x).wrapping_mul(0x100_0000_01b3))
-    })
+        if m.is_dir() { [time, 0, 0] } else { [time, m.len(), changed] }
+    });
+    parts.into_iter().fold(h, |h, x| (h ^ x).wrapping_mul(0x100_0000_01b3))
 }
 
 /// `install` for a folder or a .zip on disk.
