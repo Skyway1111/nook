@@ -28,7 +28,6 @@ const SYNC = {
 }
 // Paths go over stdin, NUL-separated: no command-line limit, and no file name read as a flag.
 const PATHSPEC = ['--pathspec-from-file=-', '--pathspec-file-nul']
-let historyCss // the history tab's stylesheet, added once a stash tab needs it
 /** What git is in the middle of: how the panel says it, and the commands that finish it or call it off. */
 const OPERATION = {
   merge: ['Merging', ['commit', '--no-edit'], ['merge', '--abort']],
@@ -294,7 +293,7 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
     const run = args => act(args, undefined, root).then(ok => ok || said)
     const tab = openView('stash', `${basename(root)} stash`, root, view => {
       // Its head is styled like a commit's in a history tab.
-      const diff = Promise.all([import('./diff.js'), historyCss ??= sheet(new URL('./history.css', import.meta.url))]).then(([m]) => m.startDiff(view, { root, rel: '', openFile, commit: null }))
+      const diff = Promise.all([import('./diff.js'), sheet(new URL('./history.css', import.meta.url))]).then(([m]) => m.startDiff(view, { root, rel: '', openFile, commit: null }))
       return { refresh: () => diff.then(d => d.refresh()), show: next => diff.then(d => d.show(next)) }
     })
     const [where, what] = stashText(stash)
