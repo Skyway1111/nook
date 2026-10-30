@@ -78,7 +78,7 @@ pub fn entries(r: &mut dyn Source) -> Result<Vec<Entry>, String> {
         return Err(format!("it holds over {MAX_FILES} files"));
     }
     let dir = read_at(r, offset, size as usize)?;
-    let (mut list, mut at, mut total) = (Vec::with_capacity(count), 0, 0);
+    let (mut list, mut at, mut total, mut packed_total) = (Vec::with_capacity(count), 0, 0, 0);
     for _ in 0..count {
         let h = dir.get(at..at + 46).filter(|h| h.starts_with(b"PK\x01\x02")).ok_or(BROKEN)?;
         let (n, extra) = (u16_at(h, 28) as usize, u16_at(h, 30) as usize + u16_at(h, 32) as usize);
@@ -89,11 +89,14 @@ pub fn entries(r: &mut dyn Source) -> Result<Vec<Entry>, String> {
             return Err("it's encrypted".into());
         }
         let name = path(&name(raw)).ok_or_else(|| format!("{} would unpack outside its folder", String::from_utf8_lossy(raw)))?;
-        total += size;
+        // What it unpacks to, or reads in when that's more, so no entry allocates past the cap.
+        total += size.max(packed);
         if total > MAX_BYTES {
             return Err(format!("it unpacks to over {} MB", MAX_BYTES >> 20));
         }
-        if local + 30 + packed > offset {
+        // Entries that share bytes would make one stream count many times.
+        packed_total += packed;
+        if local + 30 + packed > offset || packed_total > offset {
             return Err(BROKEN.into());
         }
         let dir = name.is_empty() || raw.ends_with(b"/") || raw.ends_with(b"\\");
@@ -246,7 +249,6 @@ impl Bits<'_> {
 
 /// A canonical Huffman code as a table of every `bits`-bit input: its symbol and its code's length, `sym << 4 | len`.
 /// 0 is no code.
-#[derive(Default)]
 struct Huffman {
     table: Vec<u16>,
     bits: u32,
@@ -296,6 +298,11 @@ pub fn inflate(data: &[u8], size: usize) -> Result<Vec<u8>, &'static str> {
     // No deflate stream grows past 1032 times its size, so a size it lies about allocates no more than that.
     let mut out = Vec::with_capacity(size.min(data.len().saturating_mul(1032)));
     let mut b = Bits { data, at: 0, bits: 0, n: 0 };
+    // The fixed codes, built once: a stream of empty fixed blocks would otherwise build them every 10 bits.
+    let mut lens = [8u8; 288];
+    lens[144..256].fill(9);
+    lens[256..280].fill(7);
+    let (fixed, mut dynamic) = ((Huffman::new(&lens)?, Huffman::new(&[5; 30])?), None);
     loop {
         let last = b.take(1)?;
         let (lit, dist) = match b.take(2)? {
@@ -320,12 +327,7 @@ pub fn inflate(data: &[u8], size: usize) -> Result<Vec<u8>, &'static str> {
                 }
                 continue;
             }
-            1 => {
-                let mut lens = [8u8; 288];
-                lens[144..256].fill(9);
-                lens[256..280].fill(7);
-                (Huffman::new(&lens)?, Huffman::new(&[5; 30])?)
-            }
+            1 => &fixed,
             2 => {
                 let (lits, dists, codes) = (b.take(5)? as usize + 257, b.take(5)? as usize + 1, b.take(4)? as usize + 4);
                 if lits > 286 || dists > 30 {
@@ -353,12 +355,12 @@ pub fn inflate(data: &[u8], size: usize) -> Result<Vec<u8>, &'static str> {
                 if i != lits + dists {
                     return Err("a block's header is damaged");
                 }
-                (Huffman::new(&lens[..lits])?, Huffman::new(&lens[lits..i])?)
+                dynamic.insert((Huffman::new(&lens[..lits])?, Huffman::new(&lens[lits..i])?))
             }
             _ => return Err("it holds a block of no known kind"),
         };
         loop {
-            let sym = b.decode(&lit)?;
+            let sym = b.decode(lit)?;
             if sym < 256 {
                 if out.len() == size {
                     return Err(TOO_BIG);
@@ -374,7 +376,7 @@ pub fn inflate(data: &[u8], size: usize) -> Result<Vec<u8>, &'static str> {
                 return Err("it holds a length of no known kind");
             }
             let len = LEN_BASE[i] as usize + b.take(LEN_EXTRA[i] as u32)? as usize;
-            let d = b.decode(&dist)?;
+            let d = b.decode(dist)?;
             if d >= 30 {
                 return Err("it holds a distance of no known kind");
             }
