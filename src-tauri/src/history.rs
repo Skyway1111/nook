@@ -94,13 +94,8 @@ fn saved(path: &Path, modified: u64) -> Option<Saved> {
 }
 
 /// The sessions Claude Code saved for `dir`, newest first.
-#[tauri::command(async)]
-pub fn claude_sessions(dir: String) -> tauri::ipc::Response {
-    tauri::ipc::Response::new(json::to_string(&sessions(&dir)))
-}
-
-fn sessions(dir: &str) -> Vec<Saved> {
-    let Ok(entries) = fs::read_dir(claude_dir().join("projects").join(slug(dir))) else { return Vec::new() };
+pub fn claude_sessions(dir: String) -> Vec<Saved> {
+    let Ok(entries) = fs::read_dir(claude_dir().join("projects").join(slug(&dir))) else { return Vec::new() };
     let mut files: Vec<(PathBuf, u64)> = entries
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
@@ -160,7 +155,7 @@ mod tests {
         fs::write(dir.join("new.jsonl"), user("second")).unwrap();
         fs::write(dir.join("empty.jsonl"), r#"{"type":"summary","summary":"x"}"#).unwrap();
         std::env::set_var("CLAUDE_CONFIG_DIR", &root);
-        let ids: Vec<String> = sessions("/work/app").into_iter().map(|s| s.id).collect();
+        let ids: Vec<String> = claude_sessions("/work/app".into()).into_iter().map(|s| s.id).collect();
         std::env::remove_var("CLAUDE_CONFIG_DIR");
         fs::remove_dir_all(&root).unwrap();
         assert_eq!(ids, ["new", "old"]);

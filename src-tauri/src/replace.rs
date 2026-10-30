@@ -2,8 +2,8 @@
 //! regular expressions as asked, and the replacing of the matches the tab keeps, which it can undo.
 //! A file is rewritten only while it still holds what the search read, so an edit made since is never lost.
 use crate::find::{Filter, Finder};
+use crate::json::{object, Error, Reader, Take};
 use crate::search::{list, shown};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::{hash_map::DefaultHasher, HashSet},
     fs,
@@ -28,7 +28,7 @@ static LATEST: AtomicU64 = AtomicU64::new(0);
 /// What the last replace changed: each file, what it held before, and the stamp of what it holds after.
 static UNDO: Mutex<Vec<(PathBuf, Vec<u8>, String)>> = Mutex::new(Vec::new());
 
-#[derive(Deserialize, Clone)]
+#[derive(Clone)]
 pub struct Query {
     text: String,
     /// Match case exactly. Without it, ASCII letters match either case, as in quick open's search.
@@ -38,11 +38,25 @@ pub struct Query {
     /// `text` is a regular expression, and a replacement's `$1` or `${name}` takes what a group matched.
     regex: bool,
     /// Which files, by path, as `Filter` reads it. Empty for every file.
-    #[serde(default)]
     files: String,
 }
 
-#[derive(Serialize)]
+impl Take for Query {
+    fn take(p: &mut Reader) -> Result<Self, Error> {
+        let (mut text, mut flags, mut files) = (None, [None; 3], String::new());
+        p.known("struct Query", &["text", "case", "word", "regex", "files"], |p, i| {
+            match i {
+                0 => text = Some(String::take(p)?),
+                4 => files = String::take(p)?,
+                _ => flags[i - 1] = Some(bool::take(p)?),
+            }
+            Ok(())
+        })?;
+        let [case, word, regex] = flags;
+        Ok(Query { text: p.needs(text, "text")?, case: p.needs(case, "case")?, word: p.needs(word, "word")?, regex: p.needs(regex, "regex")?, files })
+    }
+}
+
 pub struct Match {
     line: u32,
     col: u32,
@@ -56,7 +70,8 @@ pub struct Match {
     to: Option<String>,
 }
 
-#[derive(Serialize)]
+object!(Match { line, col, text, at, len, start, to });
+
 pub struct FileMatches {
     /// Relative to the root, with `/` between folders.
     file: String,
@@ -65,7 +80,8 @@ pub struct FileMatches {
     matches: Vec<Match>,
 }
 
-#[derive(Serialize)]
+object!(FileMatches { file, stamp, matches });
+
 pub struct Found {
     root: String,
     files: Vec<FileMatches>,
@@ -76,6 +92,8 @@ pub struct Found {
     /// A newer search started, so this one's result is to be dropped.
     stale: bool,
 }
+
+object!(Found { root, files, searched, partial, stale });
 
 /// What `q` looks for. The error says why a regular expression is not one.
 fn pattern(q: &Query) -> Result<Finder, String> {
@@ -139,7 +157,6 @@ fn find_in(path: &Path, q: &Query, re: &Finder, with: Option<&str>, room: usize)
 
 /// Every match of `query` under `dir`'s repository, or `dir` outside one, in quick open's file order, with
 /// what each becomes when `with` is given.
-#[tauri::command(async)]
 pub fn find_in_files(dir: String, query: Query, with: Option<String>) -> Result<Found, String> {
     let id = LATEST.fetch_add(1, Ordering::SeqCst) + 1;
     let re = pattern(&query)?;
@@ -193,23 +210,37 @@ pub fn find_in_files(dir: String, query: Query, with: Option<String>) -> Result<
     Ok(Found { root, files: out, searched: searched.into_inner(), partial, stale: LATEST.load(Ordering::SeqCst) != id })
 }
 
-#[derive(Deserialize)]
 pub struct Pick {
     file: String,
     /// The stamp the search read: a file that no longer has it is left alone.
     stamp: String,
     /// Starts of matches the tab dropped, which stay as they are.
-    #[serde(default)]
     skip: Vec<usize>,
 }
 
-#[derive(Serialize)]
+impl Take for Pick {
+    fn take(p: &mut Reader) -> Result<Self, Error> {
+        let (mut file, mut stamp, mut skip) = (None, None, Vec::new());
+        p.known("struct Pick", &["file", "stamp", "skip"], |p, i| {
+            match i {
+                0 => file = Some(String::take(p)?),
+                1 => stamp = Some(String::take(p)?),
+                _ => skip = Vec::take(p)?,
+            }
+            Ok(())
+        })?;
+        Ok(Pick { file: p.needs(file, "file")?, stamp: p.needs(stamp, "stamp")?, skip })
+    }
+}
+
 pub struct Left {
     file: String,
     why: String,
 }
 
-#[derive(Serialize, Default)]
+object!(Left { file, why });
+
+#[derive(Default)]
 pub struct Replaced {
     /// Matches replaced, and the files they were in.
     replaced: usize,
@@ -217,6 +248,8 @@ pub struct Replaced {
     /// Files left as they were, and why.
     skipped: Vec<Left>,
 }
+
+object!(Replaced { replaced, files, skipped });
 
 /// `text` with each match of `re` replaced, but those starting at a byte in `skip`; and how many were.
 fn replace_text(text: &str, q: &Query, re: &Finder, with: &str, skip: &HashSet<usize>) -> (String, usize) {
@@ -242,7 +275,6 @@ fn replace_text(text: &str, q: &Query, re: &Finder, with: &str, skip: &HashSet<u
 
 /// Replaces, in each picked file under `root`, the matches of `query` it held when searched, but those it
 /// skips, with `with`. Keeps each file's BOM. The last replace can be undone with `undo_replace`.
-#[tauri::command(async)]
 pub fn replace_in_files(root: String, query: Query, with: String, files: Vec<Pick>) -> Result<Replaced, String> {
     let re = pattern(&query)?;
     let _writing = crate::WRITING.lock().unwrap();
@@ -281,15 +313,15 @@ pub fn replace_in_files(root: String, query: Query, with: String, files: Vec<Pic
     Ok(done)
 }
 
-#[derive(Serialize)]
 pub struct Restored {
     files: usize,
     /// Files changed again since the replace, which keep their newer text.
     skipped: Vec<Left>,
 }
 
+object!(Restored { files, skipped });
+
 /// Puts back what the last replace changed, in each file that still holds what the replace wrote.
-#[tauri::command(async)]
 pub fn undo_replace() -> Restored {
     let _writing = crate::WRITING.lock().unwrap();
     let mut done = Restored { files: 0, skipped: Vec::new() };

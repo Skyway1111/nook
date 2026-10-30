@@ -1,10 +1,14 @@
-//! nook's window, settings.json, the file commands, and `run`. Every IPC command registers here.
+//! nook's window, settings.json, the file commands, and `main`. Every IPC command registers here.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod com;
 mod commands;
+mod defs;
 mod find;
 mod git;
 mod history;
+mod host;
 mod ide;
 mod index;
 mod json;
@@ -14,7 +18,6 @@ mod pdf;
 mod priority;
 mod pty;
 mod replace;
-mod defs;
 mod search;
 mod settings;
 #[cfg_attr(not(windows), path = "shell_unix.rs")]
@@ -23,8 +26,8 @@ mod shell;
 mod sys;
 mod theme;
 
-use json::obj;
-use serde::Serialize;
+use host::{cmd, Run};
+use json::object;
 use settings::Settings;
 use std::{
     fs,
@@ -32,16 +35,17 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Mutex, OnceLock},
-    time::{Duration, Instant},
-};
-use tauri::{
-    ipc::Response,
-    webview::{PageLoadEvent, PermissionKind, PermissionResponse},
-    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    time::Instant,
 };
 
-/// wry's defaults, which `additional_browser_args` replaces rather than extends.
-const WRY_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+/// nook's identifier, which names its folders: `dev.nook.app` unless the build set `NOOK_ID`.
+const ID: &str = env!("NOOK_ID");
+/// The window's title.
+const NAME: &str = env!("NOOK_NAME");
+
+/// Browser arguments replace WebView2's defaults, which turn these off.
+#[cfg(windows)]
+const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
 
 pub fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -80,66 +84,161 @@ fn home_dir() -> String {
     std::env::var(HOME_VAR).unwrap_or_else(|_| if cfg!(windows) { "C:\\" } else { "/" }.into())
 }
 
-fn config_dir(app: &AppHandle) -> PathBuf {
-    app.path().app_config_dir().expect("no config dir")
+/// A folder Windows keeps for the user, by its known-folder id.
+#[cfg(windows)]
+fn known(id: u128) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    let mut p = std::ptr::null_mut();
+    let hr = unsafe { sys::SHGetKnownFolderPath(&com::guid(id), 0, std::ptr::null_mut(), &mut p) };
+    let path = (hr >= 0).then(|| unsafe {
+        let len = (0..).take_while(|&i| *p.add(i) != 0).count();
+        PathBuf::from(std::ffi::OsString::from_wide(std::slice::from_raw_parts(p, len)))
+    });
+    unsafe { sys::CoTaskMemFree(p.cast()) };
+    path
 }
 
-fn read_settings(app: &AppHandle) -> Result<Settings, String> {
-    match fs::read_to_string(config_dir(app).join("settings.json")) {
-        Ok(s) => Settings::parse(&s).map_err(|e| format!("settings.json: {e}")),
+/// An XDG base folder: `var` if it holds an absolute path, else `fallback` in the home folder.
+#[cfg(not(windows))]
+fn xdg(var: &str, fallback: &str) -> PathBuf {
+    std::env::var_os(var).map(PathBuf::from).filter(|d| d.is_absolute()).unwrap_or_else(|| Path::new(&home_dir()).join(fallback))
+}
+
+/// Where settings.json, theme.css, and the installed themes live: `%APPDATA%\<id>`, or `~/.config/<id>`.
+fn config_dir() -> PathBuf {
+    #[cfg(windows)]
+    let base = known(0x3eb685db_65f9_4cf6_a03a_e3ef65729f3d).unwrap_or_else(|| std::env::var_os("APPDATA").unwrap_or_default().into());
+    #[cfg(not(windows))]
+    let base = xdg("XDG_CONFIG_HOME", ".config");
+    base.join(ID)
+}
+
+/// The webview's profile, localStorage included: `%LOCALAPPDATA%\<id>`, or `~/.local/share/<id>`.
+fn data_dir() -> PathBuf {
+    #[cfg(windows)]
+    let base = local_app_data();
+    #[cfg(not(windows))]
+    let base = xdg("XDG_DATA_HOME", ".local/share");
+    base.join(ID)
+}
+
+/// What nook keeps only to be quicker, such as the baked backdrops: `%LOCALAPPDATA%\<id>`, or `~/.cache/<id>`.
+pub fn cache_dir() -> PathBuf {
+    #[cfg(windows)]
+    let base = local_app_data();
+    #[cfg(not(windows))]
+    let base = xdg("XDG_CACHE_HOME", ".cache");
+    base.join(ID)
+}
+
+#[cfg(windows)]
+fn local_app_data() -> PathBuf {
+    known(0xf1b32785_6fba_4fcf_9d55_7b8e7f157091).unwrap_or_else(|| std::env::var_os("LOCALAPPDATA").unwrap_or_default().into())
+}
+
+/// The user's Downloads folder, wherever they moved it.
+#[cfg(windows)]
+pub fn downloads_dir() -> PathBuf {
+    known(0x374de290_123f_4565_9164_39c4925e467b).unwrap_or_else(|| Path::new(&home_dir()).join("Downloads"))
+}
+
+/// The user's Downloads folder: XDG's `XDG_DOWNLOAD_DIR` from user-dirs.dirs, or `Downloads` in the home folder.
+#[cfg(not(windows))]
+pub fn downloads_dir() -> PathBuf {
+    let home = PathBuf::from(home_dir());
+    let dirs = fs::read_to_string(xdg("XDG_CONFIG_HOME", ".config").join("user-dirs.dirs")).unwrap_or_default();
+    let named = dirs.lines().find_map(|line| {
+        let value = line.trim().strip_prefix("XDG_DOWNLOAD_DIR=")?.trim().strip_prefix('"')?.strip_suffix('"')?;
+        let value = value.replace('\\', "");
+        match value.strip_prefix("$HOME/") {
+            Some("") => None, // pointed at the home folder: none
+            Some(rest) => Some(home.join(rest)),
+            None => value.starts_with('/').then(|| value.into()),
+        }
+    });
+    named.unwrap_or_else(|| home.join("Downloads"))
+}
+
+/// A file nook ships beside its program: `mod`, `themes`, `conpty.dll`, `OpenConsole.exe`. A debug build finds
+/// them where they live in the repository.
+pub fn resource(name: &str) -> PathBuf {
+    #[cfg(debug_assertions)]
+    {
+        let root = Path::new(host::ROOT);
+        match name {
+            "themes" => root.join(name),
+            "conpty.dll" | "OpenConsole.exe" => root.join("src-tauri").join("conpty").join(name),
+            _ => root.join("src-tauri").join(name),
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join(name))).unwrap_or_else(|| name.into())
+}
+
+/// settings.json over the defaults, or the defaults when there's none. A byte-order mark, as Notepad once saved,
+/// is no part of the JSON.
+fn read_settings() -> Result<Settings, String> {
+    match fs::read_to_string(config_dir().join("settings.json")) {
+        Ok(s) => Settings::parse(s.strip_prefix('\u{feff}').unwrap_or(&s)).map_err(|e| format!("settings.json: {e}")),
         Err(_) => Ok(Settings::default()),
     }
 }
 
+/// What the page starts from.
+struct Boot {
+    settings: Settings,
+    /// Why settings.json couldn't be read, when it couldn't.
+    error: Option<String>,
+    config_dir: PathBuf,
+    home: String,
+}
+
+object!(Boot { settings, error, config_dir: "configDir", home });
+
 /// A (re)loaded page starts with no tabs, so sessions from before a reload end here.
-#[tauri::command(async)]
-fn boot(app: AppHandle) -> Response {
-    app.state::<pty::Sessions>().close_all();
-    let (mut settings, error) = match read_settings(&app) {
+fn boot() -> Boot {
+    pty::SESSIONS.close_all();
+    let (mut settings, error) = match read_settings() {
         Ok(s) => (s, None),
         Err(e) => (Settings::default(), Some(e)),
     };
     settings.sessions.retain(|s| Path::new(&s.dir).is_dir()); // a folder since moved or deleted reopens nothing
-    let home = std::env::var(HOME_VAR).unwrap_or_default();
-    Response::new(json::to_string(&obj! { "settings": settings, "error": error, "configDir": config_dir(&app), "home": home }))
+    Boot { settings, error, config_dir: config_dir(), home: std::env::var(HOME_VAR).unwrap_or_default() }
 }
 
 /// settings.json as it is now, for the settings drawer.
-#[tauri::command(async)]
-fn settings(app: AppHandle) -> Result<Response, String> {
-    read_settings(&app).map(|s| Response::new(json::to_string(&s)))
+fn settings() -> Result<Settings, String> {
+    read_settings()
 }
 
 /// Held across each read-check-write of a file, so two commands on workers can't interleave one.
 static WRITING: Mutex<()> = Mutex::new(());
 
 /// Sets `patch`'s keys in settings.json. Fails on a value of the wrong type.
-#[tauri::command(async)]
-fn update_settings(app: AppHandle, patch: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
-    let patch = serde_json::Value::Object(patch).to_string(); // the IPC hands over serde's map
-    edit_settings(&app, |s| s.merge(&patch))
+fn update_settings(patch: json::Text) -> Result<(), String> {
+    edit_settings(|s| s.merge(&patch.0))
 }
 
 /// Rewrites settings.json with `edit` made. Read-modify-write, so windows never clobber each other's
 /// changes. Fails rather than overwrite a file that was hand-edited into invalid JSON.
-pub fn edit_settings(app: &AppHandle, edit: impl FnOnce(&mut Settings) -> Result<(), String>) -> Result<(), String> {
+pub fn edit_settings(edit: impl FnOnce(&mut Settings) -> Result<(), String>) -> Result<(), String> {
     let _writing = WRITING.lock().unwrap();
-    let mut settings = read_settings(app)?;
+    let mut settings = read_settings()?;
     edit(&mut settings)?;
-    let dir = config_dir(app);
+    let dir = config_dir();
     fs::create_dir_all(&dir).map_err(err)?;
     fs::write(dir.join("settings.json"), json::pretty(&settings)).map_err(err)
 }
 
-#[derive(Serialize)]
 struct Entry {
     name: String,
     dir: bool,
 }
 
+object!(Entry { name, dir });
+
 /// Directory listing; `""` lists drive roots, or on Linux the root. Skips what the file manager hides:
 /// on Windows the hidden and system attributes, and on Linux names that start with a dot.
-#[tauri::command(async)]
 fn list_dir(path: String) -> Result<Vec<Entry>, String> {
     if path.is_empty() {
         if cfg!(not(windows)) {
@@ -183,7 +282,6 @@ fn decode(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
 }
 
 /// A file's text for a file tab. Refuses binary files and files over 4 MiB.
-#[tauri::command(async)]
 fn read_text(path: String) -> Result<String, String> {
     if fs::metadata(&path).map_err(err)?.len() > 4 << 20 {
         return Err("it's over 4 MiB".into());
@@ -196,7 +294,6 @@ fn read_text(path: String) -> Result<String, String> {
 }
 
 /// When a file last changed, and its size. A file tab rereads the file only when this changes.
-#[tauri::command(async)]
 fn file_stamp(path: String) -> Option<String> {
     let meta = fs::metadata(path).ok()?;
     Some(format!("{:?} {}", meta.modified().ok()?, meta.len()))
@@ -204,7 +301,6 @@ fn file_stamp(path: String) -> Option<String> {
 
 /// What each path names: 0 nothing, 1 a file, 2 a folder. A Claude tab asks about the paths in a row
 /// of its text once the mouse rests on it, and links those that exist.
-#[tauri::command(async)]
 fn path_kinds(paths: Vec<String>) -> Vec<u8> {
     paths
         .iter()
@@ -218,7 +314,6 @@ fn path_kinds(paths: Vec<String>) -> Vec<u8> {
 
 /// Up to `count` lines of a text file from line `from` (1-based), each cut at 400 characters: what a
 /// Claude tab shows when the mouse rests on a path. Reads no further than the last line it returns.
-#[tauri::command(async)]
 fn peek_lines(path: String, from: usize, count: usize) -> Result<Vec<String>, String> {
     use std::io::{BufRead, BufReader};
     let mut reader = BufReader::new(fs::File::open(&path).map_err(err)?);
@@ -246,7 +341,6 @@ fn peek_lines(path: String, from: usize, count: usize) -> Result<Vec<String>, St
 
 /// Saves a file tab and keeps the file's BOM. Writes nothing and returns false when the file no
 /// longer holds `base`, the text the tab last read; with no `base` it overwrites.
-#[tauri::command(async)]
 fn write_text(path: String, text: String, base: Option<String>) -> Result<bool, String> {
     let _writing = WRITING.lock().unwrap();
     let old = match fs::read(&path) {
@@ -265,7 +359,6 @@ fn write_text(path: String, text: String, base: Option<String>) -> Result<bool, 
 }
 
 /// Makes an empty file, or a folder. Fails rather than touch one that exists.
-#[tauri::command(async)]
 fn create_path(path: String, dir: bool) -> Result<(), String> {
     if dir { fs::create_dir(&path) } else { fs::File::create_new(&path).map(|_| ()) }.map_err(err)
 }
@@ -296,18 +389,11 @@ const INHERITED_SESSION_MARKERS: [&str; 10] = [
 ];
 
 /// WebKitGTK composites with the GPU, and with `gpu` off nook renders on the CPU, as WebView2 does with
-/// `--disable-gpu`. It reads settings.json from where Tauri keeps it, before any thread exists to read the
-/// environment it sets. Software compositing costs far more: on Xvfb, a third of the memory and CPU go.
+/// `--disable-gpu`. It runs before any thread exists to read the environment it sets. Software compositing costs
+/// far more: on Xvfb, a third of the memory and CPU go.
 #[cfg(target_os = "linux")]
-fn render_on_the_cpu_unless_gpu() {
+fn render_on_the_cpu_unless_gpu(gpu: bool) {
     const VAR: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|d| !d.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".config")));
-    let gpu = config
-        .and_then(|dir| fs::read_to_string(dir.join("dev.nook.app").join("settings.json")).ok())
-        .is_some_and(|text| Settings::parse(&text).is_ok_and(|s| s.gpu));
     if gpu {
         return;
     }
@@ -325,7 +411,6 @@ static STARTED: OnceLock<Instant> = OnceLock::new();
 
 /// Prints a timing for `bench/linux.mjs`, which starts nook with `NOOK_BENCH` set: `ms`, or without it, the
 /// milliseconds since nook started, and then the milliseconds since nook started either way.
-#[tauri::command]
 fn bench(event: String, ms: Option<f64>) {
     let now = STARTED.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
     println!("bench {event} {:.1} {now:.1}", ms.unwrap_or(now));
@@ -336,132 +421,106 @@ fn main() {
     for key in INHERITED_SESSION_MARKERS {
         std::env::remove_var(key); // before any thread exists
     }
+    let settings = read_settings().unwrap_or_default();
     #[cfg(target_os = "linux")]
-    render_on_the_cpu_unless_gpu();
-    tauri::Builder::default()
-        .manage(pty::Sessions::default())
-        .setup(|app| {
-            let bench = std::env::var_os("NOOK_BENCH").is_some();
-            if bench {
-                self::bench("mark:setup".into(), None);
-            }
-            let settings = read_settings(app.handle()).unwrap_or_default();
-            priority::keep_typing_path_elevated(settings.command.first().map_or("", String::as_str));
-            // `nook <dir>` opens there; otherwise in the last session's folder.
-            let asked = std::env::args().nth(1).as_deref().and_then(dir_arg);
-            // A folder asked for opens a new session there instead of reopening the last ones.
-            let reopen = asked.is_none() && settings.reopen_sessions;
-            let start = asked
-                .or(Some(settings.last_dir).filter(|d| Path::new(d).is_dir()))
-                .unwrap_or_else(|| Settings::default().last_dir);
-            // Browser args, and on Linux the compositing mode, are fixed when the webview starts: a change
-            // to `gpu` takes a restart.
-            let gpu = if settings.gpu { "" } else { " --disable-gpu" };
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .title("nook")
-                .inner_size(1280.0, 820.0)
-                .min_inner_size(520.0, 320.0)
-                .decorations(false)
-                // The window shows once its page has loaded. Shown sooner, it asks the webview for a frame
-                // before the web process can draw one: WebKitGTK then holds both processes for its 500 ms
-                // timeout, which every open waited out at first, and two in five still did when the window
-                // showed as the page started to load.
-                .visible(false)
-                .on_page_load(|window, payload| {
-                    if matches!(payload.event(), PageLoadEvent::Finished) {
-                        let _ = window.show();
-                    }
-                })
-                .background_color(tauri::window::Color(20, 18, 28, 255))
-                .additional_browser_args(&format!("{WRY_ARGS}{gpu}"))
-                .initialization_script(format!(
-                    "window.NOOK_CWD = {}; window.NOOK_REOPEN = {}; window.NOOK_BENCH = {};",
-                    json::to_string(&start),
-                    reopen,
-                    bench
-                ))
-                // The settings drawer's font pickers list installed fonts through queryLocalFonts().
-                .on_permission_request(|_, kind| match kind {
-                    PermissionKind::LocalFonts => PermissionResponse::Allow,
-                    _ => PermissionResponse::Default,
-                })
-                .build()?;
-            // Should the page never start, the window shows anyway.
-            let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_secs(3));
-                if let Some(window) = handle.get_webview_window("main").filter(|w| matches!(w.is_visible(), Ok(false))) {
-                    let _ = window.show();
-                }
-            });
-            if bench {
-                self::bench("mark:window".into(), None);
-            }
-            Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let WindowEvent::Destroyed = event {
-                window.state::<pty::Sessions>().close_all();
-            }
-        })
-        // A command without `async` runs on the main thread, where it would hold up the keystrokes queued
-        // behind it. Only the PTY's writes, resizes, and closes and the shell's quick calls stay there.
-        .invoke_handler(tauri::generate_handler![
-            bench,
-            notify::notify,
-            boot,
-            settings,
-            update_settings,
-            theme::read_theme,
-            theme::install_theme,
-            theme::install_theme_zip,
-            theme::save_theme_zip,
-            theme::zip_holds_theme,
-            theme::saved_backdrop,
-            theme::save_backdrop,
-            list_dir,
-            index::index_files,
-            search::search_text,
-            replace::find_in_files,
-            replace::replace_in_files,
-            replace::undo_replace,
-            defs::workspace_symbols,
-            defs::outline,
-            file_stamp,
-            path_kinds,
-            peek_lines,
-            read_text,
-            write_text,
-            create_path,
-            shell::open_path,
-            shell::reveal,
-            shell::recycle,
-            shell::rename_path,
-            shell::copy_files,
-            shell::can_paste,
-            shell::copied_paths,
-            shell::paste_files,
-            shell::drop_files,
-            git::git,
-            git::git_status,
-            git::git_progress,
-            git::git_diff,
-            pty::pty_spawn,
-            pty::pty_write,
-            pty::pty_resize,
-            pty::pty_close,
-            pty::pty_state,
-            pty::pty_states,
-            history::claude_sessions,
-            commands::claude_commands,
-            pty::pty_command,
-            pty::session_image,
-            pdf::pdf_page,
-            ide::ide_selection,
-            ide::ide_diff_answer,
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running nook");
+    render_on_the_cpu_unless_gpu(settings.gpu);
+    let bench = std::env::var_os("NOOK_BENCH").is_some();
+    if bench {
+        self::bench("mark:setup".into(), None);
+    }
+    priority::keep_typing_path_elevated(settings.command.first().map_or("", String::as_str));
+    // `nook <dir>` opens there; otherwise in the last session's folder.
+    let asked = std::env::args().nth(1).as_deref().and_then(dir_arg);
+    // A folder asked for opens a new session there instead of reopening the last ones.
+    let reopen = asked.is_none() && settings.reopen_sessions;
+    let start = asked.or(Some(settings.last_dir).filter(|d| Path::new(d).is_dir())).unwrap_or_else(|| Settings::default().last_dir);
+    let cfg = host::Config {
+        title: NAME,
+        size: (1280, 820),
+        min: (520, 320),
+        background: [20, 18, 28],
+        page: "index.html".into(),
+        data_dir: data_dir().to_string_lossy().into_owned(),
+        // Browser arguments, and on Linux the compositing mode, are fixed when the webview starts: a change to
+        // `gpu` takes a restart.
+        #[cfg(windows)]
+        browser_args: format!("{BROWSER_ARGS}{}", if settings.gpu { "" } else { " --disable-gpu" }),
+        init_script: format!("window.NOOK_CWD = {}; window.NOOK_REOPEN = {reopen}; window.NOOK_BENCH = {bench};", json::to_string(&start)),
+        #[cfg(target_os = "linux")]
+        icon: include_bytes!("../icons/32x32.png"),
+        #[cfg(debug_assertions)]
+        watch: &["src", "index.html", "src-tauri/mod/themes"],
+    };
+    if bench {
+        self::bench("mark:window".into(), None);
+    }
+    if let Err(e) = host::run(cfg, commands) {
+        eprintln!("{e}");
+    }
+    pty::SESSIONS.close_all(); // the window is gone, and no tab is left to own a session
+}
+
+/// Every command the page calls, and where it runs. A command that reads or writes a file or waits on a process
+/// runs on a thread of its own: on the UI thread it would hold up the keystrokes behind it. Only the PTY's writes,
+/// resizes, and closes and the shell's quick calls run there, in the order the page sent them. `pdf_page` and
+/// the theme and backdrop commands carry bytes, and come by fetch (host.js).
+fn commands(name: &str) -> Option<(Run, host::Command)> {
+    use Run::{Inline, Thread};
+    Some(match name {
+        "pty_write" => (Inline, cmd!(pty::pty_write, id, data)),
+        "pty_resize" => (Inline, cmd!(pty::pty_resize, id, cols, rows)),
+        "pty_close" => (Inline, cmd!(pty::pty_close, id)),
+        "bench" => (Inline, cmd!(bench, event, ms)),
+        "open_path" => (Inline, cmd!(shell::open_path, path, verb)),
+        "reveal" => (Inline, cmd!(shell::reveal, path)),
+        "copy_files" => (Inline, cmd!(shell::copy_files, paths, cut)),
+        "can_paste" => (Inline, cmd!(shell::can_paste)),
+        "copied_paths" => (Inline, cmd!(shell::copied_paths)),
+        "pty_spawn" => (Thread, cmd!(pty::pty_spawn, command, cwd, cols, rows, on_data: "onData")),
+        "pty_state" => (Thread, cmd!(pty::pty_state, id)),
+        "pty_states" => (Thread, cmd!(pty::pty_states, ids)),
+        "pty_command" => (Thread, cmd!(pty::pty_command, id, command, args)),
+        "session_image" => (Thread, cmd!(pty::session_image, id, n)),
+        "notify" => (Thread, cmd!(notify::notify, title, body)),
+        "boot" => (Thread, cmd!(boot)),
+        "settings" => (Thread, cmd!(settings)),
+        "update_settings" => (Thread, cmd!(update_settings, patch)),
+        "read_theme" => (Thread, cmd!(theme::read_theme)),
+        "install_theme" => (Thread, cmd!(theme::install_theme, path)),
+        "install_theme_zip" => (Thread, cmd!(theme::install_theme_zip, @body)),
+        "save_theme_zip" => (Thread, cmd!(theme::save_theme_zip, @body)),
+        "zip_holds_theme" => (Thread, cmd!(theme::zip_holds_theme, path)),
+        "saved_backdrop" => (Thread, cmd!(theme::saved_backdrop, name)),
+        "save_backdrop" => (Thread, cmd!(theme::save_backdrop, @body)),
+        "list_dir" => (Thread, cmd!(list_dir, path)),
+        "index_files" => (Thread, cmd!(index::index_files, dir)),
+        "search_text" => (Thread, cmd!(search::search_text, dir, query)),
+        "find_in_files" => (Thread, cmd!(replace::find_in_files, dir, query, with)),
+        "replace_in_files" => (Thread, cmd!(replace::replace_in_files, root, query, with, files)),
+        "undo_replace" => (Thread, cmd!(replace::undo_replace)),
+        "workspace_symbols" => (Thread, cmd!(defs::workspace_symbols, dir)),
+        "outline" => (Thread, cmd!(defs::outline, name, text)),
+        "file_stamp" => (Thread, cmd!(file_stamp, path)),
+        "path_kinds" => (Thread, cmd!(path_kinds, paths)),
+        "peek_lines" => (Thread, cmd!(peek_lines, path, from, count)),
+        "read_text" => (Thread, cmd!(read_text, path)),
+        "write_text" => (Thread, cmd!(write_text, path, text, base)),
+        "create_path" => (Thread, cmd!(create_path, path, dir)),
+        "recycle" => (Thread, cmd!(shell::recycle, path)),
+        "rename_path" => (Thread, cmd!(shell::rename_path, from, to)),
+        "paste_files" => (Thread, cmd!(shell::paste_files, dir)),
+        "drop_files" => (Thread, cmd!(shell::drop_files, paths, dir, copy)),
+        "git" => (Thread, cmd!(git::git, dir, args, input)),
+        "git_status" => (Thread, cmd!(git::git_status, path)),
+        "git_progress" => (Thread, cmd!(git::git_progress, dir, args, progress)),
+        "git_diff" => (Thread, cmd!(git::git_diff, root, path, staged, paths)),
+        "claude_sessions" => (Thread, cmd!(history::claude_sessions, dir)),
+        "claude_commands" => (Thread, cmd!(commands::claude_commands, dir)),
+        "pdf_page" => (Thread, cmd!(pdf::pdf_page, path, width, height)),
+        "ide_selection" => (Thread, cmd!(ide::ide_selection, id, path, start, end, text)),
+        "ide_diff_answer" => (Thread, cmd!(ide::ide_diff_answer, id, tab, outcome, contents)),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

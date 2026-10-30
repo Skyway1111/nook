@@ -8,6 +8,7 @@
 //! Claude as the prompt's own keys do.
 //!
 //! The lockfile lists no workspace folders, so a Claude outside nook never takes it for its own editor.
+use crate::host::emit;
 use crate::json::{self, obj, Out, Raw, J, W};
 use std::{
     collections::HashMap,
@@ -21,7 +22,6 @@ use std::{
     },
     thread,
 };
-use tauri::{AppHandle, Emitter};
 
 type Writer = Arc<Mutex<TcpStream>>;
 
@@ -62,9 +62,8 @@ fn token() -> String {
 
 /// Opens session `id`'s link and gives the port its Claude should connect to. None if it couldn't: the tab
 /// works as before, without the viewer's selection.
-pub fn open(app: &AppHandle, id: u64) -> Option<u16> {
-    let app = app.clone();
-    listen(id, Arc::new(move |e: Event| e.emit(&app, id)))
+pub fn open(id: u64) -> Option<u16> {
+    listen(id, Arc::new(move |e: Event| e.emit(id)))
 }
 
 fn listen(id: u64, tell: Arc<dyn Fn(Event) + Send + Sync>) -> Option<u16> {
@@ -105,8 +104,7 @@ pub fn close(id: u64) {
 
 /// Tells session `id`'s Claude what the viewer shows: `path`, and the lines picked in it, from `start` to
 /// `end`, each `[line, character]` counted from 0, with their `text`. No path tells it nothing is shown.
-#[tauri::command]
-pub async fn ide_selection(id: u64, path: Option<String>, start: [u32; 2], end: [u32; 2], text: Option<String>) {
+pub fn ide_selection(id: u64, path: Option<String>, start: [u32; 2], end: [u32; 2], text: Option<String>) {
     let (start, end) = (At(start), At(end));
     let selection = obj! { "end": end, "start": start };
     let mut params: Vec<(&str, &dyn W)> = vec![("selection", &selection)];
@@ -140,20 +138,19 @@ enum Event {
 }
 
 impl Event {
-    fn emit(self, app: &AppHandle, id: u64) {
-        let _ = match self {
+    fn emit(self, id: u64) {
+        match self {
             Event::Diff { tab, path, contents } => {
-                app.emit_str("ide-diff", json::to_string(&obj! { "contents": contents, "id": id, "path": path, "tab": tab }))
+                emit("ide-diff", &json::to_string(&obj! { "contents": contents, "id": id, "path": path, "tab": tab }))
             }
-            Event::Close { tab } => app.emit_str("ide-diff-close", json::to_string(&obj! { "id": id, "tab": tab })),
-        };
+            Event::Close { tab } => emit("ide-diff-close", &json::to_string(&obj! { "id": id, "tab": tab })),
+        }
     }
 }
 
 /// Answers the edit Claude calls `tab` in session `id`: `FILE_SAVED` with the `contents` to write,
 /// `DIFF_REJECTED`, or `TAB_CLOSED`, which leaves the answer to Claude's own prompt.
-#[tauri::command]
-pub async fn ide_diff_answer(id: u64, tab: String, outcome: String, contents: Option<String>) {
+pub fn ide_diff_answer(id: u64, tab: String, outcome: String, contents: Option<String>) {
     let Some(shared) = links().lock().unwrap().get(&id).map(|l| l.shared.clone()) else { return };
     let Some((writer, call)) = shared.lock().unwrap().diffs.remove(&tab) else { return };
     let _ = settle(&writer, &call, &outcome, contents);
@@ -449,7 +446,7 @@ mod tests {
         send(&mut claude, r#"{"jsonrpc":"2.0","method":"ide_connected","params":{"pid":1}}"#).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(100));
 
-        tauri::async_runtime::block_on(ide_selection(7_000_001, Some("/a/b.txt".into()), [1, 0], [2, 5], Some("beta\ngamma".into())));
+        ide_selection(7_000_001, Some("/a/b.txt".into()), [1, 0], [2, 5], Some("beta\ngamma".into()));
         let (_, _, note) = frame(&mut reader).unwrap();
         let selection = r#""selection":{"end":{"character":5,"line":2},"start":{"character":0,"line":1}}"#;
         let want = format!(r#"{{"jsonrpc":"2.0","method":"selection_changed","params":{{"filePath":"/a/b.txt",{selection},"text":"beta\ngamma"}}}}"#);
@@ -459,7 +456,7 @@ mod tests {
         send(&mut claude, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"openDiff","arguments":{"old_file_path":"/a/b.txt","new_file_path":"/a/b.txt","new_file_contents":"new","tab_name":"t1"}}}"#).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(100));
         assert_eq!(*shown.lock().unwrap(), ["t1"]);
-        tauri::async_runtime::block_on(ide_diff_answer(7_000_001, "t1".into(), "FILE_SAVED".into(), Some("new!".into())));
+        ide_diff_answer(7_000_001, "t1".into(), "FILE_SAVED".into(), Some("new!".into()));
         let (_, _, saved) = frame(&mut reader).unwrap();
         let want = r#"{"id":5,"jsonrpc":"2.0","result":{"content":[{"text":"FILE_SAVED","type":"text"},{"text":"new!","type":"text"}]}}"#;
         assert_eq!(saved, want.as_bytes());

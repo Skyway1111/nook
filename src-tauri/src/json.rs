@@ -167,15 +167,24 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// A whole number in u32's range. Any other number is refused, a fraction or exponent included.
-    pub fn u32(&mut self) -> Result<u32, Error> {
+    /// A number that reads as a `T`, which `what` names in an error: for an integer type, any other number is
+    /// refused, a fraction or exponent included.
+    pub fn num<T: std::str::FromStr>(&mut self, what: &str) -> Result<T, Error> {
         match self.ws() {
             Some(b'-' | b'0'..=b'9') => {
                 let n = self.number()?;
-                n.parse().map_err(|_| self.here(format!("invalid value: {n}, expected u32")))
+                n.parse().map_err(|_| self.here(format!("invalid value: {n}, expected {what}")))
             }
-            next => Err(self.wrong(next, "u32")),
+            next => Err(self.wrong(next, what)),
         }
+    }
+
+    /// The text of the value ahead, checked as JSON.
+    pub fn raw(&mut self) -> Result<&'a str, Error> {
+        self.ws();
+        let from = self.i;
+        self.skip()?;
+        Ok(&self.text[from..self.i])
     }
 
     /// Reads a `null` if one is next, and says whether it did.
@@ -200,6 +209,25 @@ impl<'a> Reader<'a> {
             Some(b'{') => self.object::<true>(each),
             next => Err(self.wrong(next, what)),
         }
+    }
+
+    /// The object ahead as `what`, handing `set` the index in `keys` of each key it holds, with the reader at its
+    /// value. Any other key's value is skipped, and a key twice is refused, placed on its colon.
+    pub fn known(&mut self, what: &str, keys: &[&str], mut set: impl FnMut(&mut Self, usize) -> Result<(), Error>) -> Result<(), Error> {
+        let mut seen = 0u64;
+        self.map(what, |p, key| match keys.iter().position(|k| *k == key) {
+            Some(i) if seen & 1 << i != 0 => Err(p.at_key(format!("duplicate field `{key}`"))),
+            Some(i) => {
+                seen |= 1 << i;
+                set(p, i)
+            }
+            None => p.skip(),
+        })
+    }
+
+    /// `field`'s value, or the error for its absence, placed past the object.
+    pub fn needs<T>(&self, value: Option<T>, field: &str) -> Result<T, Error> {
+        value.ok_or_else(|| self.here(format!("missing field `{field}`")))
     }
 
     /// The value ahead, `next`, isn't `expected`: says what it is, placed past it if it's a scalar.
@@ -545,6 +573,74 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// A value read straight off JSON text, as a typed field of settings.json or a command's argument.
+pub trait Take: Sized {
+    fn take(p: &mut Reader) -> Result<Self, Error>;
+
+    /// The value when its key is missing, for a type that may be.
+    fn absent() -> Option<Self> {
+        None
+    }
+}
+
+impl Take for bool {
+    fn take(p: &mut Reader) -> Result<Self, Error> {
+        p.bool()
+    }
+}
+
+impl Take for String {
+    fn take(p: &mut Reader) -> Result<Self, Error> {
+        p.str().map(String::from)
+    }
+}
+
+macro_rules! numbers {
+    ($($t:ident)*) => {$(
+        impl Take for $t {
+            fn take(p: &mut Reader) -> Result<Self, Error> {
+                p.num(stringify!($t))
+            }
+        }
+    )*};
+}
+numbers!(u8 u16 u32 u64 usize f64);
+
+impl<T: Take> Take for Option<T> {
+    fn take(p: &mut Reader) -> Result<Self, Error> {
+        if p.null()? { Ok(None) } else { T::take(p).map(Some) }
+    }
+
+    fn absent() -> Option<Self> {
+        Some(None)
+    }
+}
+
+impl<T: Take> Take for Vec<T> {
+    fn take(p: &mut Reader) -> Result<Self, Error> {
+        let mut items = Vec::new();
+        p.list(|p| T::take(p).map(|v| items.push(v)))?;
+        Ok(items)
+    }
+}
+
+impl<T: Take, const N: usize> Take for [T; N] {
+    fn take(p: &mut Reader) -> Result<Self, Error> {
+        let items = Vec::<T>::take(p)?;
+        let n = items.len();
+        items.try_into().map_err(|_| p.here(format!("invalid length {n}, expected an array of length {N}")))
+    }
+}
+
+/// A value kept as its JSON text.
+pub struct Text(pub String);
+
+impl Take for Text {
+    fn take(p: &mut Reader) -> Result<Self, Error> {
+        p.raw().map(|t| Text(t.into()))
+    }
+}
+
 /// JSON being written: compact, or pretty, two spaces a level and `[]` or `{}` when empty.
 pub struct Out {
     s: String,
@@ -626,6 +722,21 @@ macro_rules! obj {
     };
 }
 pub(crate) use obj;
+
+/// Writes struct `T` as an object of the fields named, in order, each under its own name or the key given:
+/// `object!(T { path, is_dir: "isDir" })`.
+macro_rules! object {
+    ($t:ty { $($f:ident $(: $k:literal)?),* $(,)? }) => {
+        impl $crate::json::W for $t {
+            fn w(&self, o: &mut $crate::json::Out) {
+                $crate::json::Obj(&[$(($crate::json::object!(@key $f $($k)?), &self.$f as &dyn $crate::json::W)),*]).w(o);
+            }
+        }
+    };
+    (@key $f:ident) => { stringify!($f) };
+    (@key $f:ident $k:literal) => { $k };
+}
+pub(crate) use object;
 
 /// Text that is already JSON, written as it is.
 pub struct Raw<'a>(pub &'a str);
@@ -713,7 +824,26 @@ macro_rules! integers {
         }
     )*};
 }
-integers!(u32 u64 u128);
+integers!(u8 u16 u32 u64 u128 usize);
+
+impl W for char {
+    fn w(&self, o: &mut Out) {
+        self.encode_utf8(&mut [0; 4]).w(o);
+    }
+}
+
+impl W for () {
+    fn w(&self, o: &mut Out) {
+        o.s.push_str("null");
+    }
+}
+
+impl<A: W, B: W, C: W, D: W, E: W> W for (A, B, C, D, E) {
+    fn w(&self, o: &mut Out) {
+        let (a, b, c, d, e) = self;
+        o.list('[', ']', [a as &dyn W, b, c, d, e], |o, v| v.w(o));
+    }
+}
 
 impl<T: W> W for Option<T> {
     fn w(&self, o: &mut Out) {

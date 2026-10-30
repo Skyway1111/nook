@@ -1,7 +1,6 @@
 //! The git panel's commands. They run the git CLI, so hooks, signing, and credential helpers
-//! behave as in a terminal. Each runs on a blocking worker: on the main thread, a status call
+//! behave as in a terminal. Each runs on a thread of its own: on the UI thread, a status call
 //! would hold up the keystrokes queued behind it.
-use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap},
     ffi::OsStr,
@@ -11,9 +10,12 @@ use std::{
     sync::Mutex,
     thread,
 };
-use tauri::{async_runtime::spawn_blocking, ipc::Channel};
 
-use crate::err;
+use crate::{
+    err,
+    host::Stream,
+    json::{object, Out, W},
+};
 
 /// A diff shows this many untracked files; an unignored build folder would be thousands.
 const UNTRACKED_SHOWN: usize = 100;
@@ -27,16 +29,15 @@ fn run(dir: &Path, args: &[impl AsRef<OsStr>], input: Option<&str>) -> Result<St
 
 /// Any git command in `dir`: staging, commits, branches, sync, and GitHub sign-in through
 /// Git Credential Manager, which keeps the token to itself.
-#[tauri::command]
-pub async fn git(dir: String, args: Vec<String>, input: Option<String>) -> Result<String, String> {
-    spawn_blocking(move || run(Path::new(&dir), &args, input.as_deref())).await.map_err(err)?
+pub fn git(dir: String, args: Vec<String>, input: Option<String>) -> Result<String, String> {
+    run(Path::new(&dir), &args, input.as_deref())
 }
 
-/// A fetch, pull, or push: `git` with `--progress`, sending each line git writes to stderr through `progress`
-/// as it comes, so the panel can show how far along it is.
-#[tauri::command]
-pub async fn git_progress(dir: String, args: Vec<String>, progress: Channel<String>) -> Result<String, String> {
-    spawn_blocking(move || run_progress(Path::new(&dir), &args, |line| drop(progress.send(line.into())))).await.map_err(err)?
+/// A fetch, pull, or push: `git` with `--progress`, streaming each line git writes to stderr, and a newline,
+/// to the page's channel `progress` as it comes, so the panel can show how far along it is.
+pub fn git_progress(dir: String, args: Vec<String>, progress: u64) -> Result<String, String> {
+    let lines = Stream::new(progress);
+    run_progress(Path::new(&dir), &args, |line| lines.push(format!("{line}\n").as_bytes()))
 }
 
 fn run_progress(dir: &Path, args: &[impl AsRef<OsStr>], mut each: impl FnMut(&str) + Send) -> Result<String, String> {
@@ -88,8 +89,7 @@ fn run_progress(dir: &Path, args: &[impl AsRef<OsStr>], mut each: impl FnMut(&st
     Err(String::from_utf8_lossy(said).trim().to_string())
 }
 
-#[derive(Serialize, Default, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Default, Debug, PartialEq)]
 pub struct Status {
     root: String,
     /// None while HEAD is detached.
@@ -110,7 +110,9 @@ pub struct Status {
     changes: Vec<Change>,
 }
 
-#[derive(Serialize, Debug, PartialEq)]
+object!(Status { root, branch, oid, upstream, ahead, behind, remote, subject, operation, stashes, changes });
+
+#[derive(Debug, PartialEq)]
 struct Stash {
     oid: String,
     /// As `git stash list` words it: "WIP on main: 1a2b3c4 Subject", or "On main: " and the name given.
@@ -119,8 +121,9 @@ struct Stash {
     time: u64,
 }
 
-#[derive(Serialize, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
+object!(Stash { oid, message, time });
+
+#[derive(Debug, PartialEq)]
 struct Change {
     /// Relative to the root with `/`, as git writes it. An untracked folder ends in `/`.
     path: String,
@@ -133,12 +136,24 @@ struct Change {
     removed: u32,
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
+object!(Change { path, from, kind, staged, added, removed });
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum Staged {
     Off,
     Mixed,
     On,
+}
+
+impl W for Staged {
+    fn w(&self, o: &mut Out) {
+        match self {
+            Staged::Off => "off",
+            Staged::Mixed => "mixed",
+            Staged::On => "on",
+        }
+        .w(o);
+    }
 }
 
 /// The repository holding `path`, found by its `.git` (a folder, or a file in worktrees and submodules).
@@ -150,34 +165,29 @@ fn repo_root(path: &Path) -> Option<&Path> {
 }
 
 /// The repository holding `path`, or None outside one.
-#[tauri::command]
-pub async fn git_status(path: String) -> Result<Option<Status>, String> {
-    spawn_blocking(move || {
-        let Some(root) = repo_root(Path::new(&path)) else { return Ok(None) };
-        // Claude may run git in this repo meanwhile: reads take no locks.
-        let read = |args: &[&str]| run(root, &[&["--no-optional-locks"], args].concat(), None);
-        let (status, numstat, remotes) = thread::scope(|s| {
-            let numstat = s.spawn(|| read(&["diff", "HEAD", "--numstat", "-z"]));
-            let remotes = s.spawn(|| read(&["remote"]));
-            let status = read(&["status", "--porcelain=v2", "-z", "--branch"]);
-            (status, numstat.join().unwrap(), remotes.join().unwrap())
-        });
-        let mut s = parse_status(&status?, &numstat.unwrap_or_default());
-        s.root = root.to_string_lossy().into_owned();
-        let remotes = remotes.unwrap_or_default();
-        s.remote = remotes.lines().find(|r| *r == "origin").or(remotes.lines().next()).map(String::from);
-        if let Some(oid) = &s.oid {
-            s.subject = subject(root, oid);
-        }
-        let dir = git_dir(root);
-        s.operation = operation(&dir);
-        // A worktree's git folder names the one it shares stashes with.
-        let common = std::fs::read_to_string(dir.join("commondir")).map_or(dir.clone(), |c| dir.join(c.trim()));
-        s.stashes = std::fs::read_to_string(common.join("logs/refs/stash")).map(|log| parse_stashes(&log)).unwrap_or_default();
-        Ok(Some(s))
-    })
-    .await
-    .map_err(err)?
+pub fn git_status(path: String) -> Result<Option<Status>, String> {
+    let Some(root) = repo_root(Path::new(&path)) else { return Ok(None) };
+    // Claude may run git in this repo meanwhile: reads take no locks.
+    let read = |args: &[&str]| run(root, &[&["--no-optional-locks"], args].concat(), None);
+    let (status, numstat, remotes) = thread::scope(|s| {
+        let numstat = s.spawn(|| read(&["diff", "HEAD", "--numstat", "-z"]));
+        let remotes = s.spawn(|| read(&["remote"]));
+        let status = read(&["status", "--porcelain=v2", "-z", "--branch"]);
+        (status, numstat.join().unwrap(), remotes.join().unwrap())
+    });
+    let mut s = parse_status(&status?, &numstat.unwrap_or_default());
+    s.root = root.to_string_lossy().into_owned();
+    let remotes = remotes.unwrap_or_default();
+    s.remote = remotes.lines().find(|r| *r == "origin").or(remotes.lines().next()).map(String::from);
+    if let Some(oid) = &s.oid {
+        s.subject = subject(root, oid);
+    }
+    let dir = git_dir(root);
+    s.operation = operation(&dir);
+    // A worktree's git folder names the one it shares stashes with.
+    let common = std::fs::read_to_string(dir.join("commondir")).map_or(dir.clone(), |c| dir.join(c.trim()));
+    s.stashes = std::fs::read_to_string(common.join("logs/refs/stash")).map(|log| parse_stashes(&log)).unwrap_or_default();
+    Ok(Some(s))
 }
 
 /// The git folder of the repository at `root`. In a worktree or submodule, `.git` is a file that names it.
@@ -303,42 +313,37 @@ fn parse_numstat(out: &str) -> HashMap<&str, (u32, u32)> {
 
 /// What changed under `path`, as a unified diff; `""` is the whole repo. Staged: the index against the last
 /// commit. Unstaged: the working tree against the index, with untracked files as added.
-#[tauri::command]
-pub async fn git_diff(root: String, path: String, staged: bool, paths: Option<Vec<String>>) -> Result<String, String> {
-    spawn_blocking(move || {
-        let root = Path::new(&root);
-        // `paths`, when given, are the only files shown: the ones one Claude session wrote.
-        let spec: Vec<&str> = match &paths {
-            Some(list) if !list.is_empty() => list.iter().map(String::as_str).collect(),
-            _ => vec![if path.is_empty() { "." } else { &path }],
-        };
-        // The user's diff settings can't change the shape git.js parses: no external tool, color, or odd prefixes.
-        let read = |args: &[&str]| {
-            let options = ["--no-optional-locks", "-c", "core.quotepath=false", "-c", "diff.noprefix=false"];
-            run(root, &[&options[..], args, &["--"], &spec[..]].concat(), None)
-        };
-        let diff = ["diff", "--no-ext-diff", "--no-color", "--src-prefix=a/", "--dst-prefix=b/"];
-        if staged {
-            return read(&[&diff[..], &["--cached"]].concat());
-        }
-        let (tracked, untracked) = thread::scope(|s| {
-            let untracked = s.spawn(|| read(&["ls-files", "--others", "--exclude-standard", "-z"]));
-            (read(&diff), untracked.join().unwrap())
-        });
-        let mut diff = tracked?;
-        let untracked = untracked?;
-        let files: Vec<&str> = untracked.split('\0').filter(|f| !f.is_empty()).collect();
-        for file in files.iter().take(UNTRACKED_SHOWN) {
-            let full = root.join(file);
-            diff += &new_file(file, executable(&full), crate::read_text(full.to_string_lossy().into_owned()));
-        }
-        if files.len() > UNTRACKED_SHOWN {
-            diff += &format!("\\ nook left out {} more untracked files\n", files.len() - UNTRACKED_SHOWN);
-        }
-        Ok(diff)
-    })
-    .await
-    .map_err(err)?
+pub fn git_diff(root: String, path: String, staged: bool, paths: Option<Vec<String>>) -> Result<String, String> {
+    let root = Path::new(&root);
+    // `paths`, when given, are the only files shown: the ones one Claude session wrote.
+    let spec: Vec<&str> = match &paths {
+        Some(list) if !list.is_empty() => list.iter().map(String::as_str).collect(),
+        _ => vec![if path.is_empty() { "." } else { &path }],
+    };
+    // The user's diff settings can't change the shape git.js parses: no external tool, color, or odd prefixes.
+    let read = |args: &[&str]| {
+        let options = ["--no-optional-locks", "-c", "core.quotepath=false", "-c", "diff.noprefix=false"];
+        run(root, &[&options[..], args, &["--"], &spec[..]].concat(), None)
+    };
+    let diff = ["diff", "--no-ext-diff", "--no-color", "--src-prefix=a/", "--dst-prefix=b/"];
+    if staged {
+        return read(&[&diff[..], &["--cached"]].concat());
+    }
+    let (tracked, untracked) = thread::scope(|s| {
+        let untracked = s.spawn(|| read(&["ls-files", "--others", "--exclude-standard", "-z"]));
+        (read(&diff), untracked.join().unwrap())
+    });
+    let mut diff = tracked?;
+    let untracked = untracked?;
+    let files: Vec<&str> = untracked.split('\0').filter(|f| !f.is_empty()).collect();
+    for file in files.iter().take(UNTRACKED_SHOWN) {
+        let full = root.join(file);
+        diff += &new_file(file, executable(&full), crate::read_text(full.to_string_lossy().into_owned()));
+    }
+    if files.len() > UNTRACKED_SHOWN {
+        diff += &format!("\\ nook left out {} more untracked files\n", files.len() - UNTRACKED_SHOWN);
+    }
+    Ok(diff)
 }
 
 #[cfg(unix)]
@@ -468,7 +473,7 @@ mod tests {
         }
         run(&dir, &["add", "b.txt"], None).unwrap();
         let diff = |staged, paths: Option<Vec<String>>| {
-            tauri::async_runtime::block_on(git_diff(dir.to_string_lossy().into(), String::new(), staged, paths)).unwrap()
+            git_diff(dir.to_string_lossy().into(), String::new(), staged, paths).unwrap()
         };
         let mine = || Some(vec!["a.txt".to_string(), "b.txt".to_string(), "new.txt".to_string()]);
         let named = |text: &str| ["a.txt", "b.txt", "c.txt", "new.txt"].iter().filter(|f| text.contains(&format!("b/{f}"))).copied().collect::<Vec<_>>();

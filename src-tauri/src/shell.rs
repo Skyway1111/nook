@@ -2,9 +2,8 @@
 //! Explorer shares.
 
 use std::{ffi::OsStr, mem::size_of, path::Path, ptr::null_mut};
-use tauri::async_runtime::spawn_blocking;
 
-use crate::{err, sys::*};
+use crate::sys::*;
 
 /// Paths as the shell takes a list of them: each ends in a null, and the list in one more.
 fn wide_list(paths: &[String]) -> Vec<u16> {
@@ -16,7 +15,6 @@ fn in_dir(path: &str, dir: &str) -> bool {
 }
 
 /// Runs a shell verb on a path: `open` (also a URL), `openas` (the Open with dialog), or `properties`.
-#[tauri::command]
 pub fn open_path(path: String, verb: Option<String>) {
     let verb = verb.unwrap_or_else(|| "open".into());
     let (verb_w, file) = (wide(&verb), wide(&path));
@@ -32,7 +30,6 @@ pub fn open_path(path: String, verb: Option<String>) {
     unsafe { ShellExecuteExW(&mut info) };
 }
 
-#[tauri::command]
 pub fn reveal(path: String) {
     use std::os::windows::process::CommandExt;
     let _ = std::process::Command::new("explorer").raw_arg(format!("/select,\"{path}\"")).spawn();
@@ -49,15 +46,13 @@ fn file_op(func: u32, flags: u16, from: &[String], to: &str) -> bool {
 
 /// Sends a file or folder to the Recycle Bin without asking, as Explorer does. The shell asks first
 /// when it would delete outright instead, as on a drive with no Recycle Bin.
-#[tauri::command]
-pub async fn recycle(path: String) -> Result<bool, String> {
-    spawn_blocking(move || file_op(FO_DELETE, FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING, &[path], "")).await.map_err(err)
+pub fn recycle(path: String) -> bool {
+    file_op(FO_DELETE, FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING, &[path], "")
 }
 
 /// Renames a file or folder. A name that's taken gets the shell's conflict dialog, never a silent overwrite.
-#[tauri::command]
-pub async fn rename_path(from: String, to: String) -> Result<bool, String> {
-    spawn_blocking(move || file_op(FO_RENAME, FOF_ALLOWUNDO, &[from], &to)).await.map_err(err)
+pub fn rename_path(from: String, to: String) -> bool {
+    file_op(FO_RENAME, FOF_ALLOWUNDO, &[from], &to)
 }
 
 /// Runs `f` with the clipboard open.
@@ -93,7 +88,6 @@ fn set_clipboard(format: u32, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// Puts files on the clipboard as Explorer's Copy does, or its Cut, whose paste moves them.
-#[tauri::command]
 pub fn copy_files(paths: Vec<String>, cut: bool) -> Result<(), String> {
     // DROPFILES: where the list starts, a drop point, and two flags, the second marking UTF-16 names.
     let mut files: Vec<u8> = [20u32, 0, 0, 0, 1].iter().flat_map(|n| n.to_le_bytes()).collect();
@@ -106,7 +100,6 @@ pub fn copy_files(paths: Vec<String>, cut: bool) -> Result<(), String> {
     })
 }
 
-#[tauri::command]
 pub fn can_paste() -> bool {
     unsafe { IsClipboardFormatAvailable(CF_HDROP) != 0 }
 }
@@ -136,7 +129,6 @@ fn clipboard_files() -> Result<(Vec<String>, bool), String> {
 }
 
 /// The files on the clipboard, as Explorer's Copy or Cut put them there, for a paste into a Claude tab.
-#[tauri::command]
 pub fn copied_paths() -> Vec<String> {
     if !can_paste() {
         return Vec::new();
@@ -145,52 +137,38 @@ pub fn copied_paths() -> Vec<String> {
 }
 
 /// Pastes the clipboard's files into `dir`: copies, or after a cut, moves them. True when it finished.
-#[tauri::command]
-pub async fn paste_files(dir: String) -> Result<bool, String> {
-    spawn_blocking(move || {
-        let seq = unsafe { GetClipboardSequenceNumber() };
-        let (mut paths, cut) = clipboard_files()?;
-        if cut {
-            paths.retain(|p| !in_dir(p, &dir)); // already there
-        }
-        if paths.is_empty() {
-            return Ok(false);
-        }
-        let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR;
-        let done = if cut {
-            file_op(FO_MOVE, flags, &paths, &dir)
-        } else {
-            // A copy into its own folder becomes "name - Copy", as Explorer's paste makes it.
-            let beside = if paths.iter().any(|p| in_dir(p, &dir)) { FOF_RENAMEONCOLLISION } else { 0 };
-            file_op(FO_COPY, flags | beside, &paths, &dir)
-        };
-        // A cut pastes once, as in Explorer, unless something else took the clipboard meanwhile.
-        if done && cut && unsafe { GetClipboardSequenceNumber() } == seq {
-            with_clipboard(|| {
-                unsafe { EmptyClipboard() };
-                Ok(())
-            })?;
-        }
-        Ok(done)
-    })
-    .await
-    .map_err(err)?
+pub fn paste_files(dir: String) -> Result<bool, String> {
+    let seq = unsafe { GetClipboardSequenceNumber() };
+    let (mut paths, cut) = clipboard_files()?;
+    if cut {
+        paths.retain(|p| !in_dir(p, &dir)); // already there
+    }
+    if paths.is_empty() {
+        return Ok(false);
+    }
+    let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR;
+    let done = if cut {
+        file_op(FO_MOVE, flags, &paths, &dir)
+    } else {
+        // A copy into its own folder becomes "name - Copy", as Explorer's paste makes it.
+        let beside = if paths.iter().any(|p| in_dir(p, &dir)) { FOF_RENAMEONCOLLISION } else { 0 };
+        file_op(FO_COPY, flags | beside, &paths, &dir)
+    };
+    // A cut pastes once, as in Explorer, unless something else took the clipboard meanwhile.
+    if done && cut && unsafe { GetClipboardSequenceNumber() } == seq {
+        with_clipboard(|| {
+            unsafe { EmptyClipboard() };
+            Ok(())
+        })?;
+    }
+    Ok(done)
 }
 
 /// Moves or copies files dropped on a folder in nook's file browser into `dir`, as Explorer's drag does: a
 /// move of a file already there does nothing, and a name that's taken gets the shell's conflict dialog.
-#[tauri::command]
-pub async fn drop_files(paths: Vec<String>, dir: String, copy: bool) -> Result<bool, String> {
-    spawn_blocking(move || {
-        let paths: Vec<String> = paths.into_iter().filter(|p| copy || !in_dir(p, &dir)).collect();
-        if paths.is_empty() {
-            return Ok(false);
-        }
-        let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR;
-        Ok(file_op(if copy { FO_COPY } else { FO_MOVE }, flags, &paths, &dir))
-    })
-    .await
-    .map_err(err)?
+pub fn drop_files(paths: Vec<String>, dir: String, copy: bool) -> bool {
+    let paths: Vec<String> = paths.into_iter().filter(|p| copy || !in_dir(p, &dir)).collect();
+    !paths.is_empty() && file_op(if copy { FO_COPY } else { FO_MOVE }, FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR, &paths, &dir)
 }
 
 #[cfg(test)]

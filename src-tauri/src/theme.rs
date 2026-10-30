@@ -1,6 +1,5 @@
 //! Themes: the user's theme.css, the installed theme in use, and installing one. An installed theme
 //! is a folder in `themes` beside settings.json: a theme.css, and the pictures and fonts it names.
-use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -8,13 +7,8 @@ use std::{
     sync::Once,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{
-    async_runtime::spawn_blocking,
-    ipc::{InvokeBody, Request, Response},
-    AppHandle, Manager,
-};
 
-use crate::{config_dir, decode, err, read_settings};
+use crate::{config_dir, decode, err, host::Bytes, json::object, read_settings};
 
 /// A new theme.css. nook applies it over its defaults in `src/theme.css` and the installed theme in use.
 const THEME_SEED: &str = "/* Your CSS, applied over nook's defaults and the theme in use.
@@ -23,7 +17,6 @@ const THEME_SEED: &str = "/* Your CSS, applied over nook's defaults and the them
 }
 ";
 
-#[derive(Serialize)]
 pub struct Theme {
     /// The user's theme.css, seeded on first run. None on a failed read, so a file mid-save never
     /// resets the theme.
@@ -38,9 +31,10 @@ pub struct Theme {
     first: bool,
 }
 
-#[tauri::command(async)]
-pub fn read_theme(app: AppHandle) -> Theme {
-    let dir = config_dir(&app);
+object!(Theme { css, name, pack, stamp, first });
+
+pub fn read_theme() -> Theme {
+    let dir = config_dir();
     let path = dir.join("theme.css");
     let first = !path.exists();
     // Install the themes that ship beside nook and the user hasn't had yet: all of them on the first run,
@@ -48,23 +42,21 @@ pub fn read_theme(app: AppHandle) -> Theme {
     // up, so a copy of a theme's pictures never competes with the open.
     static OFFERED: Once = Once::new();
     OFFERED.call_once(|| {
-        if let Ok(bundled) = app.path().resource_dir().map(|r| r.join("themes")) {
-            let themes = dir.join("themes");
-            if first {
+        let (bundled, themes) = (crate::resource("themes"), dir.join("themes"));
+        if first {
+            offer_bundled(&bundled, &themes);
+        } else {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
                 offer_bundled(&bundled, &themes);
-            } else {
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(5));
-                    offer_bundled(&bundled, &themes);
-                });
-            }
+            });
         }
     });
     if first {
         let _ = fs::create_dir_all(&dir).and_then(|()| fs::write(&path, THEME_SEED));
     }
     let read = |p: &Path| fs::read(p).ok().map(|bytes| decode(&bytes).into_owned());
-    let name = read_settings(&app).ok().and_then(|s| s.theme);
+    let name = read_settings().ok().and_then(|s| s.theme);
     let pack_dir = name.as_ref().map(|n| dir.join("themes").join(n));
     let pack = pack_dir.as_ref().and_then(|d| read(&d.join("theme.css")));
     let stamp = newest_change(&dir).max(pack_dir.map_or(0, |d| newest_change(&d)));
@@ -84,62 +76,49 @@ fn newest_change(dir: &Path) -> u64 {
 }
 
 /// `install` for a folder or a .zip on disk.
-#[tauri::command]
-pub async fn install_theme(app: AppHandle, path: String) -> Result<String, String> {
-    let themes = config_dir(&app).join("themes");
-    spawn_blocking(move || install(&themes, Path::new(&path), None)).await.map_err(err)?
+pub fn install_theme(path: String) -> Result<String, String> {
+    install(&config_dir().join("themes"), Path::new(&path), None)
+}
+
+/// A request body that is a name, a NUL, then bytes.
+fn named(body: &[u8]) -> Result<(String, &[u8]), String> {
+    let at = body.iter().position(|&b| b == 0).ok_or("expected a name")?;
+    Ok((String::from_utf8_lossy(&body[..at]).into_owned(), &body[at + 1..]))
 }
 
 /// `install_theme` for a .zip the settings drawer's file picker read. The body is its name, a NUL,
 /// then its bytes.
-#[tauri::command]
-pub async fn install_theme_zip(app: AppHandle, request: Request<'_>) -> Result<String, String> {
-    let InvokeBody::Raw(body) = request.body() else { return Err("expected a .zip".into()) };
-    let at = body.iter().position(|&b| b == 0).ok_or("expected a name")?;
-    let (name, bytes) = (String::from_utf8_lossy(&body[..at]).into_owned(), body[at + 1..].to_vec());
-    let themes = config_dir(&app).join("themes");
-    spawn_blocking(move || {
-        fs::create_dir_all(&themes).map_err(err)?;
-        let zip = themes.join(format!(".{}.zip", unique()));
-        fs::write(&zip, bytes).map_err(err)?;
-        let installed = install(&themes, &zip, Some(name));
-        let _ = fs::remove_file(zip);
-        installed
-    })
-    .await
-    .map_err(err)?
+pub fn install_theme_zip(body: &[u8]) -> Result<String, String> {
+    let (name, bytes) = named(body)?;
+    let themes = config_dir().join("themes");
+    fs::create_dir_all(&themes).map_err(err)?;
+    let zip = themes.join(format!(".{}.zip", unique()));
+    fs::write(&zip, bytes).map_err(err)?;
+    let installed = install(&themes, &zip, Some(name));
+    let _ = fs::remove_file(zip);
+    installed
 }
 
 /// Saves a theme the webview packed as `<name>.zip` in Downloads, or `<name> (2).zip` and on when that's
 /// taken, and returns where. The body is the theme's name, a NUL, then the bytes.
-#[tauri::command]
-pub async fn save_theme_zip(app: AppHandle, request: Request<'_>) -> Result<String, String> {
-    let InvokeBody::Raw(body) = request.body() else { return Err("expected a .zip".into()) };
-    let at = body.iter().position(|&b| b == 0).ok_or("expected a name")?;
-    let name = String::from_utf8_lossy(&body[..at]).into_owned();
+pub fn save_theme_zip(body: &[u8]) -> Result<String, String> {
+    let (name, bytes) = named(body)?;
     if Path::new(&name).file_name().and_then(|n| n.to_str()) != Some(&name) || name.starts_with('.') {
         return Err(format!("{name} isn't a theme's name"));
     }
-    // A Linux desktop without XDG's user folders names no Downloads, so it's the home folder's.
-    let downloads = app.path().download_dir().or_else(|_| app.path().home_dir().map(|h| h.join("Downloads"))).map_err(err)?;
-    let bytes = body[at + 1..].to_vec();
-    spawn_blocking(move || {
-        fs::create_dir_all(&downloads).map_err(err)?;
-        let path = (1..)
-            .map(|n| downloads.join(if n == 1 { format!("{name}.zip") } else { format!("{name} ({n}).zip") }))
-            .find(|p| !p.exists())
-            .unwrap();
-        fs::write(&path, bytes).map_err(err)?;
-        Ok(path.to_string_lossy().into_owned())
-    })
-    .await
-    .map_err(err)?
+    let downloads = crate::downloads_dir();
+    fs::create_dir_all(&downloads).map_err(err)?;
+    let path = (1..)
+        .map(|n| downloads.join(if n == 1 { format!("{name}.zip") } else { format!("{name} ({n}).zip") }))
+        .find(|p| !p.exists())
+        .unwrap();
+    fs::write(&path, bytes).map_err(err)?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Whether a .zip holds a theme: a theme.css at its top or in one folder inside.
-#[tauri::command]
-pub async fn zip_holds_theme(path: String) -> bool {
-    let Ok(Ok(list)) = spawn_blocking(move || list_zip(Path::new(&path))).await else { return false };
+pub fn zip_holds_theme(path: String) -> bool {
+    let Ok(list) = list_zip(Path::new(&path)) else { return false };
     list.lines().any(|entry| {
         let parts: Vec<_> = entry.trim_end_matches('/').split('/').collect();
         parts.len() <= 2 && parts.last().is_some_and(|p| p.eq_ignore_ascii_case("theme.css"))
@@ -284,35 +263,27 @@ fn extract_zip(zip: &Path, into: &Path) -> Result<(), String> {
 }
 
 /// Where an element's baked backdrop waits for the next start: `body`, `pane`, and the like, in the cache folder.
-fn backdrop_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+fn backdrop_file(name: &str) -> Result<PathBuf, String> {
     if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase()) {
         return Err(format!("{name} isn't a backdrop's name"));
     }
-    Ok(app.path().app_cache_dir().map_err(err)?.join("backdrops").join(name))
+    Ok(crate::cache_dir().join("backdrops").join(name))
 }
 
 /// The backdrop `save_backdrop` kept for the element `name`, as it was saved, or nothing.
-#[tauri::command(async)]
-pub fn saved_backdrop(app: AppHandle, name: String) -> Result<Response, String> {
-    Ok(Response::new(fs::read(backdrop_file(&app, &name)?).unwrap_or_default()))
+pub fn saved_backdrop(name: String) -> Result<Bytes, String> {
+    Ok(Bytes(fs::read(backdrop_file(&name)?).unwrap_or_default()))
 }
 
 /// Keeps an element's baked backdrop for the next start. The body is the element's name, a NUL, then what
 /// `saved_backdrop` gives back. Written aside and moved in, so a start never reads half a file.
-#[tauri::command]
-pub async fn save_backdrop(app: AppHandle, request: Request<'_>) -> Result<(), String> {
-    let InvokeBody::Raw(body) = request.body() else { return Err("expected a backdrop".into()) };
-    let at = body.iter().position(|&b| b == 0).ok_or("expected a name")?;
-    let file = backdrop_file(&app, &String::from_utf8_lossy(&body[..at]))?;
-    let bytes = body[at + 1..].to_vec();
-    spawn_blocking(move || {
-        let aside = file.with_extension("new");
-        fs::create_dir_all(file.parent().unwrap()).map_err(err)?;
-        fs::write(&aside, bytes).map_err(err)?;
-        fs::rename(&aside, &file).map_err(err)
-    })
-    .await
-    .map_err(err)?
+pub fn save_backdrop(body: &[u8]) -> Result<(), String> {
+    let (name, bytes) = named(body)?;
+    let file = backdrop_file(&name)?;
+    let aside = file.with_extension("new");
+    fs::create_dir_all(file.parent().unwrap()).map_err(err)?;
+    fs::write(&aside, bytes).map_err(err)?;
+    fs::rename(&aside, &file).map_err(err)
 }
 
 #[cfg(test)]
