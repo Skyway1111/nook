@@ -232,7 +232,7 @@ fn set_up(controller: *mut c_void, cfg: Config) {
         GetClientRect(window::hwnd(), &mut r);
         set_bounds(r);
         call!(controller, 4, 1 => i32);
-        call!(wv, 5, wide(assets::url(&cfg.page)).as_ptr() => *const u16);
+        call!(wv, 5, wide(assets::page()).as_ptr() => *const u16);
     }
     window::webview_ready();
     drop::register(window::hwnd());

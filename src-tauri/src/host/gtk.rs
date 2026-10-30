@@ -438,7 +438,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         // Hidden until the page has loaded: shown sooner, WebKitGTK waits out a 500 ms timeout for the first
         // frame. Should the page never load, it shows anyway.
         g_timeout_add(3000, show_late, null_mut());
-        webkit_web_view_load_uri(wv, cstring(&assets::url(&cfg.page)).as_ptr());
+        webkit_web_view_load_uri(wv, cstring(&assets::page()).as_ptr());
         g_bus_get(G_BUS_TYPE_SESSION, null_mut(), bus_ready, null_mut());
         gtk_main();
     }

@@ -30,8 +30,6 @@ pub struct Config {
     pub min: (i32, i32),
     /// What shows where the page hasn't painted.
     pub background: [u8; 3],
-    /// The first page's path among the app's files.
-    pub page: String,
     /// The webview's profile: WebView2's user data folder, or WebKit's data and cache folder.
     pub data_dir: String,
     /// WebView2's browser arguments; these replace its defaults.

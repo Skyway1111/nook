@@ -439,7 +439,6 @@ fn main() {
         size: (1280, 820),
         min: (520, 320),
         background: [20, 18, 28],
-        page: "index.html".into(),
         data_dir: data_dir().to_string_lossy().into_owned(),
         // Browser arguments, and on Linux the compositing mode, are fixed when the webview starts: a change to
         // `gpu` takes a restart.

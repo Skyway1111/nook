@@ -29,9 +29,9 @@ pub enum Route {
     File(String),
 }
 
-/// The URL of app file `path`.
-pub fn url(path: &str) -> String {
-    format!("{ORIGIN}/{path}")
+/// The page's URL: the app's root, which serves index.html.
+pub fn page() -> String {
+    format!("{ORIGIN}/")
 }
 
 /// Whether `url` is one of the app's own pages.
