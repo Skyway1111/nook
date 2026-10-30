@@ -17,7 +17,7 @@ const PLAIN = { name: 'Plain text', lex: '' }
 const SPECIAL = /[\u{0}-\u{8}\u{b}-\u{1f}\u{7f}-\u{9f}\u{ad}\u{61c}\u{200b}\u{200e}\u{200f}\u{2028}\u{2029}\u{202d}\u{202e}\u{2066}\u{2067}\u{2069}\u{feff}\u{fff9}-\u{fffc}]/gu
 const SIMPLE = /^[\t\x20-\x7e]*$/ // a line whose caret positions are columns times the character width
 const LONG = 1024 // past this many characters an unwrapped line draws only around the viewport
-const MAX_W = 3e7 // the widest the text gets, in device pixels: browsers lay out no farther than 2^25
+const MAX_W = 2 ** 24 // the widest and tallest the text gets, in device pixels: past it a float skips whole pixels, and rows paint askew
 const HUGE = 10_000 // past this many characters a wrapped line draws only the rows around the viewport...
 const ROWS = 16 // ...in blocks of this many rows
 const INDENT = /^(\t)|^( {2,})(?=\S)/
