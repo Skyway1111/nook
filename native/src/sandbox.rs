@@ -135,7 +135,7 @@ fn reap() {
             REAPING.store(false, Ordering::Relaxed);
             return;
         }
-        wait = pool.idle.iter().map(|w| IDLE - w.last.elapsed()).min().unwrap_or(IDLE);
+        wait = pool.idle.iter().map(|w| IDLE.saturating_sub(w.last.elapsed())).min().unwrap_or(IDLE);
     }
 }
 
@@ -342,6 +342,7 @@ mod os {
         fn syscall(number: c_long, ...) -> c_long;
         fn getpid() -> c_int;
         fn getppid() -> c_int;
+        fn close(fd: c_int) -> c_int;
     }
 
     pub struct Process(Child);
@@ -381,8 +382,11 @@ mod os {
     /// thread ends it if nook does mid-page, when the pipe can't tell it.
     pub fn enter() -> (File, File) {
         unsafe {
-            if syscall(SYS_CLOSE_RANGE, 3 as c_ulong, c_ulong::MAX, 0 as c_ulong) != 0 {
-                (3..1024).for_each(|fd| drop(OwnedFd::from_raw_fd(fd)));
+            // Before Linux 5.9, one by one.
+            if syscall(SYS_CLOSE_RANGE, 3 as c_ulong, c_ulong::from(u32::MAX), 0 as c_ulong) < 0 {
+                for fd in 3..1024 {
+                    close(fd);
+                }
             }
             if prctl(PR_SET_NO_NEW_PRIVS, 1 as c_ulong, 0 as c_ulong, 0 as c_ulong, 0 as c_ulong) != 0 {
                 std::process::exit(1);
