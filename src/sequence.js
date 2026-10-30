@@ -177,7 +177,8 @@ export function sequence(src) {
         if (tail) x1 += dir * 8
         lines += `<path class="${cls}" d="M${r(x1)},${r(y)}H${r(x2)}"${head ? ` marker-end="url(#${head})"` : ''}${tail ? ` marker-start="url(#${tail})"` : ''}/>`
         front += text(e.lab, (x1 + x2) / 2, ly + e.lab.h / 2)
-        touch(Math.min(x1, x2, (x1 + x2 - e.lab.w) / 2), Math.max(x1, x2, (x1 + x2 + e.lab.w) / 2))
+        const [a, b] = [x[e.from.i], x[e.to.i]].sort((p, q) => p - q)
+        touch(Math.min(a - 6, (x1 + x2 - e.lab.w) / 2), Math.max(b + 6, (x1 + x2 + e.lab.w) / 2))
       }
       if (e.dies) {
         const p = e.dies

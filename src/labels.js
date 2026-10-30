@@ -44,12 +44,13 @@ export function decode(text) {
 
 /**
  * A label: its lines, each a list of runs [text, style], wrapped at WRAP px, with its size. `<br>` breaks a
- * line; in a markdown string (`md`) so does a newline, and **bold** and *italic* style their runs.
+ * line, and <b> and <i> style their runs; in a markdown string (`md`) a newline breaks, and **bold** and
+ * *italic* style.
  */
 export function label(text, md = false, wrap = WRAP) {
   const lines = []
   for (const raw of decode(text).split(md ? /<br\s*\/?>|\n/i : /<br\s*\/?>|\\n/i)) {
-    const runs = md ? markdown(raw.trim()) : [[raw.trim(), 0]]
+    const runs = md ? markdown(raw.trim()) : tags(raw.trim())
     // Words with their styles, then filled into lines no wider than `wrap`.
     let line = [], w = 0
     const space = measure(' ')
@@ -75,6 +76,20 @@ function join(words) {
     if (last && last[1] === s) last[0] += ' ' + t
     else runs.push([runs.length ? ' ' + t : t, s])
   }
+  return runs
+}
+
+/** Runs styled by <b>, <strong>, <i> and <em>, as an HTML label would show them. */
+function tags(text) {
+  const runs = []
+  let style = 0, at = 0
+  for (const m of text.matchAll(/<(\/?)(b|strong|i|em)>/gi)) {
+    if (m.index > at) runs.push([text.slice(at, m.index), style])
+    const bit = /^[bs]/i.test(m[2]) ? 1 : 2
+    style = m[1] ? style & ~bit : style | bit
+    at = m.index + m[0].length
+  }
+  if (at < text.length) runs.push([text.slice(at), style])
   return runs
 }
 
