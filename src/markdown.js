@@ -103,6 +103,7 @@ export function toHtml(md) {
   if (md.includes('\r')) md = md.replace(/\r\n|\r/g, '\n')
   const tokens = lex(md, [])
   for (let i = 0; i < queue.length; i++) queue[i].html = inline(queue[i].src, false)
+  links = queue = null
   return render(tokens)
 }
 
@@ -170,18 +171,21 @@ function delimNext(s, i) {
 }
 
 /**
- * -1 if a line of `=` or `-` follows `i` before the next blank line, as a setext heading needs; else where the search
- * stopped, before which none can start.
+ * The next line after `i` that underlines a setext heading (as `~` its start), or that a heading's text can't cross
+ * (blank, a quote, a bullet), or the end. Every block that starts before it gets the same answer.
  */
 function setextStop(s, i) {
   const n = s.length
   for (let p = s.indexOf('\n', i); p >= 0; p = s.indexOf('\n', p + 1)) {
     let j = spaces(s, p + 1), c = s.charCodeAt(j)
-    if (j - p <= 4 && (c === 61 || c === 45)) {
-      let k = j
-      while (s.charCodeAt(k) === c) k++
-      k = spaces(s, k)
-      if (k >= n || s.charCodeAt(k) === 10) return -1
+    if (j - p <= 4) {
+      if (c === 61 || c === 45) {
+        let k = j
+        while (s.charCodeAt(k) === c) k++
+        k = spaces(s, k)
+        if (k >= n || s.charCodeAt(k) === 10) return ~(p + 1)
+      }
+      if (c === 62 || ((c === 42 || c === 43 || c === 45) && s.charCodeAt(j + 1) === 32)) return p + 1
     }
     while (c === 32 || c === 9) c = s.charCodeAt(++j)
     if (c === 10 || j >= n) return p + 1
@@ -192,7 +196,7 @@ function setextStop(s, i) {
 /** Reads the blocks of `s` into `tokens`. A paragraph first after `clipped` continues the one before it. */
 function lex(s, tokens, clipped = false) {
   const n = s.length
-  let i = 0, m, noSetext = 0
+  let i = 0, m, setext = 0, under = false
   while (i < n) {
     const last = tokens[tokens.length - 1]
     const e = blanks(s, i)
@@ -252,11 +256,9 @@ function lex(s, tokens, clipped = false) {
     }
     if (c === 62) {
       const t = blockquote(s, i)
-      if (t) {
-        tokens.push(t)
-        i += t.raw.length
-        continue
-      }
+      tokens.push(t)
+      i += t.raw.length
+      continue
     }
     if (c === 42 || c === 43 || c === 45 || (c >= 48 && c <= 57)) {
       const t = list(s, i)
@@ -300,7 +302,8 @@ function lex(s, tokens, clipped = false) {
       i += t.raw.length
       continue
     }
-    if (i >= noSetext && (noSetext = setextStop(s, i)) < 0 && (B_LHEADING.lastIndex = i, m = B_LHEADING.exec(s))) {
+    if (i >= setext && (under = (setext = setextStop(s, i)) < 0)) setext = ~setext
+    if (under && (B_LHEADING.lastIndex = i, m = B_LHEADING.exec(s))) {
       tokens.push({ t: 'heading', depth: m[2][0] === '=' ? 1 : 2, e: later(m[1].trim()) })
       i += rtrim(m[0], '\n').length
       continue
@@ -325,47 +328,43 @@ function lex(s, tokens, clipped = false) {
 
 function blockquote(s, i) {
   B_QUOTE.lastIndex = i
-  const cap = B_QUOTE.exec(s)
-  if (!cap) return
-  let lines = rtrim(cap[0], '\n').split('\n'), raw = ''
+  let lines = rtrim(B_QUOTE.exec(s)[0], '\n').split('\n'), at = 0, raw = ''
   const tokens = []
-  while (lines.length > 0) {
+  while (at < lines.length) {
     let inQuote = false, j
-    const cur = []
-    for (j = 0; j < lines.length; j++) {
-      if (/^ {0,3}>/.test(lines[j])) {
-        cur.push(lines[j])
-        inQuote = true
-      } else if (!inQuote) cur.push(lines[j])
-      else break
+    for (j = at; j < lines.length; j++) {
+      if (/^ {0,3}>/.test(lines[j])) inQuote = true
+      else if (inQuote) break
     }
-    lines = lines.slice(j)
-    const curRaw = cur.join('\n')
+    const curRaw = lines.slice(at, j).join('\n')
+    at = j
     const curText = curRaw.replace(/\n {0,3}((?:=+|-+) *)(?=\n|$)/g, '\n    $1').replace(/^ {0,3}>[ \t]?/gm, '')
     raw = raw ? `${raw}\n${curRaw}` : curRaw
     const was = top
     top = true
     lex(curText, tokens, true)
     top = was
-    if (lines.length === 0) break
+    if (at === lines.length) break
     const last = tokens[tokens.length - 1]
     if (last?.t === 'code') break
     if (last?.t === 'blockquote') {
-      const next = last.raw + '\n' + lines.join('\n').replace(/^ {0,3}>[ \t]?/gm, '')
+      const rest = lines.slice(at)
+      const next = last.raw + '\n' + rest.join('\n').replace(/^ {0,3}>[ \t]?/gm, '')
       const t = blockquote(next, 0)
       tokens[tokens.length - 1] = t
       const left = next.substring(t.raw.length).replace(/^\n/, '')
       const count = left ? left.split('\n').length : 0
-      const used = count ? lines.slice(0, -count) : lines
+      const used = count ? rest.slice(0, -count) : rest
       if (used.length > 0) raw = `${raw}\n${used.join('\n')}`
       break
     }
     if (last?.t === 'list') {
-      const next = last.raw + '\n' + lines.join('\n')
+      const next = last.raw + '\n' + lines.slice(at).join('\n')
       const t = list(next, 0)
       tokens[tokens.length - 1] = t
       raw = raw.substring(0, raw.length - last.raw.length) + t.raw
       lines = next.substring(t.raw.length).split('\n')
+      at = 0
     }
   }
   return { t: 'blockquote', raw, tokens }
@@ -485,7 +484,6 @@ function list(s, i) {
     token.items.push({ raw, task: IS_TASK.test(contents), text: contents, tokens: null })
   }
   const lastItem = token.items[token.items.length - 1]
-  if (!lastItem) return
   lastItem.raw = lastItem.raw.trimEnd()
   lastItem.text = lastItem.text.trimEnd()
   token.raw = (p > n ? s.slice(i, n) + '\n' : s.slice(i, p)).trimEnd()
@@ -497,12 +495,7 @@ function list(s, i) {
   for (const it of token.items) {
     const first = it.tokens[0]
     if (it.task && isPara(first)) {
-      for (let j = queue.length - 1; j >= 0; j--) {
-        if (IS_TASK.test(queue[j].src)) {
-          queue[j].src = queue[j].src.replace(TASK, '')
-          break
-        }
-      }
+      first.e.src = first.e.src.replace(TASK, '')
       const box = /\[[ xX]\]/.exec(it.raw)
       if (box) {
         const checked = box[0] !== '[ ]'
@@ -723,8 +716,17 @@ function reflink(src, p, alt) {
   return html === undefined ? undefined : [p + cap[0].length, html]
 }
 
-/** Emphasis or strikethrough at `p`, as marked pairs its delimiters. */
-function delimited(src, p, prev, k, alt, tilde) {
+/** Where the last run of `c` in `ms` that could close starts, or -1: a closing run follows a non-space. */
+function lastCloser(ms, c) {
+  for (let x = ms.lastIndexOf(c); x > 0; x = ms.lastIndexOf(c, x - 1)) {
+    while (ms[x - 1] === c) x--
+    if (x > 0 && !/\s/.test(ms[x - 1])) return x
+  }
+  return -1
+}
+
+/** Where the emphasis or strikethrough at `p` ends, as marked pairs it. Its delimiters' width goes in `k.cut`. */
+function delimited(src, p, prev, k, tilde) {
   const L = tilde ? DEL_L : EM_L
   L.lastIndex = p
   const m = L.exec(src)
@@ -740,9 +742,11 @@ function delimited(src, p, prev, k, alt, tilde) {
   while (src[p + lLength] === delim) lLength++
   let total = lLength, mid = 0, r
   const midRun = prev === delim
+  const masked = k.masked ??= mask(src)
+  if ((k[delim] ??= lastCloser(masked, delim)) <= p + lLength) return
   const R = tilde ? DEL_R : delim === '*' ? EM_R_AST : EM_R_UND
   R.lastIndex = 0
-  const ms = (k.masked ??= mask(src)).slice(p + lLength)
+  const ms = masked.slice(p + lLength)
   while ((r = R.exec(ms)) !== null) {
     const d = r[1] || r[2] || r[3] || r[4] || r[5] || r[6]
     if (!d) continue
@@ -762,13 +766,8 @@ function delimited(src, p, prev, k, alt, tilde) {
     total -= rLength
     if (total > 0) continue
     rLength = Math.min(rLength, rLength + total + mid)
-    const end = p + lLength + r.index + (r[0].codePointAt(0) > 0xffff ? 2 : 1) + rLength
-    const raw = src.slice(p, end)
-    const cut = tilde ? lLength : Math.min(lLength, rLength) % 2 ? 1 : 2
-    const text = raw.slice(cut, -cut)
-    const inner = inline(text, alt)
-    const tag = tilde ? 'del' : cut === 1 ? 'em' : 'strong'
-    return [end, alt ? text : `<${tag}>${inner}</${tag}>`]
+    k.cut = tilde ? lLength : Math.min(lLength, rLength) % 2 ? 1 : 2
+    return p + lLength + r.index + (r[0].codePointAt(0) > 0xffff ? 2 : 1) + rLength
   }
 }
 
@@ -780,6 +779,7 @@ for (let c = 48; c < 123; c++) if (c < 58 || (c > 64 && c < 91) || c > 96) CH[c]
 const cls = c => c < 128 ? CH[c] : 0
 const mailtoAt = (s, i) => s.startsWith('mailto:', i) || s.startsWith('xmpp:', i)
 const STOP = /[\\<![`*~_]|[hH][tT][tT][pP]|[fF][tT][pP]:\/\/|www\./g
+const TAIL = /\s*$/y
 
 const find = (s, ch, from) => {
   const i = s.indexOf(ch, from)
@@ -815,11 +815,17 @@ function textEnd(s, p, k) {
     }
   }
   if (k.at < n) end = Math.min(end, Math.max(k.name, q))
-  // Two spaces before a line break. Spaces can't run past `end`, which isn't one.
+  // Two spaces before a line break, unless only whitespace follows (I_BR's rule). Spaces can't run past `end`, which
+  // isn't one.
   if (k.nl < q) k.nl = find(s, '\n', q)
   while (k.nl < end) {
     const nl = k.nl
     if (nl - 2 >= q && s.charCodeAt(nl - 1) === 32 && s.charCodeAt(nl - 2) === 32) {
+      TAIL.lastIndex = nl + 1
+      if (TAIL.test(s)) {
+        k.nl = n
+        break
+      }
       let t = nl - 2
       while (t > q && s.charCodeAt(t - 1) === 32) t--
       end = t
@@ -846,8 +852,9 @@ function inline(src, alt) {
   const n = src.length
   let out = '', text = '', textRaw = false, inText = false
   let prev = '', keep = false
-  const k = { stop: -1, at: -1, name: 0, nl: -1, colon: -1, refs: src.includes('&#'), masked: null }
-  let p = 0, m, r
+  const k = { stop: -1, at: -1, name: 0, nl: -1, colon: -1, refs: src.includes('&#'), masked: null, cut: 0,
+    '*': undefined, _: undefined, '~': undefined }
+  let p = 0, m, r, e
   while (p < n) {
     if (!keep) prev = ''
     keep = false
@@ -883,7 +890,11 @@ function inline(src, alt) {
         }
       }
     }
-    if (!r && (c === 42 || c === 95)) r = delimited(src, p, prev, k, alt, false)
+    if (!r && (c === 42 || c === 95 || c === 126) && (e = delimited(src, p, prev, k, c === 126)) > 0) {
+      const cut = k.cut, body = src.slice(p + cut, e - cut), inner = inline(body, alt)
+      const tag = c === 126 ? 'del' : cut === 1 ? 'em' : 'strong'
+      r = [e, alt ? body : `<${tag}>${inner}</${tag}>`]
+    }
     if (!r) {
       if (c === 96) {
         I_CODE.lastIndex = p
@@ -895,7 +906,7 @@ function inline(src, alt) {
       } else if (c === 32 || c === 92) {
         I_BR.lastIndex = p
         if ((m = I_BR.exec(src))) r = [p + m[0].length, alt ? '' : '<br>']
-      } else if (c === 126) r = delimited(src, p, prev, k, alt, true)
+      }
     }
     if (!r && c === 60) {
       I_AUTOLINK.lastIndex = p
