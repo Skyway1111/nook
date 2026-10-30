@@ -65,7 +65,8 @@ struct State<'a> {
     text: UnsafeCell<crate::W>,
 }
 
-/// Shows the flow; returns the exit code (0 done, 1 cancelled, 2 failed) and the last page's checkbox.
+/// Shows the flow; returns the exit code (0 done, 1 cancelled, 2 failed) and the last page's checkbox,
+/// false when it has none.
 pub fn run(flow: &Flow) -> (u32, bool) {
     let go = [Button(GO, flow.go.as_ptr())];
     let s = State {
@@ -75,13 +76,13 @@ pub fn run(flow: &Flow) -> (u32, bool) {
         busy: AtomicBool::new(false),
         code: AtomicU32::new(1),
         pages: UnsafeCell::new([
-            page(flow, flow.busy, w!(""), None, PROGRESS, CANCEL),
-            page(flow, flow.done, w!(""), flow.done_check, CANCELABLE | CHECKED, CLOSE),
-            page(flow, flow.failed, w!(""), None, CANCELABLE, CLOSE),
+            page(flow.title, flow.busy, w!(""), None, PROGRESS, CANCEL),
+            page(flow.title, flow.done, w!(""), flow.done_check, CANCELABLE | CHECKED, CLOSE),
+            page(flow.title, flow.failed, w!(""), None, CANCELABLE, CLOSE),
         ]),
         text: UnsafeCell::new(crate::W::new()),
     };
-    let mut first = page(flow, flow.heading, flow.content, Some(flow.check), CANCELABLE | if flow.checked { CHECKED } else { 0 }, CANCEL);
+    let mut first = page(flow.title, flow.heading, flow.content, Some(flow.check), CANCELABLE | if flow.checked { CHECKED } else { 0 }, CANCEL);
     first.buttons = 1;
     first.button = go.as_ptr();
     first.default = GO;
@@ -92,18 +93,18 @@ pub fn run(flow: &Flow) -> (u32, bool) {
         }
         let (mut button, mut checked) = (0, 0);
         TaskDialogIndirect(&first, &mut button, null_mut(), &mut checked);
-        (s.code.load(Relaxed), checked != 0)
+        (s.code.load(Relaxed), checked != 0 && flow.done_check.is_some())
     }
 }
 
-fn page(flow: &Flow, heading: &[u16], content: &[u16], check: Option<&[u16]>, flags: u32, common: u32) -> TaskDialog {
+fn page(title: &[u16], heading: &[u16], content: &[u16], check: Option<&[u16]>, flags: u32, common: u32) -> TaskDialog {
     TaskDialog {
         size: core::mem::size_of::<TaskDialog>() as u32,
         parent: 0,
         instance: unsafe { GetModuleHandleW(null()) },
         flags,
         common,
-        title: flow.title.as_ptr(),
+        title: title.as_ptr(),
         icon: APP_ICON,
         heading: heading.as_ptr(),
         content: content.as_ptr(),
@@ -177,12 +178,22 @@ unsafe extern "system" fn worker(data: V) -> u32 {
 }
 
 /// Asks to close the running nook; true to go on.
-unsafe fn ask(flow: &Flow, parent: H) -> bool {
-    let mut p = page(flow, w!(concat!(name!(), " is running")), w!("Close it to continue?"), None, OVER_PARENT, OK | CANCEL);
+fn ask(flow: &Flow, parent: H) -> bool {
+    show(flow.title, w!(concat!(name!(), " is running")), w!("Close it to continue?"), WARNING_ICON, OK | CANCEL, parent) == IDOK
+}
+
+/// Shows why setup can't start.
+pub fn error(text: &[u16]) {
+    show(w!(concat!(name!(), " Setup")), text, w!(""), ERROR_ICON, CLOSE, 0);
+}
+
+/// One page with no callback, over `parent` when there is one; returns the button pressed.
+fn show(title: &[u16], heading: &[u16], content: &[u16], icon: P, common: u32, parent: H) -> i32 {
+    let mut p = page(title, heading, content, None, CANCELABLE | if parent == 0 { 0 } else { OVER_PARENT }, common);
     p.parent = parent;
-    p.icon = WARNING_ICON;
+    p.icon = icon;
     p.callback = None;
     let mut button = 0;
-    TaskDialogIndirect(&p, &mut button, null_mut(), null_mut());
-    button == IDOK
+    unsafe { TaskDialogIndirect(&p, &mut button, null_mut(), null_mut()) };
+    button
 }

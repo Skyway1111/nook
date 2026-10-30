@@ -15,7 +15,10 @@ pub fn link(ico: &str, name: &str, version: &str) {
         let e = &ico[6 + 16 * i as usize..][..16];
         let at = |o: usize| u32::from_le_bytes(e[o..o + 4].try_into().unwrap()) as usize;
         res.push((3, i + 1, ico[at(12)..][..at(8)].to_vec()));
-        group.extend_from_slice(&e[..12]);
+        // A PNG entry's header says 0 planes; rc and windres write 1.
+        group.extend_from_slice(&e[..4]);
+        group.extend(u16::from_le_bytes([e[4], e[5]]).max(1).to_le_bytes());
+        group.extend_from_slice(&e[6..12]);
         group.extend((i + 1).to_le_bytes());
     }
     res.push((14, 32512, group));

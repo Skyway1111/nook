@@ -4,9 +4,11 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 
+# Its own build, outside nook's.
+[workspace]
+
 [[bin]]
 name = "setup"
-path = "src/main.rs"
 test = false
 bench = false
 

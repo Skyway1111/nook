@@ -6,7 +6,9 @@ mod rsrc;
 fn main() {
     let var = |k: &str, default: &str| {
         println!("cargo:rerun-if-env-changed={k}");
-        let v = std::env::var(k).unwrap_or_else(|_| default.into());
+        let v = std::env::var(k).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.into());
+        // Every registry key and folder setup deletes ends in these.
+        assert!(!v.contains(['\\', '/']), "{k} names a key or folder, not a path");
         println!("cargo:rustc-env={k}={v}");
         v
     };

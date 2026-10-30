@@ -72,15 +72,22 @@ extern "system" {
     pub fn HeapFree(h: H, flags: u32, p: V) -> i32;
     pub fn Sleep(ms: u32);
     pub fn ExitProcess(code: u32) -> !;
+    pub fn SetDefaultDllDirectories(flags: u32) -> i32;
+    pub fn LoadLibraryExW(name: P, file: H, flags: u32) -> H;
+    pub fn GetProcAddress(m: H, name: *const u8) -> V;
+    pub fn CreateFileMappingW(h: H, sa: V, protect: u32, hi: u32, lo: u32, name: P) -> H;
+    pub fn MapViewOfFile(h: H, access: u32, hi: u32, lo: u32, n: usize) -> V;
 }
 
-// What the compiler calls to copy and fill memory, from ntdll rather than a C runtime.
+// What the compiler calls to copy, fill and compare memory, from ntdll rather than a C runtime, and CRC32.
 #[allow(dead_code)]
 #[link(name = "ntdll", kind = "raw-dylib")]
 extern "C" {
     pub fn memcpy(d: V, s: *const c_void, n: usize) -> V;
     pub fn memmove(d: V, s: *const c_void, n: usize) -> V;
     pub fn memset(d: V, c: i32, n: usize) -> V;
+    pub fn memcmp(a: *const c_void, b: *const c_void, n: usize) -> i32;
+    pub fn RtlComputeCrc32(crc: u32, b: *const u8, n: u32) -> u32;
 }
 
 #[link(name = "advapi32", kind = "raw-dylib")]
@@ -91,6 +98,8 @@ extern "system" {
     pub fn RegDeleteTreeW(k: H, sub: P) -> u32;
     pub fn RegDeleteKeyW(k: H, sub: P) -> u32;
     pub fn RegCloseKey(k: H) -> u32;
+    pub fn OpenProcessToken(p: H, access: u32, t: *mut H) -> i32;
+    pub fn GetTokenInformation(t: H, class: u32, info: V, n: u32, need: *mut u32) -> i32;
 }
 
 #[link(name = "shell32", kind = "raw-dylib")]
@@ -99,6 +108,12 @@ extern "system" {
     pub fn SHGetKnownFolderPath(id: *const Guid, flags: u32, t: H, out: *mut *mut u16) -> i32;
     pub fn SHCreateItemFromParsingName(p: P, bc: V, iid: *const Guid, out: *mut V) -> i32;
     pub fn SHFileOperationW(op: *mut FileOp) -> i32;
+    pub fn SHChangeNotify(event: i32, flags: u32, a: P, b: P);
+}
+
+#[link(name = "shlwapi", kind = "raw-dylib")]
+extern "system" {
+    pub fn SHCreateStreamOnFileEx(p: P, mode: u32, attributes: u32, create: i32, template: V, out: *mut V) -> i32;
 }
 
 #[repr(C)]
@@ -131,27 +146,36 @@ extern "system" {
     pub fn TaskDialogIndirect(c: *const TaskDialog, button: *mut i32, radio: *mut i32, checked: *mut i32) -> i32;
 }
 
-#[link(name = "cabinet", kind = "raw-dylib")]
-extern "system" {
-    pub fn CreateCompressor(alg: u32, alloc: V, out: *mut H) -> i32;
-    pub fn SetCompressorInformation(h: H, class: u32, v: *const c_void, n: usize) -> i32;
-    pub fn Compress(h: H, src: *const u8, n: usize, dst: *mut u8, cap: usize, out: *mut usize) -> i32;
-    pub fn CreateDecompressor(alg: u32, alloc: V, out: *mut H) -> i32;
-    pub fn Decompress(h: H, src: *const u8, n: usize, dst: *mut u8, cap: usize, out: *mut usize) -> i32;
+/// Imports from DLLs outside the KnownDLLs, loaded from System32 when called. The loader looks for a
+/// static import beside the exe first, and an installer's folder is Downloads.
+macro_rules! system32 {
+    ($dll:literal $(fn $f:ident($($a:ident: $t:ty),*) -> $r:ty;)*) => {$(
+        pub unsafe fn $f($($a: $t),*) -> $r {
+            let f = GetProcAddress(LoadLibraryExW(w!($dll).as_ptr(), 0, LOAD_LIBRARY_SEARCH_SYSTEM32), concat!(stringify!($f), "\0").as_ptr());
+            core::mem::transmute::<V, Option<unsafe extern "system" fn($($t),*) -> $r>>(f).unwrap()($($a),*)
+        }
+    )*};
 }
 
-#[link(name = "rstrtmgr", kind = "raw-dylib")]
-extern "system" {
-    pub fn RmStartSession(h: *mut u32, flags: u32, key: *mut u16) -> u32;
-    pub fn RmRegisterResources(h: u32, n: u32, files: *const P, na: u32, a: V, ns: u32, s: V) -> u32;
-    pub fn RmGetList(h: u32, need: *mut u32, n: *mut u32, info: V, reasons: *mut u32) -> u32;
-    pub fn RmShutdown(h: u32, flags: u32, cb: V) -> u32;
-    pub fn RmEndSession(h: u32) -> u32;
+system32! { "cabinet.dll"
+    fn CreateCompressor(alg: u32, alloc: V, out: *mut H) -> i32;
+    fn SetCompressorInformation(h: H, class: u32, v: *const c_void, n: usize) -> i32;
+    fn Compress(h: H, src: *const u8, n: usize, dst: *mut u8, cap: usize, out: *mut usize) -> i32;
+    fn CreateDecompressor(alg: u32, alloc: V, out: *mut H) -> i32;
+    fn Decompress(h: H, src: *const u8, n: usize, dst: *mut u8, cap: usize, out: *mut usize) -> i32;
+    fn CloseCompressor(h: H) -> i32;
 }
 
-#[link(name = "urlmon", kind = "raw-dylib")]
-extern "system" {
-    pub fn URLDownloadToFileW(caller: V, url: P, file: P, r: u32, cb: V) -> i32;
+system32! { "rstrtmgr.dll"
+    fn RmStartSession(h: *mut u32, flags: u32, key: *mut u16) -> u32;
+    fn RmRegisterResources(h: u32, n: u32, files: *const P, na: u32, a: V, ns: u32, s: V) -> u32;
+    fn RmGetList(h: u32, need: *mut u32, n: *mut u32, info: V, reasons: *mut u32) -> u32;
+    fn RmShutdown(h: u32, flags: u32, cb: V) -> u32;
+    fn RmEndSession(h: u32) -> u32;
+}
+
+system32! { "urlmon.dll"
+    fn URLDownloadToFileW(caller: V, url: P, file: P, r: u32, cb: V) -> i32;
 }
 
 /// TASKDIALOGCONFIG, which commctrl.h packs to 1 byte.
@@ -188,6 +212,7 @@ pub struct Button(pub i32, pub P);
 
 pub const GENERIC_READ: u32 = 0x8000_0000;
 pub const GENERIC_WRITE: u32 = 0x4000_0000;
+pub const SHARE_READ: u32 = 1;
 pub const SHARE_READ_DELETE: u32 = 5;
 pub const CREATE_ALWAYS: u32 = 2;
 pub const OPEN_EXISTING: u32 = 3;
@@ -208,6 +233,14 @@ pub const FOF_NO_UI: u16 = 0x614;
 pub const COINIT_APARTMENTTHREADED: u32 = 2;
 pub const CLSCTX_INPROC_SERVER: u32 = 1;
 pub const VT_LPWSTR: u16 = 31;
+pub const STGM_CREATE_WRITE: u32 = 0x1001;
+pub const SHCNE_CREATE: i32 = 2;
+pub const SHCNF_PATHW: u32 = 5;
+pub const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x800;
+pub const TOKEN_QUERY: u32 = 8;
+pub const TOKEN_ELEVATION: u32 = 20;
+pub const PAGE_READONLY: u32 = 2;
+pub const FILE_MAP_READ: u32 = 4;
 pub const HKCU: H = 0x8000_0001u32 as i32 as H;
 pub const HKLM: H = 0x8000_0002u32 as i32 as H;
 pub const INVALID: H = -1;
