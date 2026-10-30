@@ -42,7 +42,7 @@ import { spawn, execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
-import { f, judge, median, quantile, table } from './stats.mjs'
+import { ID, benched, f, judge, median, quantile, table } from './stats.mjs'
 
 const flag = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i < 0 ? fallback : process.argv[i + 1] }
 const bins = flag('bin', new URL('../src-tauri/target/release/stage/nook', import.meta.url).pathname).split(',').map(b => resolve(b))
@@ -58,8 +58,7 @@ const [W, H] = [1280, 820] // nook's own first size
 const P = quick
   ? { settle: 2000, idle: 5000, keys: 60, resizes: 20, floods: 1, afterFlood: 800, scrolls: 12, resizesFull: 8, diffCpu: 3000 }
   : { settle: 3000, idle: 10000, keys: 100, resizes: 40, floods: 3, afterFlood: 1500, scrolls: 40, resizesFull: 20, diffCpu: 5000 }
-const ID = 'dev.nook.bench'
-for (const bin of bins) if (!existsSync(bin) || !readFileSync(bin).includes(ID)) throw new Error(`no nook built as ${ID} at ${bin}`)
+for (const bin of bins) if (!benched(bin)) throw new Error(`no nook built as ${ID} at ${bin}`)
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 

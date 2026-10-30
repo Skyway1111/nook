@@ -12,10 +12,11 @@
 // every build here is (bench/linux.mjs checks). Main's builds and their shared cargo target live in
 // ~/.cache/nook-bench; deleting it is safe.
 import { execFileSync, spawnSync } from 'child_process'
-import { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
+import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import { ID, benched } from './stats.mjs'
 
 const flag = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i < 0 ? fallback : process.argv[i + 1] }
 const repo = fileURLToPath(new URL('..', import.meta.url))
@@ -27,10 +28,8 @@ const run = (command, args, opts) => {
   const r = spawnSync(command, args, { stdio: 'inherit', ...opts })
   if (r.status !== 0) throw new Error(`${command} ${args.join(' ')} failed`)
 }
-// Every build is nook as dev.nook.bench: its own settings and WebKit data, whatever the tree's own identity.
-const ID = 'dev.nook.bench'
+// Every build is nook as ID, whatever the tree's own identity.
 const env = { ...process.env, NOOK_ID: ID, TAURI_CONFIG: JSON.stringify({ identifier: ID }) }
-const benched = bin => existsSync(bin) && readFileSync(bin).includes(ID)
 
 /** Main's release build at `ref`, made in a worktree the first time and kept by commit, with what ships beside it.
  * A commit with scripts/build.mjs builds itself; an older one builds with its own tauri-cli. */

@@ -1,8 +1,9 @@
 # Keystroke-to-screen latency: press a key, poll the screen until the typed cell changes, then erase it.
-# Usage: latency.ps1 -X <px> -Y <px> [-W 160] [-H 40] [-Trials 40] [-Title nook]
-#   Title: substring of the target window's title. Stops if that window loses focus, so keys never go elsewhere.
+# Usage: latency.ps1 -Id <pid> -X <px> -Y <px> [-W 160] [-H 40] [-Trials 40]
+#   Id: the process id of the nook to type into, never one picked by its title. Stops if its window loses focus, so
+#   keys never go elsewhere.
 #   X/Y: window-relative physical pixels of the empty prompt, just right of the "> " marker.
-param([int]$X, [int]$Y, [int]$W = 160, [int]$H = 40, [int]$Trials = 40, [string]$Title = 'nook')
+param([Parameter(Mandatory)][int]$Id, [int]$X, [int]$Y, [int]$W = 160, [int]$H = 40, [int]$Trials = 40)
 Add-Type -ReferencedAssemblies System.Drawing @"
 using System; using System.Diagnostics; using System.Drawing; using System.Drawing.Imaging;
 using System.Runtime.InteropServices; using System.Threading;
@@ -13,13 +14,13 @@ public static class Lat {
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   delegate bool EnumProc(IntPtr h, IntPtr p);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr p);
-  public static IntPtr Find(string title) {
+  public static IntPtr Find(int id) {
     IntPtr found = IntPtr.Zero;
-    EnumWindows((h, p) => { var sb = new System.Text.StringBuilder(512); GetWindowText(h, sb, 512);
-      if (IsWindowVisible(h) && sb.ToString().Contains(title)) { found = h; return false; } return true; }, IntPtr.Zero);
+    EnumWindows((h, p) => { uint pid; GetWindowThreadProcessId(h, out pid);
+      if (IsWindowVisible(h) && pid == id) { found = h; return false; } return true; }, IntPtr.Zero);
     return found;
   }
   struct RECT { public int L, T, R, B; }
@@ -58,8 +59,8 @@ public static class Lat {
   }
 }
 "@
-$hwnd = [Lat]::Find($Title)
-if ($hwnd -eq [IntPtr]::Zero) { throw "no visible window titled *$Title*" }
+$hwnd = [Lat]::Find($Id)
+if ($hwnd -eq [IntPtr]::Zero) { throw "process $Id has no visible window" }
 $ms = [Lat]::Run($hwnd, $X, $Y, $W, $H, $Trials) | Where-Object { $_ -ge 0 } | Sort-Object
 $pick = { param($q) $ms[[Math]::Min($ms.Count - 1, [int][Math]::Floor($q * $ms.Count))] }
-'{0}: n={1} median={2:N1}ms p90={3:N1}ms max={4:N1}ms' -f $Title, $ms.Count, (& $pick 0.5), (& $pick 0.9), $ms[-1]
+'nook {0}: n={1} median={2:N1}ms p90={3:N1}ms max={4:N1}ms' -f $Id, $ms.Count, (& $pick 0.5), (& $pick 0.9), $ms[-1]

@@ -8,19 +8,20 @@
 // launch times its open; the first --sessions launches of each build also run the rest. Launches take turns
 // between the builds, and the table flags a change worse than its noise, as bench/linux.mjs does.
 // Every build is nook as dev.nook.bench, with its own settings and WebView2 profile, so your own nook can stay open
-// and its settings are never touched. An --exe has to be built that way too: `$env:NOOK_ID = 'dev.nook.bench';
-// npm run build -- --no-pack` puts one in src-tauri\target\release\stage.
+// and its settings are never touched; close it for numbers you publish, since its work is noise in theirs. An --exe
+// has to be built that way too: `$env:NOOK_ID = 'dev.nook.bench'; npm run build -- --no-pack` puts one in
+// src-tauri\target\release\stage.
 //   npm run bench:windows
 //   node bench/windows.mjs [--base 3318948] [--new origin/main] [--exe base.exe,new.exe] [--wallpapers none,koi]
 //                          [--runs 20] [--sessions 3]
 // Each commit builds in a git worktree in %LOCALAPPDATA%\nook-bench; after deleting that folder, `git worktree
 // prune` forgets them.
 import { spawn, execFileSync } from 'child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
-import { median, quantile, table } from './stats.mjs'
+import { ID, benched, median, quantile, table } from './stats.mjs'
 
 if (process.platform !== 'win32') {
   console.error('bench/windows.mjs measures nook on Windows. On Linux, use bench/linux.mjs.')
@@ -33,16 +34,9 @@ const sessions = Math.min(runs, Number(flag('sessions', 3)))
 const repo = fileURLToPath(new URL('..', import.meta.url))
 const helper = fileURLToPath(new URL('windows.ps1', import.meta.url))
 const store = join(process.env.LOCALAPPDATA, 'nook-bench')
-const ID = 'dev.nook.bench'
 const config = join(process.env.APPDATA, ID) // where the bench's nook keeps its settings, themes, and theme.css
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim()
-
-/** Whether `exe` is nook as dev.nook.bench, which never opens your own settings or profile. */
-function benched(exe) {
-  const bytes = existsSync(exe) && readFileSync(exe)
-  return !!bytes && (bytes.includes(ID) || bytes.includes(Buffer.from(ID, 'utf16le')))
-}
 
 /** A release build of `ref` as dev.nook.bench, made in its own worktree unless one is there from an earlier run.
  * A commit with scripts/build.mjs builds itself; an older one builds with its own tauri-cli. */
