@@ -305,12 +305,12 @@ export function startImages(term) {
     pics.delete(id)
   }
 
-  /** Each picture over its cells on screen; one whose cells are gone for good goes. */
+  /** Each picture over its cells on screen; one whose cells are gone for good, or whose buffer a reset replaced, goes. */
   function draw() {
     if (!pics.size) return
     const vt = term.vt
     const b = vt.buffer
-    for (const [id, p] of pics) if (p.buffer === vt.alt ? b !== vt.alt : p.end < p.buffer.trimmed) drop(id)
+    for (const [id, p] of pics) if (p.buffer === vt.alt ? b !== vt.alt : p.buffer !== vt.normal || p.end < p.buffer.trimmed) drop(id)
     const { cols, rows } = term
     const boxes = new Map() // id -> its first cell, and its cells on screen
     for (let y = 0; y < rows; y++) {
