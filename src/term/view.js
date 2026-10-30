@@ -160,7 +160,7 @@ export class Term {
     this.compEnd = 0
     this.alreadySent = ''
 
-    this.ctx = new OffscreenCanvas(1, 1).getContext('2d')
+    this.ctx = document.createElement('canvas').getContext('2d')
     this.measureFont()
     this.resizeRows()
     this.dims()
@@ -198,6 +198,14 @@ export class Term {
     const m = this.ctx.measureText(W)
     this.charW = m.width
     this.charH = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent
+    if (!this.charH) {
+      // A WebKit without font metrics on the canvas: 32 W's in the DOM, as xterm fell back to.
+      const s = this.measureBox.appendChild(document.createElement('span'))
+      s.textContent = W.repeat(32)
+      this.charW = s.offsetWidth / 32 || this.charW
+      this.charH = s.offsetHeight
+      s.remove()
+    }
     this.flat.fill(NaN)
     this.widths.clear()
     return true
@@ -1500,7 +1508,6 @@ export class Term {
       this.paused = !entries.at(-1).isIntersecting
       if (!this.paused && this.missed) {
         this.missed = false
-        this.force = true
         this.refresh()
       }
     })
