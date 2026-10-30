@@ -534,6 +534,27 @@ function place(g) {
     }
   }
   const x = simplex(a, Int32Array.from(xf), Int32Array.from(xt), Float64Array.from(xl), Float64Array.from(xw))
+  // Of the equally short placements, a node takes the middle one: centered over its children and under its
+  // parents, as far as its neighbors in its rank let it move.
+  const left = new Int32Array(N).fill(-1), right = new Int32Array(N).fill(-1)
+  for (let i = 0; i < xf.length; i++) {
+    if (xw[i] || xf[i] >= aux || xt[i] >= aux) continue
+    if (xt[i] < N) left[xt[i]] = i
+    if (xf[i] < N) right[xf[i]] = i
+  }
+  for (let pass = 0; pass < 2; pass++) {
+    for (let v = 0; v < N; v++) {
+      const near = [...ups[v], ...downs[v]].map(u => [x[u], dummy[u] ? Ω[1] : Ω[0]]).sort((p, q) => p[0] - q[0])
+      if (near.length < 2) continue
+      const half = near.reduce((s, p) => s + p[1], 0) / 2
+      let k = 0, sum = near[0][1]
+      while (sum < half) sum += near[++k][1]
+      const [m1, m2] = sum === half ? [near[k][0], near[k + 1][0]] : [near[k][0], near[k][0]]
+      if (x[v] < m1 || x[v] > m2) continue
+      const min = left[v] >= 0 ? x[xf[left[v]]] + xl[left[v]] : -Infinity, max = right[v] >= 0 ? x[xt[right[v]]] - xl[right[v]] : Infinity
+      x[v] = Math.min(Math.max((m1 + m2) / 2, min, m1), max, m2)
+    }
+  }
 
   // y from the ranks' heights. Ranks of nodes are rankSep apart, a label's a little closer; a rank of
   // borders sits a box's padding away, or room for an arrow when an edge ends across the gap.
