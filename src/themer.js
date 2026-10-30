@@ -140,7 +140,8 @@ export const nameOf = file => file.replace(/\.[^.]+$/, '').replace(/[^\p{L}\p{N}
 
 // The webview's half: decode the picture, read its palette, and draw its two copies and a card.
 const canvas = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h })
-const encode = (c, type, quality) => new Promise((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('the picture would not encode'))), type, quality))
+// toDataURL encodes now; Chromium's toBlob waits for idle time, up to a second a picture.
+const encode = async (c, type, quality) => (await fetch(c.toDataURL(type, quality))).blob()
 /** `bitmap` drawn to cover a w x h canvas, as CSS's `cover` does. */
 function cover(bitmap, w, h, smooth = true) {
   const c = canvas(w, h)
