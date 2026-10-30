@@ -1,6 +1,6 @@
-//! A PDF's first page as a PNG, for its picture in Claude's transcript. The OS draws it: Windows.Data.Pdf
-//! through its WinRT interfaces, or poppler-glib, loaded with `dlopen`, on Linux, where a system without
-//! poppler draws nothing. Neither runs the file's scripts.
+//! A PDF's first page as a PNG, for its picture in Claude's transcript. The OS draws it: Windows.Data.Pdf on a
+//! software Direct3D device, encoded by WIC, or on Linux poppler-glib and cairo, loaded with `dlopen`, so a
+//! system without poppler draws nothing. Neither runs the file's scripts.
 use tauri::ipc::Response;
 
 /// The first page of the PDF at `path`, fit inside `width` by `height` pixels on white, as PNG bytes.
@@ -186,6 +186,7 @@ mod os {
         _depth_pitch: u32,
     }
 
+    /// The first page of the PDF at `path` as PNG bytes, at the pixel size `fit` picks for the page's size.
     pub fn first_page(path: &str, fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, String> {
         render(path, fit).map_err(|hr| format!("Windows.Data.Pdf can't draw {path}: {hr:#010x}"))
     }
@@ -208,7 +209,8 @@ mod os {
             let page = doc.make(6, 0u32)?; // GetPage
             let [w, h] = page.get::<[f32; 2]>(10)?; // Size, rotation applied
             let (w, h) = fit(w as f64, h as f64);
-            // WARP, the software device: a GPU's driver would take 130 ms to start and keep 50 MB.
+            // WARP, the software device. Windows.Data.Pdf's own renderer starts the GPU's driver in this process,
+            // which takes 130 ms and keeps 50 MB.
             let (mut device, mut context) = (null_mut(), null_mut());
             ok(create_device(null_mut(), 5, null_mut(), 0x20, null(), 0, 7, &mut device, null_mut(), &mut context))?; // WARP, BGRA
             let (device, context) = (Com::new(device)?, Com::new(context)?);
@@ -341,6 +343,7 @@ mod os {
         0 // CAIRO_STATUS_SUCCESS
     }
 
+    /// The first page of the PDF at `path` as PNG bytes, at the pixel size `fit` picks for the page's size.
     pub fn first_page(path: &str, fit: impl FnOnce(f64, f64) -> (u32, u32)) -> Result<Vec<u8>, String> {
         let f = FNS.get_or_init(load).as_ref().ok_or("poppler-glib isn't installed")?;
         let path = CString::new(path).map_err(|e| e.to_string())?;
