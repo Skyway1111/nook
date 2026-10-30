@@ -153,10 +153,38 @@ function append(last, raw, text) {
   queue[queue.length - 1].src = last.text
 }
 
+/** Whether the line after `i` could be a table's delimiter row. */
+function delimNext(s, i) {
+  const j = s.indexOf('\n', i) + 1
+  if (j === 0) return false
+  const c = s.charCodeAt(Math.min(spaces(s, j), j + 3))
+  return c === 124 || c === 58 || c === 45
+}
+
+/**
+ * -1 if a line of `=` or `-` follows `i` before the next blank line, as a setext heading needs; else where the search
+ * stopped, before which none can start.
+ */
+function setextStop(s, i) {
+  const n = s.length
+  for (let p = s.indexOf('\n', i); p >= 0; p = s.indexOf('\n', p + 1)) {
+    let j = spaces(s, p + 1), c = s.charCodeAt(j)
+    if (j - p <= 4 && (c === 61 || c === 45)) {
+      let k = j
+      while (s.charCodeAt(k) === c) k++
+      k = spaces(s, k)
+      if (k >= n || s.charCodeAt(k) === 10) return -1
+    }
+    while (c === 32 || c === 9) c = s.charCodeAt(++j)
+    if (c === 10 || j >= n) return p + 1
+  }
+  return n
+}
+
 /** Reads the blocks of `s` into `tokens`. A paragraph first after `clipped` continues the one before it. */
 function lex(s, tokens, clipped = false) {
   const n = s.length
-  let i = 0, m
+  let i = 0, m, noSetext = 0
   while (i < n) {
     const last = tokens[tokens.length - 1]
     const e = blanks(s, i)
@@ -258,14 +286,13 @@ function lex(s, tokens, clipped = false) {
         continue
       }
     }
-    const t = table(s, i)
+    const t = delimNext(s, i) && table(s, i)
     if (t) {
       tokens.push(t)
       i += t.raw.length
       continue
     }
-    B_LHEADING.lastIndex = i
-    if ((m = B_LHEADING.exec(s))) {
+    if (i >= noSetext && (noSetext = setextStop(s, i)) < 0 && (B_LHEADING.lastIndex = i, m = B_LHEADING.exec(s))) {
       const raw = rtrim(m[0], '\n')
       tokens.push({ t: 'heading', raw, depth: m[2][0] === '=' ? 1 : 2, e: later(m[1].trim()) })
       i += raw.length
@@ -361,17 +388,34 @@ const expandTabs = (s, col) => {
   return out
 }
 
+const spaces = (s, i) => {
+  while (s.charCodeAt(i) === 32) i++
+  return i
+}
+/** Whether `s` is only whitespace, as `trim` reads it. */
+const isBlank = s => {
+  const c = s.charCodeAt(spaces(s, 0))
+  return !(c > 32 && c < 128) && !s.trim()
+}
+/** Whether `s` ends with a blank line, as /\n[ \t]*\n[ \t]*$/ reads it. */
+function endsBlank(s) {
+  let i = s.length - 1
+  while (s[i] === ' ' || s[i] === '\t') i--
+  if (s[i--] !== '\n') return false
+  while (s[i] === ' ' || s[i] === '\t') i--
+  return s[i] === '\n'
+}
+
 const ITEM = {}
 const LINE_RES = []
-function lineRes(indent) {
-  const k = Math.max(0, Math.min(3, indent - 1))
+/** The tests for a line that ends a list item, for one indented `k` spaces at most. */
+function lineRes(k) {
   return LINE_RES[k] ??= [
     new RegExp(`^ {0,${k}}(?:[*+-]|\\d{1,9}[.)])((?:[ \t][^\\n]*)?(?:\\n|$))`),
     new RegExp(`^ {0,${k}}((?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\\*[ \t]*){3,})(?:\\n+|$)`),
     new RegExp(`^ {0,${k}}(?:\`\`\`|~~~)`),
     new RegExp(`^ {0,${k}}#`),
     new RegExp(`^ {0,${k}}(?:<\\/?(?:${TAG})(?: +|$|\\/?>)|<(?:script|pre|style|textarea|!--))`, 'i'),
-    new RegExp(`^ {0,${k}}>`),
   ]
 }
 
@@ -394,11 +438,10 @@ function list(s, i) {
     if (B_HR.test(s)) break
     let raw = cap[0]
     p += raw.length
-    const first = cap[2].split('\n', 1)[0]
     const bulletIndent = cap[1].length
-    let line = first.replace(/^[ \t]+/, w => expandTabs(w, bulletIndent))
-    const next = lineAt(s, p)
-    let blank = !line.trim(), indent
+    let line = cap[2].endsWith('\n') ? cap[2].slice(0, -1) : cap[2], sp = spaces(line, 0)
+    if (line.charCodeAt(sp) === 9) line = line.replace(/^[ \t]+/, w => expandTabs(w, bulletIndent))
+    let blank = isBlank(line), indent
     if (blank) indent = bulletIndent + 1
     else {
       indent = line.search(/[^ ]/)
@@ -406,25 +449,32 @@ function list(s, i) {
       contents = line.slice(indent)
       indent += bulletIndent
     }
+    const next = blank ? lineAt(s, p) : ''
     if (blank && /^[ \t]*$/.test(next)) {
       raw += next + '\n'
       p += next.length + 1
       early = true
     }
     if (!early) {
-      const [bullet, hr, fence, head, html, quote] = lineRes(indent)
+      const k = Math.max(0, Math.min(3, indent - 1))
+      const [bullet, hr, fence, head, html] = lineRes(k)
       while (p < n) {
         const rawLine = lineAt(s, p)
-        const untabbed = rawLine.replace(/^[ \t]+/, w => w.replace(/\t/g, '    '))
-        if (fence.test(rawLine) || head.test(rawLine) || html.test(rawLine) || quote.test(rawLine)
-          || bullet.test(rawLine) || hr.test(rawLine)) break
-        if (untabbed.search(/[^ ]/) >= indent || !rawLine.trim()) contents += '\n' + untabbed.slice(indent)
+        sp = spaces(rawLine, 0)
+        const c = rawLine.charCodeAt(sp)
+        // A line that would start a block of its own ends the item.
+        if (sp <= k && (c === 35 || c === 62 || ((c === 96 || c === 126) && rawLine.startsWith(c === 96 ? '```' : '~~~', sp))
+          || (c === 60 && html.test(rawLine)) || ((c === 42 || c === 43 || c === 45 || (c > 47 && c < 58)) && bullet.test(rawLine))
+          || ((c === 42 || c === 45 || c === 95) && hr.test(rawLine)))) break
+        const untabbed = c === 9 ? rawLine.replace(/^[ \t]+/, w => w.replace(/\t/g, '    ')) : rawLine
+        const blankNow = isBlank(rawLine)
+        if ((c === 9 ? untabbed.search(/[^ ]/) : sp < rawLine.length ? sp : -1) >= indent || blankNow) contents += '\n' + untabbed.slice(indent)
         else {
           if (blank || line.replace(/\t/g, '    ').search(/[^ ]/) >= 4 || fence.test(line) || head.test(line)
             || hr.test(line)) break
           contents += '\n' + rawLine
         }
-        blank = !rawLine.trim()
+        blank = blankNow
         raw += rawLine + '\n'
         p += rawLine.length + 1
         line = untabbed.slice(indent)
@@ -432,7 +482,7 @@ function list(s, i) {
     }
     if (!token.loose) {
       if (endsWithBlank) token.loose = true
-      else if (/\n[ \t]*\n[ \t]*$/.test(raw)) endsWithBlank = true
+      else if (endsBlank(raw)) endsWithBlank = true
     }
     token.items.push({ raw, task: IS_TASK.test(contents), text: contents, tokens: null })
     token.raw += raw
