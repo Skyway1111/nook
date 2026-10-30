@@ -21,10 +21,13 @@ function parse(t) {
   return { text: md ? md[1] : t.replace(/^"(.*)"$/, '$1'), md: !!md, kind }
 }
 
+/** How tall siblings' subtrees stack. */
+const span = kids => kids.reduce((s, k) => s + k.sh, 0) + GY * (kids.length - 1)
+
 /** The mindmap in `src` (its first line the header) as { w, h, svg }. */
 export function draw(src, c) {
   let root = null
-  const stack = []
+  const stack = [], all = [] // in the source's order, so a node's subtree follows it
   for (const raw of src.split('\n').slice(1)) {
     const t = raw.trim()
     if (!t || t.startsWith('%%') || t.startsWith('::icon(') || t.startsWith(':::')) continue
@@ -34,13 +37,14 @@ export function draw(src, c) {
     if (!root) root = n
     else (stack[stack.length - 1] ?? root).kids.push(n)
     stack.push(n)
+    all.push(n)
   }
   if (!root) throw new Error('no root')
 
-  // Sizes, and each subtree's height.
-  const size = (n, depth, branch) => {
-    n.depth = depth
-    n.branch = branch
+  // Sizes, from the root down; then each subtree's height, from the leaves up. No recursion, so any depth draws.
+  root.depth = 0
+  root.branch = -1
+  for (const n of all) {
     n.lab = label(n.text, n.md)
     n.w = n.lab.w + 2 * PX
     n.h = n.lab.h + 2 * PY
@@ -48,33 +52,23 @@ export function draw(src, c) {
     else if (n.kind === 'hex') n.w += n.h / 2
     else if (n.kind === 'bang') n.w += 24, (n.h += 16)
     else if (n.kind === 'cloud') n.w += 16, (n.h += 6)
-    n.kids.forEach((k, i) => size(k, depth + 1, depth ? branch : i))
-    const span = n.kids.reduce((s, k) => s + k.sh, 0) + GY * (n.kids.length - 1)
-    n.sh = Math.max(n.h, span)
+    n.kids.forEach((k, i) => ((k.depth = n.depth + 1), (k.branch = n.depth ? n.branch : i)))
   }
-  size(root, 0, -1)
+  for (let i = all.length - 1; i >= 0; i--) all[i].sh = Math.max(all[i].h, span(all[i].kids))
   // The root's branches split into a right side and a left, by how tall their trees are.
   const total = root.kids.reduce((s, k) => s + k.sh, 0)
   let acc = 0
   const right = [], left = []
   for (const k of root.kids) (acc < total / 2 || !right.length ? right : left).push(k), (acc += k.sh)
-  const place = (n, x, top, dir) => {
-    n.x = x
-    n.y = top + n.sh / 2
-    n.dir = dir
-    const span = n.kids.reduce((s, k) => s + k.sh, 0) + GY * (n.kids.length - 1)
-    let y = n.y - span / 2
-    for (const k of n.kids) place(k, x + dir * (n.w / 2 + GX + k.w / 2), y, dir), (y += k.sh + GY)
+  // Siblings in a column centered on y, GX past x, which way `dir` says; each node then places its own.
+  const column = (kids, x, y, dir) => {
+    let top = y - span(kids) / 2
+    for (const k of kids) (k.x = x + dir * (GX + k.w / 2)), (k.y = top + k.sh / 2), (k.dir = dir), (top += k.sh + GY)
   }
-  root.x = 0
-  root.y = 0
-  for (const [side, dir] of [[right, 1], [left, -1]]) {
-    let y = -(side.reduce((s, k) => s + k.sh, 0) + GY * (side.length - 1)) / 2
-    for (const k of side) place(k, dir * (root.w / 2 + GX + k.w / 2), y, dir), (y += k.sh + GY)
-  }
-  const all = []
-  const walk = n => (all.push(n), n.kids.forEach(walk))
-  walk(root)
+  root.x = root.y = 0
+  column(right, root.w / 2, 0, 1)
+  column(left, -root.w / 2, 0, -1)
+  for (const n of all) if (n !== root) column(n.kids, n.x + (n.dir * n.w) / 2, n.y, n.dir)
   const x0 = Math.min(...all.map(n => n.x - n.w / 2)), y0 = Math.min(...all.map(n => n.y - n.h / 2))
   const x1 = Math.max(...all.map(n => n.x + n.w / 2)), y1 = Math.max(...all.map(n => n.y + n.h / 2))
   // A plain node past the first ring is its text over a line in its branch's color, which its edges meet.

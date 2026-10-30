@@ -712,9 +712,16 @@ export function trace(points, a, b, cutA = 0, cutB = 0) {
   // Points the clip left on top of each other would turn an arrowhead at random.
   for (let k = pts.length - 2; k > 0; k--) if (Math.hypot(pts[k][0] - pts[k + 1][0], pts[k][1] - pts[k + 1][1]) < 1) pts.splice(k, 1)
   if (pts.length > 2 && Math.hypot(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1]) < 1) pts.splice(1, 1)
-  if (cutB) shorten(pts, cutB)
-  if (cutA) pts.reverse(), shorten(pts, cutA), pts.reverse()
+  if (cutB) b && stub(pts, cutB + 2), shorten(pts, cutB)
+  if (cutA) pts.reverse(), a && stub(pts, cutA + 2), shorten(pts, cutA), pts.reverse()
   return pts
+}
+
+/** A marker lies along its end's last stretch, out of the shape: one shorter than `len` px, from the shape
+ * to its rank's edge, grows on out into the gap between ranks. */
+function stub(pts, len) {
+  const n = pts.length, [ax, ay] = pts[n - 2], [bx, by] = pts[n - 1], d = Math.hypot(ax - bx, ay - by)
+  if (n > 2 && d >= 1 && d < len) pts[n - 2] = [bx + ((ax - bx) * len) / d, by + ((ay - by) * len) / d]
 }
 
 /** d3's curveBasis through the points: a B-spline that starts and ends on the polyline's ends. */
@@ -747,7 +754,7 @@ export function shorten(pts, by) {
 }
 
 /** The point at `t` (0 to 1) of the way along a polyline, and the direction it runs there. */
-export function along(pts, t) {
+function along(pts, t) {
   let total = 0
   for (let k = 1; k < pts.length; k++) total += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1])
   let left = total * t
