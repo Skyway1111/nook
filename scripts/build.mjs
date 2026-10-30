@@ -747,7 +747,7 @@ function deb(stage, { name, version, arch, about, home }) {
   files.sort((a, b) => (a[0] < b[0] ? -1 : 1))
   const size = files.reduce((n, f) => n + (f[1]?.length ?? 0), 0)
   const control = `Package: ${name}\nVersion: ${version}\nArchitecture: ${arch}\nMaintainer: ${name}\n` +
-    `Installed-Size: ${Math.ceil(size / 1024)}\nDepends: libwebkit2gtk-4.1-0, libgtk-3-0, unzip, xdg-utils\nSection: devel\n` +
+    `Installed-Size: ${Math.ceil(size / 1024)}\nDepends: libwebkit2gtk-4.1-0, libgtk-3-0\nRecommends: libpoppler-glib8\nSection: devel\n` +
     `Priority: optional\nHomepage: ${home}\nDescription: ${about}\n`
   // A ustar archive, gzipped: a 512-byte header per entry, its bytes padded to 512, and two empty blocks.
   const tar = entries => gzipSync(Buffer.concat([...entries.flatMap(([path, data, mode, link]) => {
