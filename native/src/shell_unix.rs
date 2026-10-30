@@ -3,6 +3,7 @@
 //! within nook. Desktops share no one file clipboard the way Explorer's apps do, so nook keeps its own.
 
 use std::{
+    ffi::{c_char, c_int, c_uint, CString},
     fs, io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -10,6 +11,14 @@ use std::{
 };
 
 use crate::err;
+
+extern "C" {
+    fn renameat2(from_dir: c_int, from: *const c_char, to_dir: c_int, to: *const c_char, flags: c_uint) -> c_int;
+}
+const AT_FDCWD: c_int = -100;
+const RENAME_NOREPLACE: c_uint = 1;
+const EEXIST: i32 = 17;
+const EINVAL: i32 = 22;
 
 /// The files Cut or Copy put on nook's clipboard, and whether they were cut.
 static CLIPBOARD: Mutex<Option<(Vec<String>, bool)>> = Mutex::new(None);
@@ -51,13 +60,25 @@ pub fn recycle(path: String) -> Result<bool, String> {
     crate::run(&mut cmd, None).map(|_| true).map_err(|e| format!("nook can't move it to the trash: {e}"))
 }
 
-/// Renames a file or folder. A name that's taken fails instead of replacing what has it.
+/// Renames a file or folder. A name that's taken fails instead of replacing what has it: the kernel checks as it
+/// renames, or on a file system that can't (EINVAL, which glibc also says for a kernel without renameat2), nook checks
+/// first.
 pub fn rename_path(from: String, to: String) -> Result<bool, String> {
-    if fs::symlink_metadata(&to).is_ok() {
+    let taken = || {
         let name = Path::new(&to).file_name().unwrap_or_default().to_string_lossy();
-        return Err(format!("“{name}” is already there"));
+        Err(format!("“{name}” is already there"))
+    };
+    let (a, b) = (CString::new(from.as_str()).map_err(err)?, CString::new(to.as_str()).map_err(err)?);
+    if unsafe { renameat2(AT_FDCWD, a.as_ptr(), AT_FDCWD, b.as_ptr(), RENAME_NOREPLACE) } == 0 {
+        return Ok(true);
     }
-    fs::rename(&from, &to).map(|()| true).map_err(err)
+    let e = io::Error::last_os_error();
+    match e.raw_os_error() {
+        Some(EEXIST) => taken(),
+        Some(EINVAL) if fs::symlink_metadata(&to).is_ok() => taken(),
+        Some(EINVAL) => fs::rename(&from, &to).map(|()| true).map_err(err),
+        _ => Err(err(e)),
+    }
 }
 
 /// Puts files on nook's clipboard, as Copy does, or as Cut, whose paste moves them.
