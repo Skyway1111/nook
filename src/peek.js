@@ -1,6 +1,6 @@
 // Resting the mouse on a file's path in a Claude tab shows the lines it points at: a card with the file's
 // name, a dozen lines around the line named (or the file's first lines), in the theme's syntax colors once
-// the language loads. It reads only those lines, and only after the mouse has rested, so a pass over a row
+// highlight.js loads. It reads only those lines, and only after the mouse has rested, so a pass over a row
 // of paths costs nothing.
 import { invoke } from './host.js'
 import { el, place } from './ui.js'
@@ -49,8 +49,8 @@ function show(path, from, line, lines, hint, x, y, key) {
   card.hidden = false
   place(card, x, y)
   if (!rows.length) return
-  // Colors follow when the editor's languages load; the card shows plain text until then.
-  import('./editor.js').then(({ tokenize }) => tokenize(lines.join('\n'), paths.basename(path))).then(tokens => {
+  // Colors follow when highlight.js loads; the card shows plain text until then.
+  import('./highlight.js').then(({ tokenize }) => tokenize(lines.join('\n'), paths.basename(path))).then(tokens => {
     if (wanted !== key || !tokens) return
     codes.forEach((code, i) => {
       const text = lines[i]

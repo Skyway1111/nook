@@ -327,9 +327,9 @@ export function startDiff(view, { root, rel, openFile, run, stage, commit, only 
 
   /** Syntax colors for one file's lines, after its plain text shows. */
   async function highlight(sides, n) {
-    const { tokenize } = await import('./editor.js')
-    const [old, now] = await Promise.all([sides.old, sides.new].map(lines => tokenize(lines.join('\n'), sides.name).catch(() => null)))
+    const { tokenize } = await import('./highlight.js')
     if (n !== paint) return
+    const [old, now] = [sides.old, sides.new].map(lines => tokenize(lines.join('\n'), sides.name))
     for (const c of sides.cells) {
       const tokens = (c.side === 'old' ? old : now)?.[c.n]
       if (tokens?.length || c.mark) colorize(c.code, c.text, tokens ?? [], c.mark)

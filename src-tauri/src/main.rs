@@ -525,6 +525,7 @@ fn main() {
             replace::replace_in_files,
             replace::undo_replace,
             defs::workspace_symbols,
+            defs::outline,
             file_stamp,
             path_kinds,
             peek_lines,

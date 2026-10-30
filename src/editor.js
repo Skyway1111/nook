@@ -1,4 +1,4 @@
-// CodeMirror for a file tab, and its highlighter for Markdown's code blocks. style.css colors both from theme.css.
+// CodeMirror for a file tab. style.css colors it from theme.css.
 import { EditorState, Compartment, StateField, StateEffect, RangeSet, RangeSetBuilder } from '@codemirror/state'
 import {
   EditorView, keymap, gutters, gutter, GutterMarker, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
@@ -7,16 +7,15 @@ import {
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import {
   syntaxHighlighting, indentOnInput, indentUnit, bracketMatching, LanguageDescription,
-  codeFolding, foldGutter, foldKeymap, ensureSyntaxTree, syntaxTree,
+  codeFolding, foldGutter, foldKeymap,
 } from '@codemirror/language'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { autocompletion, completionKeymap, completeAnyWord, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { languages } from '@codemirror/language-data'
-import { classHighlighter, highlightCode } from '@lezer/highlight'
+import { classHighlighter } from '@lezer/highlight'
 import { el } from './ui.js'
 import { DOC } from './files.js'
 import { UNCOMMITTED, runs, ages, since } from './blame.js'
-import { outline as outlineOf } from './symbols.js'
 import { lineChanges } from './linediff.js'
 
 // Blame: a gutter, off until asked for, of who last changed each line. Its marks follow edits until the next blame.
@@ -231,46 +230,7 @@ export function goto(editor, line, col = 1) {
   editor.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) })
 }
 
-/**
- * The editor's outline for quick open's `@`, from symbols.js: `{ items, partial }`, each item with its 1-based
- * `line`. It parses the rest of the file first, for a fifth of a second at most; past that it outlines what parsed.
- */
-export function outline(editor) {
-  const { state } = editor
-  const doc = state.doc
-  const tree = ensureSyntaxTree(state, doc.length, 200) ?? syntaxTree(state)
-  const { items, partial } = outlineOf(tree, (from, to) => doc.sliceString(from, to))
-  for (const item of items) item.line = doc.lineAt(item.from).number
-  return { items, partial: partial || tree.length < doc.length }
-}
-
 /** Shows the line holding `pos` in the middle of the editor, with the caret there, without focusing it. */
 export function show(editor, pos) {
   editor.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) })
-}
-
-/** `code` colored as the fence language `lang`, or null if language-data doesn't know it. */
-export async function highlight(code, lang) {
-  const found = LanguageDescription.matchLanguageName(languages, lang, false) // python, js, powershell
-    ?? LanguageDescription.matchFilename(languages, `.${lang.toLowerCase()}`) // py, rs, ps1
-  if (!found) return null
-  const { language } = await found.load()
-  const out = document.createDocumentFragment()
-  const put = (text, className) => out.append(className ? el('span', { className, textContent: text }) : text)
-  highlightCode(code, language.parser.parse(code), classHighlighter, put, () => out.append('\n'))
-  return out
-}
-
-/** `code`'s syntax tokens, line by line, in the language its file `name` implies: for each line a list of
- * `[from, to, className]`. Null when language-data doesn't know the language. */
-export async function tokenize(code, name) {
-  const found = LanguageDescription.matchFilename(languages, name.replace(/\.[^.]*$/, ext => ext.toLowerCase()))
-  if (!found) return null
-  const { language } = await found.load()
-  const lines = [[]]
-  let at = 0
-  highlightCode(code, language.parser.parse(code), classHighlighter,
-    (text, className) => { if (className) lines.at(-1).push([at, at + text.length, className]); at += text.length },
-    () => { lines.push([]); at = 0 })
-  return lines
 }

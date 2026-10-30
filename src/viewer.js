@@ -28,7 +28,7 @@ const MEDIA = /\.(mp4|webm|mov|m4v|ogv|mp3|wav|ogg|oga|flac|m4a|aac|opus)$/i
 const PDF = /\.pdf$/i
 
 async function markdown(text, path) {
-  const [{ marked }, { highlight }, { clean }] = await Promise.all([import('marked'), editing(), import('./sanitize.js')])
+  const [{ marked }, { highlight }, { clean }] = await Promise.all([import('marked'), import('./highlight.js'), import('./sanitize.js')])
   // An inert document: nothing loads until the relative image paths point at the disk.
   const doc = Document.parseHTML ? Document.parseHTML(marked.parse(text), SANITIZE)
     : clean(new DOMParser().parseFromString(marked.parse(text), 'text/html'))
@@ -37,7 +37,7 @@ async function markdown(text, path) {
     if (!SCHEME.test(src)) img.src = convertFileSrc(resolve(src, path))
   }
   for (const code of doc.querySelectorAll('pre > code[class^="language-"]')) {
-    const colored = await highlight(code.textContent, code.className.slice('language-'.length))
+    const colored = highlight(code.textContent, code.className.slice('language-'.length))
     if (colored) code.replaceChildren(colored)
   }
   const article = el('article')
@@ -237,47 +237,59 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     editor.focus()
   }
 
+  /** A rendered Markdown page's outline: its own h1 to h6, each nested under the last heading of a higher level. */
+  function headings() {
+    const open = [] // [level, item]
+    const items = [...page.querySelectorAll('h1, h2, h3, h4, h5, h6')].map(el => {
+      const level = +el.tagName[1]
+      while (open.length && open.at(-1)[0] >= level) open.pop()
+      const item = { name: el.textContent.trim(), kind: 'heading', depth: open.length, container: open.at(-1)?.[1].name ?? '', el }
+      open.push([level, item])
+      return item
+    })
+    return { items, partial: false }
+  }
+
   /**
-   * For quick open's `@`: `read`, the file's outline from editor.js; `look(item)` to show one while the box rests on
-   * it, without taking the keys; `back()` to put the caret and the scroll back as they were before the first look;
-   * and `go(item)` to go there. A heading of a rendered Markdown page shows on the page.
+   * For quick open's `@`: `read`, the outline of the text in the editor, from defs.rs, or of the rendered page;
+   * `look(item)` to show one while the box rests on it, without taking the keys; `back()` to put the caret and the
+   * scroll back as they were before the first look; and `go(item)` to go there.
    */
   function outline() {
-    let items = []
     let mod // editor.js, once loaded, so a look and a back run in the order they're asked for
     let before = null
-    const heading = item => previewing && drawn === 'markdown' && item.kind === 'heading'
-      && page.querySelectorAll('h1, h2, h3, h4, h5, h6')[items.filter(i => i.kind === 'heading').indexOf(item)]
+    // Where an item of the text's outline starts: its line and its column, counted in UTF-16 units.
+    const at = ({ line, col }) => {
+      const doc = editor.state.doc
+      const l = doc.line(Math.max(1, Math.min(line, doc.lines)))
+      return Math.min(l.to, l.from + col - 1)
+    }
     return {
-      read: editing().then(m => {
-        mod = m
-        const found = editor ? m.outline(editor) : { items: [], partial: false }
-        items = found.items
-        return found
-      }),
+      read: Promise.all([
+        editing(),
+        previewing && drawn === 'markdown' ? headings() : invoke('outline', { name, text: editor.state.doc.toString() }),
+      ]).then(([m, found]) => ((mod = m), found)),
       look(item) {
         if (!editor || !mod) return
         before ??= { selection: editor.state.selection, top: editor.scrollDOM.scrollTop, page: page?.scrollTop }
-        const h = heading(item)
-        if (h) h.scrollIntoView({ block: 'start' })
-        else if (!previewing && item.from <= editor.state.doc.length) mod.show(editor, item.from)
+        if (item.el) item.el.scrollIntoView({ block: 'start' })
+        else if (!previewing) mod.show(editor, at(item))
       },
       back() {
         if (!before || !editor) return
         const { selection, top, page: pageTop } = before
         before = null
-        if (selection.main.to <= editor.state.doc.length) editor.dispatch({ selection })
+        if (selection.ranges.every(r => r.to <= editor.state.doc.length)) editor.dispatch({ selection })
         editor.scrollDOM.scrollTop = top
         if (page) page.scrollTop = pageTop
       },
       go(item) {
         before = null
         if (!editor) return
-        const h = heading(item)
-        if (h) return h.scrollIntoView({ block: 'start' }), page.focus()
-        const at = Math.min(item.from, editor.state.doc.length)
-        const line = editor.state.doc.lineAt(at)
-        reveal({ line: line.number, col: at - line.from + 1 })
+        if (item.el) return item.el.scrollIntoView({ block: 'start' }), page.focus()
+        const pos = at(item)
+        const line = editor.state.doc.lineAt(pos)
+        reveal({ line: line.number, col: pos - line.from + 1 })
       },
     }
   }
