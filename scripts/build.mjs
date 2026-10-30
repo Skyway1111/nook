@@ -5,7 +5,7 @@
 // NOOK_ID and NOOK_NAME, the build's identity, reach both cargo builds through the environment. On Linux the
 // build stops after the stage.
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -154,8 +154,9 @@ function squeeze(tokens) {
 function squeezeCss(css) {
   const out = []
   let gap = false
-  for (const [, string, comment, space, other] of css.matchAll(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\/\*[\s\S]*?\*\/)|(\s+)|([^"'/\s]+|\/)/g)) {
-    if (comment) continue
+  for (const { 0: all, 1: string, 2: comment, 3: space, 4: other, index } of css.matchAll(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\/\*[\s\S]*?\*\/)|(\s+)|([^"'/\s]+|\/)/g)) {
+    // A comment with no space either side keeps its tokens apart, as a space wouldn't in a selector.
+    if (comment) { if (!gap && out.length && /\S/.test(css[index + all.length] ?? ' ')) out.push('/**/'); continue }
     if (space) { gap = true; continue }
     const text = string ?? other
     const end = out.at(-1)?.at(-1)
@@ -214,6 +215,7 @@ function parse(file) {
       let j = k + 1
       if (code[j][1] === '{') [i.names, j] = names(j)
       else if (code[j][1] === '*') { i.namespace = code[j + 2][1]; j += 2 } else if (code[j][0] === 'w') i.json = code[j][1]
+      else fail(t, 'import { a } from, import * as a from, or a JSON file\'s import')
       if (code[j][0] !== 's') j++
       if (code[j][0] !== 's' && code[j][1] === 'from') j++
       i.to = target(code[j])
@@ -228,20 +230,12 @@ function parse(file) {
       k = j
     } else if (t[1] === 'export') {
       const [a, b, c] = code.slice(k + 1, k + 4)
-      if (a[1] === '{') {
-        const [list, j] = names(k + 1)
-        for (const [local, name] of list) m.exports.push([name, local])
-        if (code[j + 1]?.[1] === 'from') fail(t, 'export … from: import it, then export it')
-        drop(k, code[j + 1]?.[1] === ';' ? j + 1 : j)
-        k = j
-        continue
-      }
       t[0] = 'x'
       if (a[1] === 'const' && b[1] === '{') {
         const [list] = names(k + 2)
         for (const [name, alias] of list) if (name === alias) m.exports.push([name, name])
         else fail(t, 'export const { a } only, without renames')
-      } else if (a[1] === 'function' || a[1] === 'class' || a[1] === 'const') m.exports.push(b[1] === '*' ? [c[1], c[1]] : [b[1], b[1]])
+      } else if (a[1] === 'function' || a[1] === 'class' || a[1] === 'const') m.exports.push([b[1], b[1]])
       else if (a[1] === 'async' && b[1] === 'function') m.exports.push([c[1], c[1]])
       else fail(t, `export ${a[1]}: nook exports a function, class, or const`)
     }
@@ -279,18 +273,26 @@ function evaluation(m, skip = new Set()) {
  * takes it. The check is also the build's syntax check. */
 const AsyncFunction = (async () => {}).constructor
 function waits(m, body) {
-  const check = `'use strict'\n${body.replace(/\bimport\.meta\b/g, 'M').replace(/\bawait\b/g, 'await await')}`
+  const check = `'use strict'\n${body.replace(/\bimport\.meta\b/g, 'M').replace(/(?<!\bfor\s*)\bawait\b/g, 'await await')}`
   try { Function(check); return false } catch {}
   try { AsyncFunction(check); return true } catch (e) { throw new Error(`${relative(root, m.file)}, bundled: ${e.message}`) }
+}
+
+const written = new Set()
+/** Writes dist/<rel> unless it holds these bytes already, so cargo relinks nook.exe only when the page changed. */
+function put(rel, data) {
+  const file = join(dist, rel)
+  written.add(file)
+  try { if (readFileSync(file).equals(Buffer.from(data))) return } catch {}
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, data)
 }
 
 /** Copies `file` into dist at its place under src/, and returns that place for a URL. */
 function asset(file, css) {
   const rel = relative(src, file).replaceAll('\\', '/')
   if (rel.startsWith('..')) throw new Error(`${relative(root, file)}: an asset lives under src/`)
-  mkdirSync(dirname(join(dist, rel)), { recursive: true })
-  if (css) writeFileSync(join(dist, rel), style(file))
-  else copyFileSync(file, join(dist, rel))
+  put(rel, css ? style(file) : readFileSync(file))
   return `./${rel}`
 }
 
@@ -303,18 +305,18 @@ const style = file => squeezeCss(readFileSync(file, 'utf8')).replace(/url\((['"]
  * its own, which V8 can let go once it has run, and main.js in a block, where it can wait. */
 function bundle() {
   const started = performance.now()
-  rmSync(dist, { recursive: true, force: true })
-  mkdirSync(dist)
-  let html = readFileSync(join(root, 'index.html'), 'utf8')
+  let html = readFileSync(join(root, 'index.html'), 'utf8').replace(/\r\n?/g, '\n')
   const sheets = [...html.matchAll(/<link rel="stylesheet" href="\/(src\/[^"]+)" \/>\n */g)]
   const entry = /<script type="module" src="\/(src\/[^"]+)"><\/script>/.exec(html)
   if (!sheets.length || !entry) throw new Error('index.html: expected <link rel="stylesheet" href="/src/…" /> lines and a <script type="module" src="/src/…">')
-  writeFileSync(join(dist, 'index.css'), sheets.map(([, href]) => style(join(root, href))).join(''))
+  put('index.css', sheets.map(([, href]) => style(join(root, href))).join(''))
   html = html.replace(sheets[0][0], '<link rel="stylesheet" href="/index.css" />\n').replace(entry[0], '<script type="module" src="/index.js"></script>')
   for (const [link] of sheets.slice(1)) html = html.replace(link, '')
-  writeFileSync(join(dist, 'index.html'), html.replace(/<!--[\s\S]*?-->/g, '').replace(/^ +/gm, '').replace(/\n+/g, '\n'))
+  put('index.html', html.replace(/<!--[\s\S]*?-->/g, '').replace(/^ +/gm, '').replace(/\n+/g, '\n'))
 
   const main = load(join(root, entry[1]))
+  for (const m of mods.values()) for (const [name] of m.exports) if (!/^[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*$/u.test(name)) throw new Error(`${relative(root, m.file)}: exports ${name}, which isn't a name`)
+  for (const m of mods.values()) for (const i of m.imports) for (const [name] of i.names ?? []) if (!i.module.exports.some(e => e[0] === name)) throw new Error(`${relative(root, m.file)}: ${relative(root, i.module.file)} exports no ${name}`)
   const startup = evaluation(main)
   const eager = new Set(startup)
   const all = [...mods.values()]
@@ -332,7 +334,7 @@ function bundle() {
   }
   for (const list of chunks.values()) {
     const name = basename(list.find(m => !list.some(o => o.imports.some(i => i.module === m))).file)
-    if (all.some(m => m.chunk === name)) throw new Error(`two chunks named ${name}`)
+    if (name === 'index.js' || all.some(m => m.chunk === name)) throw new Error(`two files in dist named ${name}`)
     for (const m of list) m.chunk = name
   }
   for (const m of all) {
@@ -351,26 +353,32 @@ function bundle() {
   const imports = m => m.imports.map(i => `const${i.json ? ` ${i.json}=${i.text}` : `${i.namespace ? ` ${i.namespace}` : pairs(i.names)}=${
     eager.has(m) ? `E[${i.module.n}]` : `${i.module.async ? 'await ' : ''}J(${i.module.n})`}`};`).join('')
 
-  writeFileSync(join(dist, 'index.js'), RUNTIME + startup.map(m => m === main
+  put('index.js', RUNTIME + startup.map(m => m === main
     ? `{${imports(m)}\n${m.body}\n}`
     : `E[${m.n}]=(()=>{${imports(m)}\n${m.body}\nreturn${pairs(m.exports)}})()\n`).join(''))
-  for (const [, list] of chunks) writeFileSync(join(dist, list[0].chunk), `export default{${list.map(m =>
-    `${m.n}:${m.async ? 'async ' : ''}J=>{${imports(m)}\n${m.body}\nreturn${pairs(m.exports)}}`).join(',\n')}}\n`)
+  for (const [, list] of chunks) put(list[0].chunk, `export default{${list.map(m =>
+    `${m.n}:(${m.async ? 'async function(J)' : 'J=>'}{${imports(m)}\n${m.body}\nreturn${pairs(m.exports)}})`).join(',\n')}}\n`)
+  for (const f of readdirSync(dist, { recursive: true })) if (!written.has(join(dist, f)) && statSync(join(dist, f)).isFile()) rmSync(join(dist, f))
   const kb = n => `${(n / 1024).toFixed(1)} KB`
   const open = ['index.html', 'index.js', 'index.css'].reduce((s, f) => s + statSync(join(dist, f)).size, 0)
   console.log(`dist: ${startup.length} modules to open (${kb(open)} with the page and its CSS), ${all.length - startup.length} more in ${chunks.size} chunks, in ${Math.round(performance.now() - started)} ms`)
 }
 
+const stop = what => { console.error(`build: ${what}`); process.exit(1) }
 const run = (command, args, cwd) => {
   const r = spawnSync(command, args, { cwd, stdio: 'inherit' })
-  if (r.status !== 0) process.exit(r.status ?? 1)
+  if (r.status !== 0) stop(`${basename(command)} ${args.join(' ')} failed`)
 }
 
+const { NOOK_ID, NOOK_NAME } = process.env
+const pack = windows && !process.argv.includes('--no-pack') && !process.argv.includes('--dist')
+// One without the other would name nook's own settings as a test build, or install a test build over nook.
+if (NOOK_NAME ? !NOOK_ID : NOOK_ID && pack) stop('NOOK_ID and NOOK_NAME name a test build together: set both')
 try {
   bundle()
 } catch (e) {
-  console.error(e.constructor === Error ? `build: ${e.message}` : e) // the source's mistakes by name, the build's own with a stack
-  process.exit(1)
+  if (e.constructor !== Error) throw e // the build's own mistakes with a stack, the source's by file and line
+  stop(e.message)
 }
 if (!process.argv.includes('--dist')) {
   const tauri = join(root, 'src-tauri')
@@ -386,10 +394,10 @@ if (!process.argv.includes('--dist')) {
   copyFileSync(join(release, exe), join(stage, exe))
   for (const [from, to] of PAYLOAD) cpSync(join(root, from), join(stage, to), { recursive: true })
   console.log(`${join(stage, exe)} runs with its payload beside it`)
-  if (windows && !process.argv.includes('--no-pack')) {
+  if (pack) {
     run('cargo', ['build', '--release'], join(tauri, 'setup'))
     const version = /^version = "(.+)"/m.exec(readFileSync(join(tauri, 'Cargo.toml'), 'utf8'))[1]
-    const out = join(release, `${process.env.NOOK_NAME || 'nook'}_${version}_x64-setup.exe`)
+    const out = join(release, `${NOOK_NAME || 'nook'}_${version}_x64-setup.exe`)
     run(join(process.env.CARGO_TARGET_DIR ?? join(tauri, 'setup', 'target'), 'release', 'setup.exe'), ['--pack', stage, out], root)
     console.log(out)
   }
