@@ -96,7 +96,7 @@ fn pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
     Ok(unsafe { (OwnedHandle::from_raw_handle(read), OwnedHandle::from_raw_handle(write)) })
 }
 
-/// Starts `command` in a new pseudoconsole of `cols` by `rows`: the console, its input, its output, and the
+/// Starts `program` with `args` in a new pseudoconsole of `cols` by `rows`: the console, its input, its output, and the
 /// process. The process gets the environment a new login would, Windows' variables read fresh from the
 /// registry, with `vars` over them.
 pub fn spawn(program: &str, args: &[String], cwd: &str, vars: &[(&str, OsString)], cols: u16, rows: u16) -> io::Result<(Pty, File, File, Exit)> {

@@ -123,7 +123,7 @@ fn login_shell() -> OsString {
     "/bin/sh".into()
 }
 
-/// Starts `command` on a new pseudoterminal of `cols` by `rows`, as the leader of its own session: the
+/// Starts `program` with `args` on a new pseudoterminal of `cols` by `rows`, as the leader of its own session: the
 /// terminal, its input, its output, and the process. The process gets nook's environment with `vars` over it.
 pub fn spawn(program: &str, args: &[String], cwd: &str, vars: &[(&str, OsString)], cols: u16, rows: u16) -> io::Result<(Pty, File, File, Exit)> {
     let master = OpenOptions::new().read(true).write(true).custom_flags(O_NOCTTY).open("/dev/ptmx")?;
@@ -147,7 +147,7 @@ pub fn spawn(program: &str, args: &[String], cwd: &str, vars: &[(&str, OsString)
                 signal(s, SIG_DFL);
             }
             check(setsid())?;
-            check(ioctl(0, TIOCSCTTY, 0))?;
+            check(ioctl(0, TIOCSCTTY, 0 as c_ulong))?;
             // nook's descriptors close at exec; std's own error pipe already does.
             syscall(SYS_CLOSE_RANGE, 3 as c_ulong, c_ulong::from(u32::MAX), CLOSE_RANGE_CLOEXEC);
             Ok(())
