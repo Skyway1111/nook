@@ -863,13 +863,9 @@ export class Vt {
       }
       let t = TABLE[state << 8 | (code < 0xa0 ? code : 0xa0)]
       switch (t >> 4) {
-        case PRINT: {
-          let j = i + 1
-          while (j < n && ((code = s.charCodeAt(j)) >= 0x20 && code < 0x7f || code >= 0xa0)) j++
-          this.print(s, i, j)
-          i = j - 1
+        case PRINT:
+          i = this.print(s, i, n) - 1
           break
-        }
         case EXECUTE:
           this.execute(code)
           this.join = 0
@@ -986,27 +982,45 @@ export class Vt {
     return out
   }
 
-  print(s, start, end) {
+  /** Prints the run of printable characters in `s` from `start`, short of `n`; returns where it ends. */
+  print(s, start, n) {
     const b = this.buffer
     const { cols, fg, bg, ext, charset, insert } = this
     let line = b.row(b.y)
     let d = line.d
     let c = line.cap
     let x = b.x
-    if (x && end > start && line.width(x - 1) === 2) line.set(x - 1, W1, fg, bg, ext)
+    if (x && line.width(x - 1) === 2) line.set(x - 1, W1, fg, bg, ext)
     let join = this.join
-    for (let pos = start; pos < end; pos++) {
+    let pos = start
+    for (; pos < n; pos++) {
       let code = s.charCodeAt(pos)
-      if (code < 0x7f && x < cols && !insert && (code < 0x60 || !charset)) { // ASCII: one cell, never joins
-        d[x] = code | W1
-        d[c + x] = fg
-        d[2 * c + x] = bg
-        if (bg & EXT) (line.ext ??= new Map()).set(x, ext)
-        x++
-        join = 2
-        continue
-      }
-      if (code >= 0xd800 && code <= 0xdbff && pos + 1 < end) {
+      if (code < 0x7f) {
+        if (code < 0x20) break
+        if (x < cols && !insert && (code < 0x60 || !charset)) { // ASCII: one cell each, never joining
+          const from = x
+          if (charset) d[x++] = code | W1
+          else {
+            const stop = Math.min(n, pos + cols - x)
+            d[x++] = code | W1
+            while (++pos < stop && (code = s.charCodeAt(pos)) >= 0x20 && code < 0x7f) d[x++] = code | W1
+            pos--
+          }
+          if (x - from > 8) {
+            d.fill(fg, c + from, c + x)
+            d.fill(bg, 2 * c + from, 2 * c + x)
+          } else {
+            for (let k = from; k < x; k++) {
+              d[c + k] = fg
+              d[2 * c + k] = bg
+            }
+          }
+          if (bg & EXT) for (let k = from; k < x; k++) (line.ext ??= new Map()).set(k, ext)
+          join = 2
+          continue
+        }
+      } else if (code < 0xa0) break
+      if (code >= 0xd800 && code <= 0xdbff && pos + 1 < n) {
         const low = s.charCodeAt(pos + 1)
         if (low >= 0xdc00 && low <= 0xdfff) {
           code = (code - 0xd800) * 0x400 + low - 0xdc00 + 0x10000
@@ -1069,7 +1083,8 @@ export class Vt {
     }
     b.x = x
     this.join = join
-    if (x < cols && end > start && line.width(x) === 0 && !line.hasContent(x)) line.set(x, W1, fg, bg, ext)
+    if (x < cols && line.width(x) === 0 && !line.hasContent(x)) line.set(x, W1, fg, bg, ext)
+    return pos
   }
 
   execute(code) {
