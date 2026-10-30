@@ -133,8 +133,45 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 .xterm-host { position: relative; width: 100%; height: 100%; overflow: hidden; } /* the screen moves for the composer */
 /* Its own layer: a redraw rasters only the text, not the backdrop under it, and the composer's shift only moves it. */
 .xterm-screen { will-change: transform; }
-/* xterm draws its own themed scrollbar; hide the native one underneath. */
-.xterm .xterm-viewport { background: transparent !important; scrollbar-width: none; }
+/* The terminal (src/term/view.js). Its screen holds, bottom up: the selection, the rows of text, marks (search hits,
+   a turn's flash), and pictures. term/view.js adds the palette's classes, fN and bN. */
+.xterm { position: relative; cursor: text; user-select: none; -webkit-user-select: none; }
+.xterm.enable-mouse-events { cursor: default; }
+.xterm .xterm-cursor-pointer { cursor: pointer; }
+.xterm .xterm-screen { position: relative; }
+:is(.xterm-marks, .xterm-selection) { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+:is(.xterm-marks, .xterm-selection) > div { position: absolute; }
+.xterm-selection > div { background: linear-gradient(var(--selection), var(--selection)), #000; } /* opaque, as xterm had it */
+.xterm-rows { position: relative; pointer-events: none; color: var(--term-fg); font-weight: normal; font-kerning: none; white-space: pre; line-height: normal; }
+.xterm-rows > div { height: var(--cell-h); line-height: var(--cell-h); overflow: hidden; }
+.xterm-rows span { display: inline-block; height: 100%; vertical-align: top; }
+.xterm-rows .bold { font-weight: bold; }
+.xterm-rows .italic { font-style: italic; }
+.xterm-rows .u1 { text-decoration: underline; }
+.xterm-rows .u2 { -webkit-text-decoration: double underline; text-decoration: double underline; }
+.xterm-rows .u3 { -webkit-text-decoration: wavy underline; text-decoration: wavy underline; }
+.xterm-rows .u4 { -webkit-text-decoration: dotted underline; text-decoration: dotted underline; }
+.xterm-rows .u5 { -webkit-text-decoration: dashed underline; text-decoration: dashed underline; }
+.xterm-rows .over { text-decoration: overline; }
+.xterm-rows .over.u1 { -webkit-text-decoration: overline underline; text-decoration: overline underline; }
+.xterm-rows .over.u2 { -webkit-text-decoration: overline double underline; text-decoration: overline double underline; }
+.xterm-rows .over.u3 { -webkit-text-decoration: overline wavy underline; text-decoration: overline wavy underline; }
+.xterm-rows .over.u4 { -webkit-text-decoration: overline dotted underline; text-decoration: overline dotted underline; }
+.xterm-rows .over.u5 { -webkit-text-decoration: overline dashed underline; text-decoration: overline dashed underline; }
+.xterm-rows .strike { text-decoration: line-through; }
+.xterm-rows .xterm-cursor-block { background-color: var(--cursor) !important; color: var(--bg) !important; }
+.xterm-rows .xterm-cursor-outline { outline: 1px solid var(--cursor); outline-offset: -1px; }
+.xterm-rows .xterm-cursor-bar { box-shadow: 1px 0 0 var(--cursor) inset; }
+.xterm-rows .xterm-cursor-underline { height: calc(100% - 1px); border-bottom: 1px solid var(--cursor); }
+.xterm > .scrollbar { position: absolute; z-index: 11; top: 0; right: 0; width: 14px; height: 100%; opacity: 0; pointer-events: none; transition: opacity .8s linear; cursor: default; }
+.xterm > .scrollbar.need.on { opacity: 1; pointer-events: auto; transition-duration: .1s; }
+.xterm > .scrollbar > .slider { position: absolute; left: 0; width: 100%; background: var(--hover); }
+.xterm > .scrollbar > .slider:is(:hover, .active) { background: var(--line); }
+.xterm .xterm-helpers { position: absolute; top: 0; z-index: 5; }
+.xterm .xterm-helper-textarea { position: absolute; left: -9999em; top: 0; z-index: -5; width: 0; height: 0; padding: 0; border: 0; margin: 0; opacity: 0; white-space: nowrap; overflow: hidden; resize: none; }
+.xterm .composition-view { position: absolute; z-index: 1; display: none; white-space: nowrap; background: #000; color: #fff; }
+.xterm .composition-view.active { display: block; }
+.xterm-width-cache-measure-container > span { position: absolute; top: 0; left: -9999em; display: inline-block; visibility: hidden; white-space: pre; font-kerning: none; line-height: normal; }
 
 /* The living wallpaper: a canvas under the open tab, drawn by wallpaper.js. The tabs' views come after it. */
 .wallpaper { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: var(--wallpaper-opacity); }
@@ -244,7 +281,7 @@ body.focus #focus-exit { display: flex; align-items: center; gap: 6px; width: au
 .pictures > .page { overflow: hidden; border-radius: 4px; outline: 1px solid var(--line); }
 .pictures > .page > iframe { width: 1280px; border: 0; transform-origin: 0 0; background: #fff; pointer-events: none; }
 
-/* Composer: the card over Claude's prompt. It sits under xterm's helpers, so IME text shows above it at its caret. */
+/* Composer: the card over Claude's prompt. It sits under the terminal's helpers, so IME text shows above it at its caret. */
 /* Anchored to the terminal, as tall as the screen and never shifted, so no script sizes the card. */
 /* composer.js places it on the terminal's bottom edge, clear of the scrollbar. */
 .composer { position: absolute; z-index: 4; display: flex; }
@@ -867,6 +904,10 @@ input[type=number]:is(:hover, :focus)::-webkit-inner-spin-button { opacity: .7; 
 .find.none .count { color: var(--ansi-red); }
 .find button { width: 24px; height: 24px; border-radius: 6px; color: var(--ink-2); }
 .find button:hover { background: var(--hover); color: var(--ink-1); }
+
+/* Matches of the find bar, over the text, and the one it's on. */
+.find-hit { background: color-mix(in srgb, var(--selection) 50%, transparent); }
+.find-hit.current { outline: 1px solid var(--accent); }
 
 /* The prompt a jump lands on flashes once. */
 .turn-flash { pointer-events: none; animation: turn-flash 900ms ease-out forwards; }

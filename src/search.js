@@ -1,48 +1,92 @@
 // Ctrl+Shift+F finds text in a Claude tab: everything Claude wrote, scrollback included, with each match
 // marked and the current one ringed. Enter and Shift+Enter step through them, Esc puts the bar away. The
-// bar and its search addon load the first time it opens, so a tab that never searches pays nothing for it.
-// While Claude runs fullscreen, xterm holds only the screen, so the count is of the matches in view, and a
-// step past the last one in view pages Claude's own view until another shows, wrapping at either end.
+// bar loads the first time it opens, so a tab that never searches pays nothing for it. While Claude runs
+// fullscreen, the terminal holds only the screen, so the count is of the matches in view, and a step past
+// the last one in view pages Claude's own view until another shows, wrapping at either end.
 import { el } from './ui.js'
-import { bytes } from './palette.js'
 import { startPaging, transcriptEnd } from './turns.js'
 
-const LIMIT = 2000 // matches marked at once; past that the bar counts "2000+"
+const LIMIT = 2000 // matches marked at once; past that only the current one is
 const PAGES = 400 // the most pages one step turns through Claude's fullscreen view
+const QUIET_MS = 200 // how long output pauses before the matches are found again
 const TO_TOP = '\x1b[1;5H' // Ctrl+Home
 const TO_BOTTOM = '\x1b[1;5F' // Ctrl+End
 
-/** A theme color as #rrggbb, the only form the addon's highlights take, over the terminal's background. */
-function hex(color, under = [0, 0, 0, 0]) {
-  const [r, g, b, a] = bytes(color)
-  const t = a / 255
-  const mix = (c, u) => Math.round(c * t + u * (1 - t)).toString(16).padStart(2, '0')
-  return `#${mix(r, under[0])}${mix(g, under[1])}${mix(b, under[2])}`
+/** Every match of `query` among buffer `b`'s lines, as [line, x, cells] triples in reading order; a line that
+ * wraps reads as one with the rows it wraps onto, and lines are counted for good (`b.trimmed + y`). */
+export function findAll(b, query, matchCase) {
+  const hits = []
+  const q = matchCase ? query : query.toLowerCase()
+  const cell = b.getNullCell()
+  const n = b.length
+  for (let y = 0, end; y < n; y = end) {
+    end = y + 1
+    while (end < n && b.getLine(end).isWrapped) end++
+    let text = ''
+    for (let i = y; i < end; i++) text += rowText(b, i, i === end - 1, cell)
+    if (!text) continue
+    const t = matchCase ? text : text.toLowerCase()
+    // Each match is looked for from the cell the last one starts in, so a long line is walked once.
+    let ry = y
+    let rx = 0
+    let rat = 0
+    for (let at = t.indexOf(q); at !== -1; at = t.indexOf(q, at + q.length)) {
+      const [sy, sx, past] = locate(b, ry, end, at, cell, rx, rat)
+      const [ey, ex] = locate(b, sy, end, at + q.length, cell, sx, at)
+      hits.push(b.trimmed + sy, sx, (ey - sy) * b.getLine(sy).length + ex - sx)
+      ry = sy
+      rx = sx
+      rat = at + past
+    }
+  }
+  return hits
 }
 
-/** Highlights in the theme's colors, read when a search runs so a theme change applies at once. */
-function colors() {
-  const style = getComputedStyle(document.documentElement)
-  const v = name => style.getPropertyValue(name).trim()
-  const bg = bytes(v('--term-bg') || v('--bg'))
-  const accent = hex(v('--accent'), bg)
-  return {
-    matchBackground: hex(v('--selection'), bg),
-    matchOverviewRuler: accent,
-    activeMatchBackground: hex(v('--selection'), bg),
-    activeMatchBorder: accent,
-    activeMatchColorOverviewRuler: accent,
+/** Row `i`'s text as a wrapped line reads it: the last row trimmed, and no blank where a wide character didn't
+ * fit at the row's end. */
+function rowText(b, i, last, cell) {
+  const line = b.getLine(i)
+  const s = line.translateToString(last)
+  return !last && skips(b, i, cell) ? s.slice(0, -1) : s
+}
+
+/** Whether row `i` ends in the blank a wide character left, wrapping to the next row. */
+function skips(b, i, cell) {
+  const line = b.getLine(i)
+  const c = line.getCell(line.length - 1, cell)
+  return !c.getChars() && c.getWidth() === 1 && b.getLine(i + 1)?.getCell(0, cell)?.getWidth() === 2
+}
+
+/** The cell where character `n` of the line rows `y` to `end` read as starts, as [row, x, how many characters
+ * past `n` that cell starts]; past the text, the cell after it. From cell `x` of row `y`, which character `from`
+ * starts, when given. */
+function locate(b, y, end, n, cell, x = 0, from = 0) {
+  n -= from
+  for (let i = y; i < end; i++, x = 0) {
+    const line = b.getLine(i)
+    const stop = i === end - 1 ? line.getTrimmedLength() : line.length - (skips(b, i, cell) ? 1 : 0)
+    for (; x < stop; x += line.width(x) || 1) {
+      if (n <= 0) return [i, x, -n]
+      n -= line.chars(x).length || 1
+    }
+    if (n <= 0 && i === end - 1) return [i, x, -n]
   }
+  return [end - 1, b.getLine(end - 1).getTrimmedLength(), 0]
 }
 
 /** A find bar over `host` for `term`, whose keys go to Claude through `send`. Returns `{ open, close, dispose }`. */
 export function startSearch(term, host, send) {
-  let addon // loaded on first use
   let bar, input, count
-  let results // the addon's subscription
   const paging = startPaging(term, send)
   let busy = false // a step through Claude's fullscreen view is under way
-  const fullscreen = () => term.buffer.active.type === 'alternate'
+  const fullscreen = () => term.vt.buffer === term.vt.alt
+  let hits = [] // the query's matches in the buffer in use: [line, x, cells] triples
+  let found = '' // the query and case the hits are for, and their buffer
+  let current = null // the match the bar is on: { line, x, cells }
+  const marked = new Map() // `${line},${x},${cells}` -> its marks
+  let ring = [] // the current match's marks
+  let timer = 0
+  let watching = null // output and resizes, while the bar is open
 
   function build() {
     input = el('input', { type: 'text', placeholder: 'Find', spellcheck: false, ariaLabel: 'Find in terminal' })
@@ -69,113 +113,163 @@ export function startSearch(term, host, send) {
     })
   }
 
-  let Addon // the addon's class, once loaded
-
-  async function load() {
-    ;({ SearchAddon: Addon } = await import('@xterm/addon-search'))
-    renew()
+  /** Finds the bar's query again, in the buffer as it is now. */
+  function search() {
+    const query = input.value
+    const matchCase = query !== query.toLowerCase() // smart case, as in an editor: a capital letter matches case
+    hits = query ? findAll(term.vt.buffer, query, matchCase) : []
+    found = query && `${matchCase}${fullscreen()}${query}`
   }
 
-  /** A new addon in place of the old one. The addon keeps the lines it read for 15 s, until a line feed or a
-   * cursor move; each of Claude's fullscreen redraws leaves the cursor where it was, so there every search
-   * starts with a new one, which reads the screen as it is. */
-  function renew() {
-    results?.dispose()
-    addon?.dispose()
-    addon = new Addon({ highlightLimit: LIMIT })
-    term.loadAddon(addon)
-    results = addon.onDidChangeResults(({ resultIndex, resultCount }) => {
-      const where = fullscreen() ? ' in view' : ''
-      count.textContent = !input.value ? ''
-        : !resultCount ? (where ? 'None in view' : 'No results')
-        : resultIndex < 0 ? `${LIMIT}+${where}`
-        : `${resultIndex + 1} of ${resultCount}${where}`
-      bar.classList.toggle('none', !!input.value && !resultCount && !where)
-    })
+  /** The index of the match at or past `pos` (`{ line, x }`) going up or down, wrapping round; -1 for none. */
+  function near(pos, up, inclusive) {
+    const n = hits.length / 3
+    if (!n) return -1
+    const cmp = i => hits[i * 3] - pos.line || hits[i * 3 + 1] - pos.x
+    if (up) {
+      for (let i = n - 1; i >= 0; i--) if (inclusive ? cmp(i) <= 0 : cmp(i) < 0) return i
+      return n - 1
+    }
+    for (let i = 0; i < n; i++) if (inclusive ? cmp(i) >= 0 : cmp(i) > 0) return i
+    return 0
+  }
+
+  /** Marks `cells` cells from cell `x` of `line`, running on across rows. */
+  function boxes(line, x, cells, className) {
+    const b = term.vt.buffer
+    const cols = term.cols
+    const out = []
+    for (let y = line - b.trimmed; cells > 0; y++, x = 0) {
+      const width = Math.min(cells, cols - x)
+      out.push(term.mark(y, { x, width, className }))
+      cells -= width
+    }
+    return out
+  }
+
+  function paint() {
+    const keep = hits.length / 3 <= LIMIT
+    const next = new Map()
+    if (keep) {
+      for (let i = 0; i < hits.length; i += 3) {
+        const key = `${hits[i]},${hits[i + 1]},${hits[i + 2]}`
+        next.set(key, marked.get(key) ?? boxes(hits[i], hits[i + 1], hits[i + 2], 'find-hit'))
+      }
+    }
+    for (const [key, list] of marked) if (!next.has(key)) for (const m of list) m.dispose()
+    marked.clear()
+    for (const [key, list] of next) marked.set(key, list)
+    for (const m of ring) m.dispose()
+    ring = current ? boxes(current.line, current.x, current.cells, 'find-hit current') : []
+    const n = hits.length / 3
+    const where = fullscreen() ? ' in view' : ''
+    const i = current ? index(current) : -1
+    count.textContent = !input.value ? ''
+      : !n ? (where ? 'None in view' : 'No results')
+      : i < 0 ? `${n} found${where}`
+      : `${i + 1} of ${n}${where}`
+    bar.classList.toggle('none', !!input.value && !n && !where)
+  }
+
+  const index = pos => {
+    for (let i = 0; i < hits.length; i += 3) if (hits[i] === pos.line && hits[i + 1] === pos.x) return i / 3
+    return -1
+  }
+  const at = i => (i < 0 ? null : { line: hits[i * 3], x: hits[i * 3 + 1], cells: hits[i * 3 + 2] })
+
+  /** Puts the bar on match `i`: selected and scrolled into view on the normal screen. */
+  function land(i) {
+    current = at(i)
+    if (current && !fullscreen()) {
+      const b = term.vt.buffer
+      const y = current.line - b.trimmed
+      term.select(current.x, y, current.cells)
+      if (y < b.ydisp || y >= b.ydisp + term.rows) term.scrollLines(y - b.ydisp - (term.rows >> 1))
+    }
+    paint()
   }
 
   /** Steps to the next or previous match of what the bar holds; on Claude's fullscreen view a step, unlike
    * typing, pages on past the matches in view. */
   function run(forward, step = true) {
-    if (!addon) return
-    const query = input.value
-    if (!query) {
-      addon.clearDecorations()
-      count.textContent = ''
-      bar.classList.remove('none')
-      return
-    }
-    // Smart case, as in an editor: a capital letter makes the search match case.
-    const options = { caseSensitive: query !== query.toLowerCase(), decorations: colors() }
-    if (fullscreen()) {
-      if (step) return paged(!forward, query, options)
-      renew()
+    if (!input.value) {
+      hits = []
       current = null
-      return void findOnce(true, query, options)
+      return paint()
     }
-    if (forward) addon.findNext(query, options)
-    else addon.findPrevious(query, options)
+    if (fullscreen() && step) return paged(!forward)
+    search()
+    if (fullscreen() || !current) return land(near({ line: Infinity, x: 0 }, true, true))
+    land(step ? near(current, !forward, false) : near(current, true, true))
   }
 
-  // On Claude's fullscreen view the match the bar is on is kept here, not as xterm's selection: with the
-  // selection left on, the word under it vanished from Claude's view, so each step clears it again.
-  let current = null // { x, y, size }
-
-  /** One of the addon's steps from `current`, up or down: the match's place on the screen as one number in
-   * reading order, or null. */
-  function findOnce(up, query, options) {
-    if (current) term.select(current.x, current.y, current.size)
-    const found = up ? addon.findPrevious(query, options) : addon.findNext(query, options)
-    const p = found && term.getSelectionPosition()
-    term.clearSelection()
-    current = p ? { x: p.start.x, y: p.start.y, size: (p.end.y - p.start.y) * term.cols + p.end.x - p.start.x } : null
-    return current && current.y * term.cols + current.x
-  }
-
-  /** The match in view past `from` going up or down, or null: the addon's own steps until one lands past
-   * it, on a row of Claude's transcript (not its pinned prompt or input box), before they come round. */
-  function past(from, up, query, options) {
-    const end = transcriptEnd(paging.screen()) * term.cols
-    const seen = new Set()
-    for (;;) {
-      const found = findOnce(up, query, options)
-      if (found === null || seen.has(found)) return null
-      seen.add(found)
-      if (found >= term.cols && found < end && (up ? found < from : found > from)) return found
+  /** The match in view past screen position `from` (y * cols + x) going up or down, on a row of Claude's
+   * transcript (not its pinned prompt or input box), or -1. */
+  function past(from, up) {
+    const cols = term.cols
+    const end = transcriptEnd(paging.screen())
+    const t = term.vt.buffer.trimmed
+    let best = -1
+    let bestAt = 0
+    for (let i = 0; i < hits.length / 3; i++) {
+      const y = hits[i * 3] - t
+      const p = y * cols + hits[i * 3 + 1]
+      if (y < 1 || y >= end || (up ? p >= from : p <= from)) continue
+      if (best < 0 || (up ? p > bestAt : p < bestAt)) [best, bestAt] = [i, p]
     }
+    return best
   }
 
-  async function paged(up, query, options) {
+  async function paged(up) {
     if (busy) return
     busy = true
     try {
-      renew()
-      let from = current ? current.y * term.cols + current.x : up ? Infinity : -Infinity
+      search()
+      const cols = term.cols
+      const t = term.vt.buffer.trimmed
+      let from = current ? (current.line - t) * cols + current.x : up ? Infinity : -Infinity
       let wrapped = false
       for (let page = 0; page < PAGES; page++) {
-        if (past(from, up, query, options) !== null) return
+        const i = past(from, up)
+        if (i >= 0) return land(i)
         const { shift } = await paging.page(up)
         current = null
-        renew()
-        if (shift === null) return
+        search()
+        if (shift === null) return paint()
         if (shift === 0) {
           // The view's end: go round once, from the other end.
           if (wrapped) break
           wrapped = true
           send(up ? TO_BOTTOM : TO_TOP)
           await paging.redrawn()
-          renew()
+          search()
           from = up ? Infinity : -Infinity
           continue
         }
-        from += shift * term.cols
+        from += shift * cols
       }
+      hits = []
+      paint()
       count.textContent = 'No results'
       bar.classList.add('none')
     } finally {
       busy = false
     }
   }
+
+  /** Output changed the buffer: once it pauses, the marks follow it, and the bar stays on its match. */
+  function changed() {
+    clearTimeout(timer)
+    if (!input.value || busy) return
+    timer = setTimeout(() => {
+      if (busy || bar.hidden) return
+      const was = found
+      search()
+      if (found !== was) current = null
+      paint()
+    }, QUIET_MS)
+  }
+
   async function open() {
     if (!bar) build()
     const selected = term.getSelection()
@@ -183,15 +277,19 @@ export function startSearch(term, host, send) {
     bar.hidden = false
     input.focus()
     input.select()
-    if (!addon) await load()
+    watching ??= [term.onWriteParsed(changed), term.onResize(changed)]
     if (input.value) run(false)
   }
 
   function close() {
     if (!bar || bar.hidden) return
     bar.hidden = true
+    clearTimeout(timer)
+    for (const w of watching ?? []) w.dispose()
+    watching = null
+    hits = []
     current = null
-    addon?.clearDecorations()
+    paint()
     term.focus()
   }
 
@@ -200,8 +298,7 @@ export function startSearch(term, host, send) {
     close,
     get opened() { return !!bar && !bar.hidden },
     dispose() {
-      results?.dispose()
-      addon?.dispose()
+      close()
       bar?.remove()
     },
   }

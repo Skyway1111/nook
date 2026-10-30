@@ -1,4 +1,3 @@
-import '@xterm/xterm/css/xterm.css'
 import './theme.css'
 import './style.css'
 import { invoke, win } from './host.js'
