@@ -186,20 +186,6 @@ class Line {
     this.length = cols
   }
 
-  copyFrom(line) {
-    this.resize(line.length)
-    this.copyCellsFrom(line, 0, 0, line.length)
-    this.comb = line.comb && new Map(line.comb)
-    this.ext = line.ext && new Map(line.ext)
-    this.isWrapped = line.isWrapped
-  }
-
-  clone() {
-    const line = new Line(0)
-    line.copyFrom(this)
-    return line
-  }
-
   /** Copies `n` cells of `src` from `srcCol` to `destCol`. */
   copyCellsFrom(src, srcCol, destCol, n) {
     const { d, cap: c } = this
@@ -784,7 +770,6 @@ const LIMIT = 10000000 // the longest OSC, DCS or APC string taken
 const DEC = '◆▒␉␌␍␊°±␤␋┘┐┌└┼⎺⎻─⎼⎽├┤┴┬│≤≥π≠£·'
 const GLEVEL = { 0x28: 0, 0x29: 1, 0x2a: 2, 0x2b: 3, 0x2d: 1, 0x2e: 2 } // ( ) * + - .
 const NATIONAL = new Set('AB4C5RQKYE6ZH7='.split('').map(c => c.charCodeAt(0))) // sets xterm knows; all print as ASCII here
-const id = (s, final) => [...s, final].reduce((n, c) => n << 8 | c.charCodeAt(0), 0)
 const MOUSE = { 9: 'x10', 1000: 'vt200', 1002: 'drag', 1003: 'any' }
 const RANK = { none: 0, x10: 1, vt200: 2, drag: 3, any: 4 }
 
