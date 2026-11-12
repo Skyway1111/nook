@@ -235,8 +235,8 @@ export function startReplace(view, { dir, openFile, unsaved, refresh }) {
   }
   say('Type to find text in every file under the folder')
 
-  // A tab's refresh runs when it's shown and every few seconds while it's in front: search again only when the
-  // tab comes back, so files changed meanwhile show, and never on the timer.
+  // A tab's refresh runs each time it's shown: search again only when the tab comes back, so files changed
+  // meanwhile show.
   let away = false
   new MutationObserver(() => { if (view.hidden) away = true }).observe(view, { attributes: true, attributeFilter: ['hidden'] })
 

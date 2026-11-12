@@ -1,7 +1,7 @@
 // The living wallpaper behind Claude tabs, and its picker. A canvas at the bottom of #pane draws a scene from
 // wallpapers.js, which loads with the first scene other than none, under the terminal, whose background is
 // transparent. theme.css names the scene in `--wallpaper`, so a theme can ship one, the user's theme.css overrides
-// it, and every window follows a pick within a second. Each role's color, the opacity, and the cell size are theme
+// it, and every window follows a pick as it's saved. Each role's color, the opacity, and the cell size are theme
 // variables too. A frame copies tiles from an atlas into only the cells that changed since the last one, each over
 // its own ground, so a frame costs a few hundred small copies, not a full redraw.
 import { bytes } from './palette.js'

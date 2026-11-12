@@ -4,11 +4,11 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
-    sync::{Mutex, Once},
+    sync::Once,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{config_dir, decode, err, fresh, host::Bytes, json::object, read_settings, zip};
+use crate::{config_dir, decode, err, host::Bytes, json::object, read_settings, zip};
 
 /// A new theme.css. nook applies it over its defaults in `src/theme.css` and the installed theme in use.
 const THEME_SEED: &str = "/* Your CSS, applied over nook's defaults and the theme in use.
@@ -29,14 +29,12 @@ pub struct Theme {
     stamp: u64,
     /// Whether this read seeded theme.css: nook's first run, when it shows its welcome.
     first: bool,
-    /// Changes when any of the above does, from the files' stats alone.
-    version: u64,
 }
 
-object!(Theme { css, name, pack, stamp, first, version });
+object!(Theme { css, name, pack, stamp, first });
 
-/// The theme, or None when its version is still `seen`: the page asks every second, and then only stats are read.
-pub fn read_theme(seen: Option<u64>) -> Option<Theme> {
+/// The theme. The page asks as it starts, and again when anything in the config folder changes.
+pub fn read_theme() -> Theme {
     let dir = config_dir();
     let path = dir.join("theme.css");
     let first = !path.exists();
@@ -58,29 +56,11 @@ pub fn read_theme(seen: Option<u64>) -> Option<Theme> {
     if first {
         let _ = fs::create_dir_all(&dir).and_then(|()| fs::write(&path, THEME_SEED));
     }
-    let settings = fs::metadata(dir.join("settings.json")).ok();
-    let name = theme_name(settings.as_ref());
+    let name = read_settings().ok().and_then(|s| s.theme);
     let pack_dir = name.as_ref().map(|n| dir.join("themes").join(n));
-    let stamp = changes(&dir, pack_dir.as_ref().map_or(0, |d| changes(d, 0)));
-    let pack_css = pack_dir.map(|d| d.join("theme.css"));
-    let files = [settings, fs::metadata(&path).ok(), pack_css.as_ref().and_then(|p| fs::metadata(p).ok())];
-    let version = files.iter().fold(stamp, |h, m| stat(h, m.as_ref())) >> 11; // a JSON number holds 53 bits
-    if seen == Some(version) && !files.iter().flatten().any(fresh) {
-        return None;
-    }
+    let stamp = changes(&dir, pack_dir.as_ref().map_or(0, |d| changes(d, 0))) >> 11; // a JSON number holds 53 bits
     let read = |p: &Path| fs::read(p).ok().map(decode);
-    Some(Theme { css: read(&path), name, pack: pack_css.and_then(|p| read(&p)), stamp: stamp >> 11, first, version })
-}
-
-/// The installed theme settings.json names. It's parsed again only when its stats change, or are fresh.
-fn theme_name(settings: Option<&fs::Metadata>) -> Option<String> {
-    static LAST: Mutex<Option<(u64, Option<String>)>> = Mutex::new(None);
-    let now = stat(0, settings);
-    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-    if settings.is_some_and(fresh) || last.as_ref().is_none_or(|(was, _)| *was != now) {
-        *last = Some((now, read_settings().ok().and_then(|s| s.theme)));
-    }
-    last.as_ref().and_then(|(_, name)| name.clone())
+    Theme { css: read(&path), name, pack: pack_dir.and_then(|d| read(&d.join("theme.css"))), stamp, first }
 }
 
 /// `seed` hashed with each entry of `dir`'s stats, so it changes even when a copy of an older file replaces one.

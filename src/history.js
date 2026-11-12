@@ -68,7 +68,7 @@ export function startHistory(view, { root, rel, openFile, run }) {
   let error = ''
   let picked = -1
   let width = 1 // lanes the graph is drawn for
-  let refs = '' // the branch, tag, and HEAD positions last read, so a poll that finds them moved reloads
+  let refs = '' // the branch, tag, and HEAD positions last read, so a look that finds them moved reloads
   let generation = 0 // counts reloads, so a page read for an old one is dropped
   const made = new Map() // row index → its element, while near the screen
 

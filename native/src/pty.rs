@@ -16,7 +16,38 @@ use crate::{
 /// Where nook's mod (`mod`) writes session `id`'s model, effort, and context fill: `<keeper's pid>-<number>`. It
 /// reads requests from the same path with `.cmd` for an extension.
 fn state_file(id: u64) -> PathBuf {
-    std::env::temp_dir().join("nook").join(format!("{}-{}.json", id >> NUMBER, id & ((1 << NUMBER) - 1)))
+    reports_dir().join(format!("{}-{}.json", id >> NUMBER, id & ((1 << NUMBER) - 1)))
+}
+
+/// The folder every session's report is in, which `watch` follows.
+pub fn reports_dir() -> PathBuf {
+    std::env::temp_dir().join("nook")
+}
+
+/// Sends the page each report among `paths` that a session of this window's keepers wrote, as `[id, text]`, or
+/// with None every such report.
+pub fn reported(paths: Option<&[PathBuf]>) {
+    let own = |p: &PathBuf| {
+        let (pid, number) = p.file_name()?.to_str()?.strip_suffix(".json")?.split_once('-')?;
+        let id = pid.parse::<u64>().ok()? << NUMBER | number.parse::<u64>().ok()?;
+        keeper::of(id).map(|_| id)
+    };
+    let all: Vec<PathBuf>;
+    let paths = match paths {
+        Some(paths) => paths,
+        None => {
+            all = std::fs::read_dir(reports_dir()).into_iter().flatten().flatten().map(|e| e.path()).collect();
+            &all
+        }
+    };
+    let mut ids: Vec<u64> = paths.iter().filter_map(own).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    for id in ids {
+        if let Some(text) = pty_state(id) {
+            crate::host::emit("report", &format!("[{id},{}]", crate::json::to_string(&text)));
+        }
+    }
 }
 
 /// Session `id` ended: its link to Claude closes, and its files go.

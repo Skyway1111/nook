@@ -2,6 +2,7 @@
 // is a git command run by git.rs, so hooks and credential helpers behave as in a terminal. diff.js
 // draws the diff tabs it opens, history.js the history tabs, and merge.js a conflicted file's tab.
 import { invoke, Channel } from './host.js'
+import { watch, paced } from './watch.js'
 import { $, el, openMenu, openPicker, dragPath, sheet } from './ui.js'
 import { ICON, basename } from './files.js'
 import { path as paths } from './paths.js'
@@ -58,7 +59,7 @@ function ago(seconds) {
 export function startGit({ openView, openFile, insertPath, onStatus }) {
   let want = null // the active tab's path
   let s = null // the repository on screen, or null outside one
-  let shown = '' // its status as JSON, so a poll that finds nothing new touches nothing
+  let shown = '' // its status as JSON, so a read that finds nothing new touches nothing
   const cache = new Map() // tab path → its last status, painted at once when the tab comes back
   const drafts = new Map() // root → its unsent commit message
   const collapsed = new Set()
@@ -85,15 +86,45 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
       do {
         again = false
         const path = want
-        if (path === null || document.body.classList.contains('git-hidden')) break
+        if (path === null || document.body.classList.contains('git-hidden')) {
+          follow([])
+          break
+        }
         const status = await invoke('git_status', { path }).catch(e => ({ error: String(e) }))
         cache.set(path, status)
-        if (path === want) paint(status)
+        if (path === want) {
+          paint(status)
+          // Outside a repository, the folder's own listing says when a `git init` makes it one.
+          follow(status?.root ? trees(status) : [[path, 'dir']])
+        }
       } while (again)
     } finally {
       loading = false
     }
   }
+
+  /** What changes when the repository `status` describes does: its tree, and its git folder where that lies
+   * outside it, as a worktree's does. */
+  const trees = status => [status.root, ...(paths.within(status.git, status.root) ? [] : [status.git])].map(dir => [dir, 'tree'])
+  /** Runs `fn`, paced, as any of `watches` changes, each a `[path, kind]`, until what it returns is called. */
+  function watchAll(watches, fn) {
+    const run = paced(fn)
+    const stops = watches.map(([path, kind]) => watch(path, kind, run))
+    return () => stops.forEach(stop => stop())
+  }
+  // Claude edits files and runs git meanwhile, and so can anything else: the status is read again as the
+  // repository on screen changes.
+  let following = '[]'
+  let unfollow = () => {}
+  function follow(watches) {
+    if (JSON.stringify(watches) === following) return
+    unfollow()
+    following = JSON.stringify(watches)
+    unfollow = watchAll(watches, refresh)
+  }
+  /** A tab over the repository `status` describes, drawn in `view`: `refresh` runs as the repository changes while
+   * the tab shows, and tabs.js runs it when the tab shows again. */
+  const live = (view, status, refresh) => ({ refresh, close: watchAll(trees(status), () => (view.getClientRects().length ? refresh() : undefined)) })
 
   function paint(status) {
     const json = JSON.stringify(status)
@@ -253,7 +284,7 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
     openView('diff', rel ? leaf(rel) : `${basename(root)} changes`, path, view => {
       // Loaded on first use, so it costs nothing at startup.
       const diff = import('./diff.js').then(m => m.startDiff(view, { root, rel, openFile, run, stage }))
-      return { refresh: () => diff.then(d => d.refresh()) }
+      return live(view, status,() => diff.then(d => d.refresh()))
     })
   }
 
@@ -269,7 +300,7 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
     let diff
     const tab = openView('review', name, root, view => {
       diff = import('./diff.js').then(m => m.startDiff(view, { root, rel: '', only: rels, openFile, run, stage }))
-      return { refresh: () => diff.then(d => d.refresh()), review: list => diff.then(d => d.review(list)) }
+      return { ...live(view, status,() => diff.then(d => d.refresh())), review: list => diff.then(d => d.review(list)) }
     })
     if (!diff) tab.viewer.review(rels) // the tab was open, on another session's files
     tab.name = tab.label.textContent = name
@@ -282,7 +313,7 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
     const run = args => act(args, undefined, root).then(ok => ok || said)
     openView('merge', leaf(rel), path, view => {
       const merge = import('./merge.js').then(m => m.startMerge(view, { root, path, rel, name: leaf(rel), run, openFile }))
-      return { refresh: () => merge.then(m => m.refresh()) }
+      return live(view, status,() => merge.then(m => m.refresh()))
     })
   }
 
@@ -335,7 +366,7 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
     const run = args => act(args, undefined, root).then(ok => ok || said)
     const tab = openView('history', rel ? `${leaf(rel)} history` : `${basename(root)} history`, rel ? abs(root, rel) : root, view => {
       const history = import('./history.js').then(m => m.startHistory(view, { root, rel, openFile, run }))
-      return { refresh: () => history.then(h => h.refresh()), goTo: oid => history.then(h => h.goTo(oid)) }
+      return { ...live(view, status,() => history.then(h => h.refresh())), goTo: oid => history.then(h => h.goTo(oid)) }
     })
     if (oid) tab.viewer.goTo(oid)
   }
@@ -495,8 +526,6 @@ export function startGit({ openView, openFile, insertPath, onStatus }) {
     if (await act(['reset', '--soft', 'HEAD~1'])) setDraft(root, body.trim())
   }
 
-  // Claude edits files and runs git meanwhile; so can anything else.
-  setInterval(() => document.hidden || refresh(), 2000)
   addEventListener('focus', refresh)
 
   return {

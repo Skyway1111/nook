@@ -2,6 +2,7 @@
 // nook's defaults in theme.css apply first, then the installed theme in use, then the user's theme.css.
 // Each knob edits its line in the CSS box, so the file stays the one home for the user's CSS, and the box saves it.
 import { invoke, convertFileSrc } from './host.js'
+import { watch } from './watch.js'
 import { startViewer } from './viewer.js'
 import { $, el, openPicker } from './ui.js'
 import { startThemes } from './themes.js'
@@ -140,18 +141,15 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
     for (const show of knobs) show()
     themes.mark(theme.pack == null ? null : theme.name)
   }
-  // An edit in any app reaches every window on screen within a second: to theme.css, to the theme in use, to a
+  // An edit in any app reaches every window on screen as it's saved: to theme.css, to the theme in use, to a
   // picture or font either names, or a pick of another theme. Once the editor holds theme.css, it reads it.
   let firstRun = false
-  let version // `read_theme`'s, of the theme last read: it answers null while that's still so
+  let reading = 0 // counts reads, so one that a later read overtook is dropped
   async function reread() {
-    const got = await invoke('read_theme', { seen: version })
-    if (!got) return
-    const { first, version: now, ...read } = got
-    version = now
+    const n = ++reading
+    const { first, ...read } = await invoke('read_theme')
     firstRun ||= first
-    apply({ ...read, css: (box ? null : read.css) ?? theme.css })
-    box?.refresh()
+    if (n === reading) apply({ ...read, css: (box ? null : read.css) ?? theme.css })
   }
   // A theme under the pointer shows in place of the one in use, over the user's own CSS as a pick would,
   // until the pointer leaves. undefined puts the theme in use back.
@@ -169,8 +167,7 @@ export async function startSettings({ configDir, settings, home, onRestyle, onCl
   }
   const themes = startThemes({ configDir, home, settings, save, reread, showTheme: preview })
   await reread()
-  setInterval(() => document.hidden || reread(), 1000)
-  document.addEventListener('visibilitychange', () => document.hidden || reread())
+  watch(configDir, 'tree', reread)
 
   $('settings-defaults').ontoggle = async () => {
     const pre = $('settings-defaults').querySelector('pre')

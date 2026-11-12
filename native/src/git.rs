@@ -92,6 +92,9 @@ fn run_progress(dir: &Path, args: &[impl AsRef<OsStr>], mut each: impl FnMut(&st
 #[derive(Default, Debug, PartialEq)]
 pub struct Status {
     root: String,
+    /// The git folder, which a worktree shares with its repository and so has outside `root`: what git writes as
+    /// it stages, commits, and fetches.
+    git: String,
     /// None while HEAD is detached.
     branch: Option<String>,
     /// None before the first commit.
@@ -110,7 +113,7 @@ pub struct Status {
     changes: Vec<Change>,
 }
 
-object!(Status { root, branch, oid, upstream, ahead, behind, remote, subject, operation, stashes, changes });
+object!(Status { root, git, branch, oid, upstream, ahead, behind, remote, subject, operation, stashes, changes });
 
 #[derive(Debug, PartialEq)]
 struct Stash {
@@ -187,6 +190,15 @@ pub fn git_status(path: String) -> Result<Option<Status>, String> {
     // A worktree's git folder names the one it shares stashes with.
     let common = std::fs::read_to_string(dir.join("commondir")).map_or(dir.clone(), |c| dir.join(c.trim()));
     s.stashes = std::fs::read_to_string(common.join("logs/refs/stash")).map(|log| parse_stashes(&log)).unwrap_or_default();
+    // Git writes a worktree's folders with `/` and `..`: said here as a path is elsewhere.
+    let mut git = PathBuf::new();
+    for part in common.components() {
+        match part {
+            std::path::Component::ParentDir => _ = git.pop(),
+            part => git.push(part),
+        }
+    }
+    s.git = git.to_string_lossy().into_owned();
     Ok(Some(s))
 }
 

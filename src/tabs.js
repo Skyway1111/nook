@@ -139,8 +139,8 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
 
   const sessions = watchSessions({
     invoke,
+    listen,
     tabs: () => tabs,
-    visible: tab => !tab.view.hidden,
     watched: tab => (tab === active || tab === beside) && document.hasFocus(),
     onChange: (tab, view, report) => {
       tab.el.dataset.mark = view.mark
@@ -213,6 +213,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     const tab = add('claude', basename(cwd), cwd)
     tab.cwd = cwd
     tab.resume = resume
+    tab.session = attach // the session's id: a running session's from the start, a new one's once it starts
     if (resume) {
       args = [...args, '--resume', resume.id]
       if (resume.prompt && attach === undefined) tab.el.title = `${cwd}\nResumes “${resume.prompt}”`
@@ -232,6 +233,8 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
       onExit: () => close(tab),
     }).then(terminal => {
       tab.terminal = terminal
+      tab.session = terminal.id
+      sessions.poll() // its session's reports are followed from here
       tellClaude()
       if (!tabs.includes(tab)) terminal.close() // closed while its shell started
       else if (active === tab) focus()
@@ -318,9 +321,6 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
       close(tab)
     }
   })
-
-  // An open file follows edits on disk, Claude's included.
-  setInterval(() => document.hidden || active?.viewer?.refresh(), 2000)
 
   // Claude Code hears from nook as from its editor extensions: the Claude tab shown last learns which file was
   // shown last and the lines picked in it, shows "3 lines selected" by its prompt, and sends those lines with
