@@ -206,16 +206,16 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     else if (active === tab) show(tabs[Math.min(i, tabs.length - 1)])
   }
 
-  /** A Claude tab in `cwd`, its command given Claude's flags `args`, such as `['--continue']`. */
   /** A Claude tab in `cwd`, its command given Claude's flags `args`. `resume`, a saved session's
-   * `{ id, prompt }`, makes a tab that resumes it, and with `later` it starts only when first shown. */
-  async function openClaude(cwd, args = [], { resume, later = false } = {}) {
+   * `{ id, prompt }`, makes a tab that resumes it, and `attach`, a running session's id, one that shows it
+   * again. With `later` it starts only when first shown. */
+  async function openClaude(cwd, args = [], { resume, attach, later = false } = {}) {
     const tab = add('claude', basename(cwd), cwd)
     tab.cwd = cwd
     tab.resume = resume
     if (resume) {
       args = [...args, '--resume', resume.id]
-      if (resume.prompt) tab.el.title = `${cwd}\nResumes “${resume.prompt}”`
+      if (resume.prompt && attach === undefined) tab.el.title = `${cwd}\nResumes “${resume.prompt}”`
     }
     tab.view.classList.add('claude')
     const host = tab.view.appendChild(el('div', { className: 'xterm-host' }))
@@ -225,6 +225,7 @@ export function startTabs({ settings, home, onShow, onSessions, onSessionsOpen, 
     tab.start = () => (tab.started ??= startTerminal(host, {
       cwd,
       command: claudeWith(settings.command, args),
+      attach,
       home,
       openPath: (path, kind, line, col) => (kind === 'dir' ? openFolder(path) : openFile(path, line, col)),
       onTitle: t => { tab.label.textContent = t ? `${tab.name} · ${t}` : tab.name },

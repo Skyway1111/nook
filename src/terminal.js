@@ -22,7 +22,9 @@ const clears = text => text.includes('\x1b[2J')
 /** Whether output ends by showing the cursor, as each of Claude's frames does while its prompt has it. */
 const ends = text => text.endsWith('\x1b[?25h')
 
-export async function startTerminal(host, { cwd, home, command, openPath, onTitle, onExit }) {
+/** Runs `command` in a new session, or shows `attach`, the id of one that outlived its last terminal, and runs
+ * `command` should that one have ended. */
+export async function startTerminal(host, { cwd, home, command, attach, openPath, onTitle, onExit }) {
   // Keys and sizes go to the PTY as they come: the host takes calls in the order they're posted, and the PTY's
   // writer writes the keys and applies the sizes in that order. What comes before the PTY exists waits for it.
   let id
@@ -65,7 +67,8 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   }
   const first = fits()
   if (first) term.resize(first.cols, first.rows)
-  pictures = startPictures(term, reply => send(reply))
+  let muted = false // while a session's history replays: the terminal's answers to it were given long ago
+  pictures = startPictures(term, reply => muted || send(reply))
   const links = startLinks(term, () => ({ cwd: here, home }), openPath, pictures.pathOf)
 
   // Claude redraws its whole screen within a frame or two of each resize: ESC [ 2 J, then every row, and it
@@ -77,7 +80,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   // tab has no size, and fitting it would shrink Claude to a sliver.
   let hold = null // the resize waiting for Claude's redraw, then for it to show: { sent, until, redrawn, timer, done }
   let again = false // whether the host resized while a frame was held
-  const output = new Channel()
+  let output = new Channel()
   // Sixel and iTerm2 pictures load their module the first time output holds one. Output that arrives meanwhile
   // waits behind it, in order.
   let loading = false
@@ -85,7 +88,7 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
   let closed = false
   let carry = '' // the end of the last text, where it may start a picture
   // Empty text means the shell exited.
-  output.onmessage = text => {
+  const hear = text => {
     if (waiting) return void waiting.push(text)
     if (!text) return onExit()
     if (!loading) {
@@ -120,10 +123,33 @@ export async function startTerminal(host, { cwd, home, command, openPath, onTitl
     if (ends(text)) release()
     else hold.timer = setTimeout(release, Math.min(QUIET_MS, hold.until - performance.now()))
   }
-  term.onData(send)
+  output.onmessage = hear
+  term.onData(m => muted || send(m))
   term.onResize(({ cols, rows }) => send({ cols, rows }))
   term.onTitleChange(onTitle)
-  id = await invoke('pty_spawn', { command, cwd, cols: term.cols, rows: term.rows, onData: output })
+  const size = { cols: term.cols, rows: term.rows }
+  // A session that outlived its last terminal shows its history first, which the terminal doesn't answer, then
+  // its modes, both ahead of what it writes meanwhile.
+  if (attach !== undefined) {
+    waiting = []
+    const was = await invoke('pty_attach', { id: attach, ...size, onData: output }).catch(() => null)
+    if (was) {
+      id = attach
+      muted = true
+      term.write(was.history, () => { muted = false })
+      term.write(was.modes)
+    } else {
+      output.onmessage = () => {} // a failed attach ends its channel
+      output = new Channel()
+      output.onmessage = hear
+    }
+  }
+  id ??= await invoke('pty_spawn', { command, cwd, ...size, onData: output })
+  if (waiting) {
+    const texts = waiting
+    waiting = null
+    texts.forEach(hear)
+  }
   for (const m of early) send(m)
   early = null
   const composer = startComposer(term, host, id)

@@ -37,6 +37,7 @@ export function appCommands({ tabs, files, git, drawer, wallpaper, openQuick, qu
       run: () => wallpaper.use(id), look: () => wallpaper.peek(id), back: wallpaper.unpeek,
     })),
     { title: 'Show the welcome', icon: '\uE790', run: welcome },
+    { title: 'Restart nook, keeping its sessions', icon: '\uE72C', run: () => (tabs.unsaved().length ? banner('Save the files with unsaved edits first') : invoke('restart').catch(banner)) },
     { title: 'Go to file…', keys: 'Ctrl+P', icon: ICON.file, run: () => openQuick('') },
     { title: 'Go to line…', keys: 'Ctrl+P, then :', icon: '\uE8D2', when: file, run: () => openQuick(':') },
     { title: 'Go to symbol in file…', keys: 'Ctrl+Shift+O', icon: '\uE943', when: () => active()?.viewer?.outline, run: () => openQuick('@') },

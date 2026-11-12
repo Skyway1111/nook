@@ -24,6 +24,7 @@ On Linux, build nook from source, as **Build from source** below says. It needs 
 - **Every session at a glance.** Each tab shows whether its session is working, waiting on you, or done, and a session in the background that needs you or finishes says so on the desktop. Ctrl+Shift+S opens the sessions dashboard, a card per session: what it's doing, its prompt and plan, its context and cost, and the files it wrote, under the account's rate limits. From a card, allow or deny a permission prompt, compact the session, or review everything it changed in one diff.
 - **One prompt, many sessions.** The dashboard's prompt box sends a prompt to every session you tick, each taking it when its turn ends, or to several new sessions, each in a git worktree of its own, so they try it side by side. Keep the best one's changes, staged in your checkout, and discard the rest, branch and all.
 - **Quick prompts.** Ctrl+Shift+P puts a saved prompt, or one of Claude's slash commands and skills, into the prompt to edit. `{file}` in a saved prompt is the file you showed last, and `{folder}` the file browser's folder.
+- **Sessions outlive the window.** Each window's sessions run in a small keeper process of their own. If nook crashes, or an update closes it, they go on working, and the next nook you start shows them as they are. **Restart nook** in the command palette does the same on purpose. Close the window yourself and its sessions end with it. Sessions no nook comes back for end ten minutes after they go quiet.
 - **Side by side.** Ctrl+\ or a tab's **Open beside** splits the pane, so two sessions, or a session and a file, show at once.
 - **Focus mode.** F11 hides everything but Claude, in a column over the wallpaper.
 - **Claude sees what you're looking at.** Each Claude tab is its Claude's IDE: Claude knows the file you showed last and the lines you picked in it, and Ctrl+Alt+K names those lines in its prompt. An edit Claude asks permission for opens beside it as a diff, with **Accept** and **Reject**.
@@ -135,7 +136,7 @@ To make your own theme, follow [Make a theme](docs/themes.md).
 
 ## How nook works with Claude Code
 
-nook starts each Claude session in a pseudoterminal and draws it in a terminal of its own. Every key you type goes to Claude. nook never edits your prompt or Claude's output.
+nook starts each Claude session in a pseudoterminal, held by a keeper process so it outlives the window, and draws it in a terminal of its own. Every key you type goes to Claude. nook never edits your prompt or Claude's output.
 
 Each session nook starts also loads a small Claude Code plugin from `mod`. The plugin tells its tab the model, the effort, how full the context is, and what the session is doing. It runs the model and effort you pick from the prompt card, tells Claude what nook can draw, and adds the pictures, diagrams, and notes under Claude's drawing. It passes every event on unchanged, and sessions you start outside nook never load it.
 

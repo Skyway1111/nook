@@ -25,6 +25,8 @@ struct Ui {
     shown: Cell<bool>,
     /// Where the window was before the page went fullscreen, while it is.
     fullscreen: Cell<Option<WINDOWPLACEMENT>>,
+    /// `Config::on_keep`.
+    keep: Cell<fn()>,
 }
 
 struct UiCell(Ui);
@@ -38,6 +40,7 @@ static UI: UiCell = UiCell(Ui {
     active: Cell::new(false),
     shown: Cell::new(false),
     fullscreen: Cell::new(None),
+    keep: Cell::new(|| {}),
 });
 
 fn ui() -> &'static Ui {
@@ -85,6 +88,7 @@ pub fn create(cfg: &Config) -> HWND {
         });
         set_background(cfg.background);
         ui().min.set(cfg.min);
+        ui().keep.set(cfg.on_keep);
         let style = WS_CAPTION | WS_CLIPSIBLINGS | WS_SYSMENU | WS_SIZEBOX | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
         let h = CreateWindowExW(
             WS_EX_WINDOWEDGE | WS_EX_ACCEPTFILES | WS_EX_APPWINDOW,
@@ -383,8 +387,15 @@ unsafe extern "system" fn proc_(h: HWND, msg: u32, wp: usize, lp: isize) -> isiz
             if webview::page_alive() {
                 ipc::emit("close", "null");
             } else {
+                ui().keep.get()();
                 DestroyWindow(h);
             }
+            return 0;
+        }
+        // An installer's Restart Manager closes the app to replace its files.
+        WM_ENDSESSION if wp != 0 && lp as u32 & ENDSESSION_CLOSEAPP != 0 => {
+            ui().keep.get()();
+            DestroyWindow(h);
             return 0;
         }
         WM_DESTROY => {

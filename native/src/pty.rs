@@ -1,112 +1,30 @@
-//! One console (a pseudoterminal on Linux) per Claude tab, and the files that carry nook's mod's reports and requests.
+//! The page's commands on its Claude tabs' sessions, which a keeper holds (keeper.rs), and the files that carry
+//! nook's mod's reports and requests.
 use std::{
-    collections::BTreeMap,
     env::{self, JoinPathsError},
     ffi::{OsStr, OsString},
     path::PathBuf,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        mpsc::{channel, Receiver, RecvTimeoutError, Sender},
-        Arc, Mutex,
-    },
-    thread,
-    time::Instant,
 };
 
-use crate::{err, host::Stream};
+use crate::{
+    err,
+    host::Stream,
+    json::{self, obj, object},
+    keeper::{self, NUMBER},
+};
 
-#[cfg_attr(windows, path = "pty_windows.rs")]
-#[cfg_attr(unix, path = "pty_unix.rs")]
-mod os;
-
-/// What a tab sends its PTY.
-enum Input {
-    Keys(String),
-    Size(u16, u16),
-}
-
-struct Session {
-    pty: Arc<os::Pty>,
-    /// To the session's writer, which writes keys and applies sizes in the order they came.
-    input: Sender<Input>,
-}
-
-/// Writes a session's keys and applies its sizes, in order, on a thread of its own: a terminal that stops reading
-/// holds up only this. While the console waits on the terminal's answer to a resize, it ticks the console when
-/// the wait is up. It ends once the session has and its queue is empty, or a write fails.
-fn writer(pty: Arc<os::Pty>, queue: Receiver<Input>) {
-    loop {
-        let m = match pty.due() {
-            Some(due) => match queue.recv_timeout(due.saturating_duration_since(Instant::now())) {
-                Err(RecvTimeoutError::Timeout) => {
-                    pty.tick();
-                    continue;
-                }
-                m => m.ok(),
-            },
-            None => queue.recv().ok(),
-        };
-        match m {
-            None => return,
-            Some(Input::Keys(keys)) if pty.write(&keys).is_err() => return,
-            Some(Input::Keys(_)) => {}
-            Some(Input::Size(cols, rows)) => pty.resize(cols, rows),
-        }
-    }
-}
-
-/// Closing the console ends every process attached to it, and can block meanwhile.
-fn end(session: Session) -> thread::JoinHandle<()> {
-    thread::spawn(move || session.pty.close())
-}
-
-/// One pseudoconsole per Claude tab, keyed by the id `pty_spawn` returns.
-pub struct Sessions(Mutex<BTreeMap<u64, Session>>);
-
-pub static SESSIONS: Sessions = Sessions(Mutex::new(BTreeMap::new()));
-
-impl Sessions {
-    /// Ends session `id`; false if it had already ended.
-    fn close(&self, id: u64) -> bool {
-        let session = self.0.lock().unwrap().remove(&id);
-        forget(id);
-        session.map(end).is_some()
-    }
-
-    /// The window closed or its page reloaded: no tab is left to own a session. Each ends on a thread of its own,
-    /// to join before nook exits: on Windows nook serves the consoles, and their processes would outlive it.
-    pub fn close_all(&self) -> Vec<thread::JoinHandle<()>> {
-        let all = std::mem::take(&mut *self.0.lock().unwrap());
-        all.into_iter()
-            .map(|(id, s)| {
-                forget(id);
-                end(s)
-            })
-            .collect()
-    }
-
-    /// Queues `m` for session `id`'s PTY. A session that ended takes no more: its tab is closing, and the
-    /// terminal's own focus-out report can still arrive after the shell exited.
-    fn send(&self, id: u64, m: Input) {
-        if let Some(s) = self.0.lock().unwrap().get(&id) {
-            let _ = s.input.send(m);
-        }
-    }
-}
-
-/// Where nook's mod (`mod`) writes session `id`'s model, effort, and context fill. It reads
-/// requests from the same path with `.cmd` for an extension.
+/// Where nook's mod (`mod`) writes session `id`'s model, effort, and context fill: `<keeper's pid>-<number>`. It
+/// reads requests from the same path with `.cmd` for an extension.
 fn state_file(id: u64) -> PathBuf {
-    std::env::temp_dir().join("nook").join(format!("{}-{id}.json", std::process::id()))
+    std::env::temp_dir().join("nook").join(format!("{}-{}.json", id >> NUMBER, id & ((1 << NUMBER) - 1)))
 }
 
-fn forget(id: u64) {
+/// Session `id` ended: its link to Claude closes, and its files go.
+pub fn forget(id: u64) {
     crate::ide::close(id);
     let _ = std::fs::remove_file(state_file(id));
     let _ = std::fs::remove_file(state_file(id).with_extension("cmd"));
 }
-
-static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Where Claude Code keeps its sessions' temporary files, pasted images among them: `claude` in the temp
 /// folder on Windows, and elsewhere `claude-<uid>`, so users who share /tmp don't share it.
@@ -135,44 +53,42 @@ fn plugin_dirs(inherited: &OsStr, nook_mod: PathBuf) -> Result<OsString, JoinPat
 /// Starts `command` in `cwd` in a console of `cols` by `rows`, whose output streams to the page's channel
 /// `on_data` as text. The channel hears empty text when the shell exits.
 pub fn pty_spawn(command: Vec<String>, cwd: String, cols: u16, rows: u16, on_data: u64) -> Result<u64, String> {
-    let Some((program, args)) = command.split_first().filter(|(p, _)| !p.trim().is_empty()) else {
+    if command.first().is_none_or(|p| p.trim().is_empty()) {
         return Err("settings.json: the command names no program to run".into());
-    };
-    let console = os::open(cols, rows).map_err(err)?; // it starts up while the rest is built
-    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    }
+    let link = keeper::home()?;
+    let id = link.id();
+    let _ = std::fs::remove_file(state_file(id)); // a report left by a keeper that had this one's pid
     let inherited = std::env::var_os("CLAUDE_CODE_PLUGIN_DIRS").unwrap_or_default();
-    let mut vars: Vec<(&str, OsString)> = vec![
+    let path = |p: PathBuf| p.to_string_lossy().into_owned();
+    let mut vars: Vec<(&str, String)> = vec![
         ("TERM", "xterm-256color".into()),
         ("COLORTERM", "truecolor".into()),
         ("FORCE_HYPERLINK", "1".into()), // Claude sends OSC 8 links only to terminals it recognizes
         // Claude draws a mod's Image as kitty graphics only in kitty and Ghostty unless this is set.
         ("CLAUDE_CODE_FORCE_TERMINAL_IMAGES", "1".into()),
-        ("CLAUDE_CODE_PLUGIN_DIRS", plugin_dirs(&inherited, crate::resource("mod")).map_err(err)?),
-        ("NOOK_STATE", state_file(id).into()),
-        ("NOOK_CLAUDE_TEMP", claude_temp().into()), // where the mod finds the session's pasted images
+        ("CLAUDE_CODE_PLUGIN_DIRS", path(plugin_dirs(&inherited, crate::resource("mod")).map_err(err)?.into())),
+        ("NOOK_STATE", path(state_file(id))),
+        ("NOOK_CLAUDE_TEMP", path(claude_temp())), // where the mod finds the session's pasted images
     ];
-    if let Some(port) = crate::ide::open(id) {
-        vars.push(("CLAUDE_CODE_SSE_PORT", port.to_string().into())); // Claude connects to nook as its editor
+    // Claude connects to nook as its editor. The next window to hold the session opens the same port.
+    let ide = crate::ide::open(id, None);
+    if let Some((port, _)) = &ide {
+        vars.push(("CLAUDE_CODE_SSE_PORT", port.to_string()));
     }
-    let (pty, exit) = console.spawn(program, args, &cwd, &vars).map_err(|e| {
+    let (port, token) = ide.unzip();
+    let meta = json::to_string(&obj! { "cwd": cwd, "port": port, "token": token });
+    let (cols, rows, words) = (cols.to_string(), rows.to_string(), command.len().to_string());
+    let head = [&cols[..], &rows, &cwd, &meta, &words].into_iter();
+    let body: Vec<&str> = head.chain(command.iter().map(String::as_str)).chain(vars.iter().flat_map(|(k, v)| [*k, &v[..]])).collect();
+    if body.iter().any(|part| part.contains('\0')) {
+        return Err("settings.json: the command holds a NUL".into());
+    }
+    link.stream(id, Some(Stream::new(on_data)));
+    link.call(b'S', id, body.join("\0").as_bytes(), None).inspect_err(|_| {
+        link.stream(id, None);
         forget(id);
-        e.to_string()
     })?;
-    let out = Stream::new(on_data);
-    let exited = out.clone();
-    pty.output(Box::new(move |b: &[u8]| out.push(b)));
-    let pty = Arc::new(pty);
-    let (queue, keys) = channel();
-    let shared = pty.clone();
-    thread::spawn(move || writer(shared, keys));
-    SESSIONS.0.lock().unwrap().insert(id, Session { pty, input: queue });
-    // The shell exited: the stream's end tells its tab to close.
-    thread::spawn(move || {
-        exit.wait();
-        if SESSIONS.close(id) {
-            exited.end();
-        }
-    });
     let _ = crate::edit_settings(|s| {
         s.last_dir = cwd; // the next launch opens here
         Ok(())
@@ -180,16 +96,69 @@ pub fn pty_spawn(command: Vec<String>, cwd: String, cols: u16, rows: u16, on_dat
     Ok(id)
 }
 
+/// What a session's new terminal shows first: its normal screen's output so far, which the terminal takes
+/// without answering, then the modes its programs left set.
+pub struct Attached {
+    history: String,
+    modes: String,
+}
+
+object!(Attached { history, modes });
+
+/// Shows session `id`, which outlived its last terminal, in a new one of `cols` by `rows`: its output streams
+/// to `on_data` from here on.
+pub fn pty_attach(id: u64, cols: u16, rows: u16, on_data: u64) -> Result<Attached, String> {
+    let link = keeper::of(id).ok_or("its session has ended")?;
+    let reply = link.call(b'A', id, &[cols.to_le_bytes(), rows.to_le_bytes()].concat(), Some(Stream::new(on_data)))?;
+    let (len, rest) = reply.split_at_checked(4).ok_or("the keeper's answer is cut short")?;
+    let (history, modes) = rest.split_at_checked(u32::from_le_bytes(len.try_into().unwrap()) as usize).ok_or("the keeper's answer is cut short")?;
+    Ok(Attached { history: String::from_utf8_lossy(history).into_owned(), modes: String::from_utf8_lossy(modes).into_owned() })
+}
+
+fn tell(id: u64, op: u8, body: &[u8]) {
+    if let Some(link) = keeper::of(id) {
+        link.tell(op, id, body);
+    }
+}
+
 pub fn pty_write(id: u64, data: String) {
-    SESSIONS.send(id, Input::Keys(data));
+    tell(id, b'K', data.as_bytes());
 }
 
 pub fn pty_resize(id: u64, cols: u16, rows: u16) {
-    SESSIONS.send(id, Input::Size(cols, rows));
+    tell(id, b'Z', &[cols.to_le_bytes(), rows.to_le_bytes()].concat());
 }
 
 pub fn pty_close(id: u64) {
-    SESSIONS.close(id);
+    if let Some(link) = keeper::of(id) {
+        link.tell(b'C', id, &[]);
+        link.stream(id, None);
+    }
+    forget(id);
+}
+
+/// A session that outlived the page, or the window before this one.
+pub struct Live {
+    id: u64,
+    cwd: String,
+    /// Claude Code's own id for it, once its mod has reported.
+    session: Option<String>,
+}
+
+object!(Live { id, cwd, session });
+
+/// The sessions the window's keepers hold, each with its link to Claude open again.
+pub fn live() -> Vec<Live> {
+    let live = |(id, meta): (u64, String)| {
+        let [cwd, port, token] = json::fields(&meta, ["cwd", "port", "token"]).ok()?;
+        if let (json::J::Num(port), Some(token)) = (&port, token.as_str()) {
+            crate::ide::open(id, port.parse().ok().map(|port| (port, token.into())));
+        }
+        let state = pty_state(id).unwrap_or_default();
+        let session = json::fields(&state, ["session"]).ok().and_then(|[s]| s.as_str().map(String::from));
+        Some(Live { id, cwd: cwd.as_str()?.into(), session })
+    };
+    keeper::sessions().into_iter().filter_map(live).collect()
 }
 
 /// Asks nook's mod to run `/command args` in session `id`, as the composer's model and effort menus do.

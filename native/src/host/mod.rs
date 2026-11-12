@@ -20,6 +20,7 @@ use win as plat;
 pub use assets::ROOT;
 pub(crate) use ipc::cmd;
 pub use ipc::{emit, Args, Bytes, Command, Commands, Out, Reply, Run, Stream};
+pub use plat::destroy;
 #[cfg(windows)]
 pub use win::{hwnd, post};
 
@@ -39,6 +40,9 @@ pub struct Config {
     pub init_script: String,
     /// Runs once the webview exists and has been asked for the page.
     pub on_webview: fn(),
+    /// Runs before the window closes without its page's say: the page is dead or loading, or on Windows an
+    /// installer is closing the app to replace it.
+    pub on_keep: fn(),
     /// The window icon, a PNG. Windows takes resource 32512 of the exe instead.
     #[cfg(target_os = "linux")]
     pub icon: &'static [u8],

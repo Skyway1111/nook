@@ -37,6 +37,7 @@ struct Shared {
 
 struct Link {
     addr: SocketAddr,
+    auth: String,
     lock: PathBuf,
     shared: Arc<Mutex<Shared>>,
     closed: Arc<AtomicBool>,
@@ -55,8 +56,8 @@ fn lock_dir() -> PathBuf {
         .join("ide")
 }
 
-/// Deletes the sessions' state files (`state_file` in pty.rs, `<pid>-<id>`) of nooks that no longer run, as one
-/// ended by force leaves. Its lockfile here needs nothing: the next Claude that looks for its IDE deletes each
+/// Deletes the sessions' state files (`state_file` in pty.rs, `<pid>-<number>`) of keepers that no longer run, as
+/// one ended by force leaves. Its lockfile here needs nothing: the next Claude that looks for its IDE deletes each
 /// one whose pid is gone, any editor's.
 pub fn sweep() {
     for e in std::fs::read_dir(std::env::temp_dir().join("nook")).into_iter().flatten().flatten() {
@@ -69,7 +70,7 @@ pub fn sweep() {
 
 /// Whether process `pid` may still run: false only when it surely doesn't.
 #[cfg(windows)]
-fn running(pid: u32) -> bool {
+pub fn running(pid: u32) -> bool {
     use crate::sys::*;
     unsafe {
         let h = OpenProcess(SYNCHRONIZE, 0, pid);
@@ -83,25 +84,29 @@ fn running(pid: u32) -> bool {
 }
 
 #[cfg(not(windows))]
-fn running(pid: u32) -> bool {
+pub fn running(pid: u32) -> bool {
     std::path::Path::new(&format!("/proc/{pid}")).exists()
 }
 
 /// 128 random bits as hex. Each `RandomState` is seeded from the system's randomness.
-fn token() -> String {
+pub fn token() -> String {
     (0..2).map(|i| format!("{:016x}", RandomState::new().hash_one(i))).collect()
 }
 
-/// Opens session `id`'s link and gives the port its Claude should connect to. None if it couldn't: the tab
-/// works as before, without the viewer's selection.
-pub fn open(id: u64) -> Option<u16> {
-    listen(id, Arc::new(move |e: Event| e.emit(id)))
+/// Opens session `id`'s link, unless it's open, and gives the port its Claude connects to and the token it
+/// shows. `at` is the port and token of the link a window before this one held, which the session's Claude
+/// still looks for. None if it couldn't open: the tab works as before, without the viewer's selection.
+pub fn open(id: u64, at: Option<(u16, String)>) -> Option<(u16, String)> {
+    if let Some(link) = links().lock().unwrap().get(&id) {
+        return Some((link.addr.port(), link.auth.clone()));
+    }
+    listen(id, at, Arc::new(move |e: Event| e.emit(id)))
 }
 
-fn listen(id: u64, tell: Arc<dyn Fn(Event) + Send + Sync>) -> Option<u16> {
-    let listener = TcpListener::bind("127.0.0.1:0").ok()?;
+fn listen(id: u64, at: Option<(u16, String)>, tell: Arc<dyn Fn(Event) + Send + Sync>) -> Option<(u16, String)> {
+    let (port, auth) = at.unwrap_or_else(|| (0, token()));
+    let listener = TcpListener::bind(("127.0.0.1", port)).ok()?;
     let addr = listener.local_addr().ok()?;
-    let auth = token();
     let dir = lock_dir();
     std::fs::create_dir_all(&dir).ok()?;
     let lock = dir.join(format!("{}.lock", addr.port()));
@@ -109,18 +114,18 @@ fn listen(id: u64, tell: Arc<dyn Fn(Event) + Send + Sync>) -> Option<u16> {
     std::fs::write(&lock, json::to_string(&about)).ok()?;
     let shared = Arc::new(Mutex::new(Shared::default()));
     let closed = Arc::new(AtomicBool::new(false));
-    let (s, c) = (shared.clone(), closed.clone());
+    let (s, c, a) = (shared.clone(), closed.clone(), auth.clone());
     thread::spawn(move || {
         for stream in listener.incoming() {
             if c.load(Ordering::Relaxed) {
                 break;
             }
-            let (Ok(stream), s, auth, tell) = (stream, s.clone(), auth.clone(), tell.clone()) else { continue };
+            let (Ok(stream), s, auth, tell) = (stream, s.clone(), a.clone(), tell.clone()) else { continue };
             thread::spawn(move || serve(stream, &auth, &s, &*tell));
         }
     });
-    links().lock().unwrap().insert(id, Link { addr, lock, shared, closed });
-    Some(addr.port())
+    links().lock().unwrap().insert(id, Link { addr, auth: auth.clone(), lock, shared, closed });
+    Some((addr.port(), auth))
 }
 
 /// Session `id` ended: its lockfile goes, and its Claude, should it still run, is let go.
@@ -455,7 +460,7 @@ mod tests {
         std::env::set_var("CLAUDE_CONFIG_DIR", &dir);
         let shown = Arc::new(Mutex::new(Vec::new()));
         let seen = shown.clone();
-        let port = listen(7_000_001, Arc::new(move |e| if let Event::Diff { tab, .. } = e { seen.lock().unwrap().push(tab) })).unwrap();
+        let (port, _) = listen(7_000_001, None, Arc::new(move |e| if let Event::Diff { tab, .. } = e { seen.lock().unwrap().push(tab) })).unwrap();
         let lock = std::fs::read_to_string(dir.join(format!("ide/{port}.lock"))).unwrap();
         let lock = json::parse(&lock).unwrap();
         assert_eq!(lock["transport"], "ws");

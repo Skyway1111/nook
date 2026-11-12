@@ -23,7 +23,7 @@ $('banner').onclick = () => { $('banner').hidden = true }
 addEventListener('error', e => banner(e.message))
 addEventListener('unhandledrejection', e => banner(String(e.reason)))
 
-const { settings, error, configDir, home } = await invoke('boot')
+const { settings, error, configDir, home, live, reloaded } = await invoke('boot')
 mark('boot')
 
 let tabs, files, wallpaper, dashboard
@@ -438,15 +438,22 @@ addEventListener('contextmenu', e => e.preventDefault())
 // and sizes are the same, which is about 200 ms sooner than drawing them.
 await backdrops.restore()
 mark('chrome')
-// The Claude sessions open when nook last closed come back, resumed, each starting as its tab first shows,
-// so reopening five costs what opening one does.
-const reopen = window.NOOK_REOPEN ? settings.sessions : []
-if (reopen.length) {
-  const opened = await Promise.all(reopen.map(s => tabs.openClaude(s.dir, [], { resume: s, later: true })))
-  const first = opened[reopen.findIndex(s => s.active)] ?? opened[0]
+// The sessions that outlived the last page, or the last window, come back as they are: each tab attaches to its
+// session, in the order the last window saved. The other sessions open when nook last closed come back resumed.
+// Each starts as its tab first shows, so reopening five costs what opening one does.
+const kept = s => live.find(l => l.session === s.id)
+const returning = [
+  ...(settings.sessions ?? []).filter(s => window.NOOK_REOPEN || kept(s)).map(s => ({ dir: s.dir, resume: s, attach: kept(s)?.id })),
+  ...live.filter(l => !settings.sessions?.some(s => s.id === l.session)).map(l => ({ dir: l.cwd, attach: l.id })),
+]
+const returned = await Promise.all(returning.map(r => tabs.openClaude(r.dir, [], { ...r, later: true })))
+// A folder nook was asked for gets a new session, once: a reload attaches to the one it got.
+if (!returned.length || (window.NOOK_ASKED && !reloaded)) await tabs.openClaude(cwd)
+else {
+  const first = returned[returning.findIndex(r => r.resume?.active)] ?? returned[0]
   tabs.show(first)
   await first.started
-} else await tabs.openClaude(cwd)
+}
 mark('spawned')
 // First run only: the welcome loads once Claude's tab is up, so it never delays an open.
 if (drawer.firstRun) welcome()

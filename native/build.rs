@@ -13,7 +13,8 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
         rsrc::link("icons/icon.ico", &name, env!("CARGO_PKG_VERSION"));
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()); // as it is now: the repository may have moved
+    let root = manifest.parent().unwrap();
     let out = if std::env::var_os("CARGO_CFG_DEBUG_ASSERTIONS").is_some() {
         format!("pub const ROOT: &str = {:?};\n", root.display().to_string())
     } else {

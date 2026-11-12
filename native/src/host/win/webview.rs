@@ -178,12 +178,17 @@ fn set_up(controller: *mut c_void, cfg: Config) {
             S_OK
         });
         // Only the page's own process ending, or hanging, leaves no page to answer a close; a GPU, network, or
-        // frame process can go and the page goes on.
-        on(wv, 25, IID_PROCESS_FAILED, |_, args| {
+        // frame process can go and the page goes on. A page whose process ended loads again, and its tabs attach
+        // to their sessions, unless the last one ended within 10 s too.
+        let mut failed: Option<std::time::Instant> = None;
+        on(wv, 25, IID_PROCESS_FAILED, move |_, args| {
             let mut kind = -1i32;
             call!(args, 3, &mut kind => *mut i32);
             if (0..=2).contains(&kind) {
                 web().alive.set(false);
+            }
+            if kind == 1 && failed.replace(std::time::Instant::now()).is_none_or(|t| t.elapsed().as_secs() >= 10) {
+                reload();
             }
             S_OK
         });
@@ -305,8 +310,7 @@ pub fn eval(script: &str) {
     }
 }
 
-/// Debug builds: loads the page again.
-#[cfg(debug_assertions)]
+/// Loads the page again.
 pub fn reload() {
     let wv = web().webview.get();
     if !wv.is_null() {

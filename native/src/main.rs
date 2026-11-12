@@ -14,6 +14,7 @@ mod host;
 mod ide;
 mod index;
 mod json;
+mod keeper;
 mod notify;
 mod pdf;
 #[cfg_attr(not(windows), path = "priority_unix.rs")]
@@ -38,7 +39,10 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, OnceLock,
+    },
     time::Instant,
 };
 
@@ -197,19 +201,35 @@ struct Boot {
     error: Option<String>,
     config_dir: PathBuf,
     home: String,
+    /// The sessions that outlived the last page, or the last window, for the page's tabs to attach to.
+    live: Vec<pty::Live>,
+    /// Whether this window has loaded its page before.
+    reloaded: bool,
 }
 
-object!(Boot { settings, error, config_dir: "configDir", home });
+object!(Boot { settings, error, config_dir: "configDir", home, live, reloaded });
 
-/// A (re)loaded page starts with no tabs, so sessions from before a reload end here.
+/// A (re)loaded page starts with no tabs. The sessions go on in their keepers, unheard until a tab attaches.
 fn boot() -> Boot {
-    pty::SESSIONS.close_all();
+    static BOOTED: AtomicBool = AtomicBool::new(false);
+    keeper::unstream();
     let (mut settings, error) = match read_settings() {
         Ok(s) => (s, None),
         Err(e) => (Settings::default(), Some(e)),
     };
     settings.sessions.retain(|s| Path::new(&s.dir).is_dir()); // a folder since moved or deleted reopens nothing
-    Boot { settings, error, config_dir: config_dir(), home: std::env::var(HOME_VAR).unwrap_or_default() }
+    let home = std::env::var(HOME_VAR).unwrap_or_default();
+    Boot { settings, error, config_dir: config_dir(), home, live: pty::live(), reloaded: BOOTED.swap(true, Ordering::Relaxed) }
+}
+
+/// Starts nook again and closes this window, leaving its sessions with their keepers for the new one: how a
+/// nook that was updated while it ran becomes the new nook.
+fn restart() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(err)?;
+    keeper::leave();
+    spawning(|| Command::new(exe).spawn()).map_err(err)?;
+    host::destroy();
+    Ok(())
 }
 
 /// settings.json as it is now, for the settings drawer.
@@ -437,6 +457,10 @@ fn main() {
     if std::env::var_os(sandbox::WORKER).is_some() {
         return sandbox::serve(pdf::answer);
     }
+    // Started by a window to keep its sessions: no window of its own.
+    if std::env::args().nth(1).as_deref() == Some(keeper::FLAG) {
+        return keeper::run();
+    }
     STARTED.get_or_init(Instant::now);
     for key in INHERITED_SESSION_MARKERS {
         std::env::remove_var(key); // before any thread exists
@@ -449,11 +473,13 @@ fn main() {
         self::bench("mark:setup".into(), None);
     }
     priority::keep_typing_path_elevated(settings.command.first().map_or("", String::as_str));
+    // The keeper is found, or started, while the window opens.
+    std::thread::spawn(|| drop(keeper::home()));
     std::thread::spawn(ide::sweep);
     // `nook <dir>` opens there; otherwise in the last session's folder.
     let asked = std::env::args().nth(1).as_deref().and_then(dir_arg);
     // A folder asked for opens a new session there instead of reopening the last ones.
-    let reopen = asked.is_none() && settings.reopen_sessions;
+    let (reopen, asked_for) = (asked.is_none() && settings.reopen_sessions, asked.is_some());
     let start = asked.or_else(|| Some(settings.last_dir).filter(|d| Path::new(d).is_dir())).unwrap_or_else(|| Settings::default().last_dir);
     let cfg = host::Config {
         title: NAME,
@@ -465,8 +491,12 @@ fn main() {
         // `gpu` takes a restart.
         #[cfg(windows)]
         browser_args: format!("{BROWSER_ARGS}{}", if settings.gpu { "" } else { " --disable-gpu" }),
-        init_script: format!("window.NOOK_CWD = {}; window.NOOK_REOPEN = {reopen}; window.NOOK_BENCH = {bench};", json::to_string(&start)),
+        init_script: format!(
+            "window.NOOK_CWD = {}; window.NOOK_ASKED = {asked_for}; window.NOOK_REOPEN = {reopen}; window.NOOK_BENCH = {bench};",
+            json::to_string(&start)
+        ),
         on_webview: if bench { || self::bench("mark:window".into(), None) } else { || {} },
+        on_keep: keeper::leave,
         // icon.ico's 32 px picture, a PNG, copied out at compile time: a slice of it would keep the whole .ico.
         #[cfg(target_os = "linux")]
         icon: {
@@ -493,9 +523,7 @@ fn main() {
         eprintln!("{e}");
     }
     // The window is gone, and no tab is left to own a session.
-    for end in pty::SESSIONS.close_all() {
-        let _ = end.join();
-    }
+    keeper::end();
 }
 
 /// Every command the page calls, and where it runs. A command that reads or writes a file or waits on a process
@@ -514,7 +542,9 @@ fn commands(name: &str) -> Option<(Run, host::Command)> {
         "copy_files" => (Inline, cmd!(shell::copy_files, paths, cut)),
         "can_paste" => (Inline, cmd!(shell::can_paste)),
         "copied_paths" => (Inline, cmd!(shell::copied_paths)),
+        "restart" => (Inline, cmd!(restart)),
         "pty_spawn" => (Thread, cmd!(pty::pty_spawn, command, cwd, cols, rows, on_data: "onData")),
+        "pty_attach" => (Thread, cmd!(pty::pty_attach, id, cols, rows, on_data: "onData")),
         "pty_states" => (Thread, cmd!(pty::pty_states, ids)),
         "pty_command" => (Thread, cmd!(pty::pty_command, id, command, args)),
         "session_image" => (Thread, cmd!(pty::session_image, id, n)),

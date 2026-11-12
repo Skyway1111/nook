@@ -299,6 +299,10 @@ struct Ui {
     webview: Cell<Ptr>,
     /// The page has posted since its last load started, and its process is alive, so it answers a close.
     alive: Cell<bool>,
+    /// When the page's process last ended.
+    died: Cell<Option<std::time::Instant>>,
+    /// `Config::on_keep`.
+    keep: Cell<fn()>,
     shown: Cell<bool>,
     maximized: Cell<bool>,
     fullscreen: Cell<bool>,
@@ -319,6 +323,8 @@ static UI: UiCell = UiCell(Ui {
     window: Cell::new(null_mut()),
     webview: Cell::new(null_mut()),
     alive: Cell::new(false),
+    died: Cell::new(None),
+    keep: Cell::new(|| {}),
     shown: Cell::new(false),
     maximized: Cell::new(false),
     fullscreen: Cell::new(false),
@@ -363,6 +369,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         if gtk_init_check(null_mut(), null_mut()) == 0 {
             return Err("GTK couldn't open a display".into());
         }
+        ui().keep.set(cfg.on_keep);
         let w = gtk_window_new(0);
         ui().window.set(w);
         gtk_window_set_title(w, cstring(cfg.title).as_ptr());
@@ -497,8 +504,7 @@ pub fn eval(script: &str) {
     }
 }
 
-/// Debug builds: loads the page again.
-#[cfg(debug_assertions)]
+/// Loads the page again.
 pub fn reload() {
     let wv = ui().webview.get();
     if !wv.is_null() {
@@ -626,6 +632,7 @@ unsafe extern "C" fn delete(_: Ptr, _: Ptr, _: Ptr) -> c_int {
         ipc::emit("close", "null");
         1
     } else {
+        ui().keep.get()();
         0
     }
 }
@@ -675,8 +682,13 @@ unsafe extern "C" fn load_changed(wv: Ptr, event: c_int, _: Ptr) {
     }
 }
 
+/// The page's process ended: it loads again, and its tabs attach to their sessions, unless the last one ended
+/// within 10 s too.
 unsafe extern "C" fn page_died(_: Ptr, _: c_int, _: Ptr) {
     ui().alive.set(false);
+    if ui().died.replace(Some(std::time::Instant::now())).is_none_or(|t| t.elapsed().as_secs() >= 10) {
+        reload();
+    }
 }
 
 /// Whether the main frame shows, or is loading, nook's own page: only it hears the app or calls it.
