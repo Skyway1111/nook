@@ -678,6 +678,9 @@ fn launch() -> io::Result<Arc<Link>> {
         if let Some((port, token)) = listing(pid) {
             return connect(port, &token)?.ok_or_else(|| io::Error::other("the new keeper is taken"));
         }
+        if !crate::ide::running(pid) {
+            break;
+        }
     }
     Err(io::Error::other("the keeper didn't start"))
 }
