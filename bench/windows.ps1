@@ -46,7 +46,7 @@ public static class NookWin {
 "@
 [NookWin]::SetProcessDPIAware() | Out-Null
 
-# nook and the WebView2 processes under it. The tab's shell and console host don't count.
+# nook, its keeper, and the WebView2 processes under it. The tab's shell doesn't count.
 function Ours([int]$root) {
   $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name)
   $in = @{ $root = $true }
@@ -56,7 +56,7 @@ function Ours([int]$root) {
       if (-not $in.ContainsKey([int]$p.ProcessId) -and $in.ContainsKey([int]$p.ParentProcessId)) { $in[[int]$p.ProcessId] = $true; $grew = $true }
     }
   } while ($grew)
-  $all | Where-Object { $in.ContainsKey([int]$_.ProcessId) -and ($_.ProcessId -eq $root -or $_.Name -eq 'msedgewebview2.exe') } | ForEach-Object { [int]$_.ProcessId }
+  $all | Where-Object { $in.ContainsKey([int]$_.ProcessId) -and ($_.ProcessId -eq $root -or $_.Name -in 'msedgewebview2.exe', 'nook.exe') } | ForEach-Object { [int]$_.ProcessId }
 }
 function Processes($ids) { foreach ($i in $ids) { Get-Process -Id $i -ErrorAction SilentlyContinue } }
 

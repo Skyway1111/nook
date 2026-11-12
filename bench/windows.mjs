@@ -4,7 +4,7 @@
 //   resize    ms from a window resize until the frame that shows it, over 40 resizes (median and p95)
 //   idle      CPU, as % of one core, over 10 s with nothing happening
 //   memory    MB of private memory once idle
-// CPU and memory count nook and its WebView2 processes, not the shell in its tab, which runs cmd.exe. Every
+// CPU and memory count nook, its keeper, and its WebView2 processes, not the shell in its tab, which runs cmd.exe. Every
 // launch times its open; the first --sessions launches of each build also run the rest. Launches take turns
 // between the builds, and the table flags a change worse than its noise, as bench/linux.mjs does.
 // Every build is nook as dev.nook.bench, with its own settings and WebView2 profile, so your own nook can stay open
