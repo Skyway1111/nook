@@ -28,6 +28,7 @@ mod shell;
 #[cfg(windows)]
 mod sys;
 mod theme;
+mod watch;
 mod zip;
 
 use host::{cmd, Run};
@@ -204,6 +205,7 @@ object!(Boot { settings, error, config_dir: "configDir", home });
 /// A (re)loaded page starts with no tabs, so sessions from before a reload end here.
 fn boot() -> Boot {
     pty::SESSIONS.close_all();
+    watch::page(Vec::new());
     let (mut settings, error) = match read_settings() {
         Ok(s) => (s, None),
         Err(e) => (Settings::default(), Some(e)),
@@ -300,19 +302,6 @@ fn read_text(path: String) -> Result<String, String> {
         return Err("it isn't text".into());
     }
     Ok(decode(bytes))
-}
-
-/// When a file last changed, and its size. A file tab rereads the file only when this changes, so a fresh file's
-/// stamp holds the time of asking too.
-fn file_stamp(path: String) -> Option<String> {
-    let meta = fs::metadata(path).ok()?;
-    let now = if fresh(&meta) { format!(" {:?}", std::time::SystemTime::now()) } else { String::new() };
-    Some(format!("{:?} {}{now}", meta.modified().ok()?, meta.len()))
-}
-
-/// Whether a file was written in the last two seconds: a second write within its time's resolution keeps its stats.
-fn fresh(m: &fs::Metadata) -> bool {
-    m.modified().is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() < 2))
 }
 
 /// What each path names: 0 nothing, 1 a file, 2 a folder. A Claude tab asks about the paths in a row
@@ -450,6 +439,9 @@ fn main() {
     }
     priority::keep_typing_path_elevated(settings.command.first().map_or("", String::as_str));
     std::thread::spawn(ide::sweep);
+    // Each session's report reaches the page as its mod writes it.
+    let _ = fs::create_dir_all(pty::reports_dir());
+    watch::start(vec![(watch::Kind::Tree, pty::reports_dir(), pty::reported)]);
     // `nook <dir>` opens there; otherwise in the last session's folder.
     let asked = std::env::args().nth(1).as_deref().and_then(dir_arg);
     // A folder asked for opens a new session there instead of reopening the last ones.
@@ -509,6 +501,7 @@ fn commands(name: &str) -> Option<(Run, host::Command)> {
         "pty_resize" => (Inline, cmd!(pty::pty_resize, id, cols, rows)),
         "pty_close" => (Inline, cmd!(pty::pty_close, id)),
         "bench" => (Inline, cmd!(bench, event, ms)),
+        "watch" => (Inline, cmd!(watch::page, set)),
         "open_path" => (Inline, cmd!(shell::open_path, path, verb)),
         "reveal" => (Inline, cmd!(shell::reveal, path)),
         "copy_files" => (Inline, cmd!(shell::copy_files, paths, cut)),
@@ -522,7 +515,7 @@ fn commands(name: &str) -> Option<(Run, host::Command)> {
         "boot" => (Thread, cmd!(boot)),
         "settings" => (Thread, cmd!(settings)),
         "update_settings" => (Thread, cmd!(update_settings, patch)),
-        "read_theme" => (Thread, cmd!(theme::read_theme, seen)),
+        "read_theme" => (Thread, cmd!(theme::read_theme)),
         "install_theme" => (Thread, cmd!(theme::install_theme, path)),
         "install_theme_zip" => (Thread, cmd!(theme::install_theme_zip, @body)),
         "install_theme_files" => (Thread, cmd!(theme::install_theme_files, @body)),
@@ -538,7 +531,6 @@ fn commands(name: &str) -> Option<(Run, host::Command)> {
         "undo_replace" => (Thread, cmd!(replace::undo_replace)),
         "workspace_symbols" => (Thread, cmd!(defs::workspace_symbols, dir)),
         "outline" => (Thread, cmd!(defs::outline, name, text)),
-        "file_stamp" => (Thread, cmd!(file_stamp, path)),
         "path_kinds" => (Thread, cmd!(path_kinds, paths)),
         "peek_lines" => (Thread, cmd!(peek_lines, path, from, count)),
         "read_text" => (Thread, cmd!(read_text, path)),

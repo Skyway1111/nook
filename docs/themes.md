@@ -65,7 +65,7 @@ To show the picture in the terminal too, replace `--term-bg` in `:root`:
 
 `fixed` sizes the picture to the window instead of the terminal, so it lines up with the picture on `body`. The gradient darkens it under the text. Twilight uses `twilight-soft.jpg` here instead: a small, blurred copy of its painting, which reads as frosted glass.
 
-When you replace a picture with a new file of the same name, nook shows the new one within a second.
+When you replace a picture with a new file of the same name, nook shows the new one at once.
 
 ## 5. Add a font
 

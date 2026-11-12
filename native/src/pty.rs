@@ -97,7 +97,31 @@ impl Sessions {
 /// Where nook's mod (`mod`) writes session `id`'s model, effort, and context fill. It reads
 /// requests from the same path with `.cmd` for an extension.
 fn state_file(id: u64) -> PathBuf {
-    std::env::temp_dir().join("nook").join(format!("{}-{id}.json", std::process::id()))
+    reports_dir().join(format!("{}-{id}.json", std::process::id()))
+}
+
+/// The folder every session's report is in, which `watch` follows.
+pub fn reports_dir() -> PathBuf {
+    std::env::temp_dir().join("nook")
+}
+
+/// Sends the page each of this nook's reports among `paths`, as `[id, text]`, or with None every session's.
+pub fn reported(paths: Option<&[PathBuf]>) {
+    let own = |p: &PathBuf| {
+        let (pid, id) = p.file_name()?.to_str()?.strip_suffix(".json")?.split_once('-')?;
+        (pid.parse() == Ok(std::process::id())).then(|| id.parse().ok())?
+    };
+    let mut ids: Vec<u64> = match paths {
+        Some(paths) => paths.iter().filter_map(own).collect(),
+        None => SESSIONS.0.lock().unwrap().keys().copied().collect(),
+    };
+    ids.sort_unstable();
+    ids.dedup();
+    for id in ids {
+        if let Some(text) = pty_state(id) {
+            crate::host::emit("report", &format!("[{id},{}]", crate::json::to_string(&text)));
+        }
+    }
 }
 
 fn forget(id: u64) {

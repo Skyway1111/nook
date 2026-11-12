@@ -1,5 +1,6 @@
 // The file browser: anywhere on disk, not scoped to the session's folder.
 import { invoke } from './host.js'
+import { watch } from './watch.js'
 import { $, el, openMenu, showPreview, hidePreview, dragPath } from './ui.js'
 import { path as paths } from './paths.js'
 import { sortEntries } from './order.js'
@@ -72,6 +73,11 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     }
     // Up a level, the cursor lands on the folder you came from, as in Explorer; anywhere else, on the first row.
     if (path !== cur) [cursor, cursorAt] = [cur && same(parent(cur) ?? '', path) ? cur : '', 0]
+    if (path !== cur) {
+      // Files made or removed while you work, by Claude or anything else, show as they change.
+      unwatch()
+      unwatch = path ? watch(path, 'dir', () => sync()) : () => {}
+    }
     cur = path
     say('')
     list.scrollTop = 0
@@ -616,28 +622,16 @@ export function startFiles({ start, home, pinned, newSession, openFile, insertPa
     input.onblur = renderCrumbs
   })
 
-  // The poll rereads the folder only when its change time moves, which adding, removing, or renaming an entry
-  // does, and for a few seconds after, since some file systems keep that time to the nearest 2 s. A full reread
-  // every 20 s catches what leaves the time alone, as a file turning hidden does.
-  let stamp = ''
-  let stampMoved = 0
-  let reread = 0
+  let unwatch = () => {} // stops watching the open folder's listing
   /** Rereads the open folder and repaints it if it changed, or always when `force`. */
   async function sync(force = false) {
     if (editing || !cur) return
     const at = cur
     try {
-      const now = Date.now()
-      const next = force ? '' : await invoke('file_stamp', { path: at })
-      if (next !== stamp) [stamp, stampMoved] = [next, now]
-      if (!force && next && now - stampMoved > 4500 && now - reread < 20_000) return
-      reread = now
       const listed = await listing(at)
       if (at === cur && !editing && (force || JSON.stringify(listed) !== shown)) render(listed)
     } catch {}
   }
-  // Pick up files created while you work (by Claude, or anything else).
-  setInterval(() => document.hidden || sync(), 2000)
 
   /** Opens the folder that holds `path` and points at its row. */
   async function reveal(path) {

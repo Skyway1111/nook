@@ -1,6 +1,7 @@
 // A file tab: a picture, audio or video, a PDF, or text in an editor. Markdown, CSV and TSV, SVG, and HTML
 // with no script open rendered and toggle to their source. previews.js draws all but Markdown, and loads when one first opens.
 import { invoke, convertFileSrc } from './host.js'
+import { watch } from './watch.js'
 import { IMAGE, basename } from './files.js'
 import { el, flag, letter, openMenu } from './ui.js'
 import { path as paths } from './paths.js'
@@ -26,6 +27,8 @@ const RENDERED = [[/\.(md|markdown)$/i, 'markdown'], [/\.(csv|tsv)$/i, 'sheet'],
 // Shown without reading them as text. Kept here, beside IMAGE, so a Claude tab's code loads no more.
 const MEDIA = /\.(mp4|webm|mov|m4v|ogv|mp3|wav|ogg|oga|flac|m4a|aac|opus)$/i
 const PDF = /\.pdf$/i
+/** Whether a file opens as text, in the editor or rendered from it. */
+const TEXT = path => !(MEDIA.test(path) || PDF.test(path) || (IMAGE.test(path) && !/\.svg$/i.test(path)))
 
 async function markdown(text, path) {
   const [{ toHtml }, { highlight }, { clean }] = await Promise.all([import('./markdown.js'), import('./highlight.js'), import('./sanitize.js')])
@@ -77,7 +80,6 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
   view.tabIndex = -1 // focusable, so the keyboard scrolls it
   const name = basename(path)
   let shown, failed // on disk at the last read or write: the file's text, or why it can't be shown
-  let stamp // the file's change time and size at the last read, so a poll rereads it only after a change
   let eol // the file's line ending. The editor holds \n and saves with this.
   let editor // the editor, once the text has loaded
   let dirty = false
@@ -94,6 +96,15 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
   // A read that lands after a save would revert the editor, so disk work runs one call at a time.
   let last = Promise.resolve()
   const serial = f => (last = last.catch(() => {}).then(f))
+  // The file, and git's index once it's known, are read again when they change (watch.js): at once while the view
+  // shows, or always for the drawer's theme.css, and otherwise at the next `refresh`, which tabs.js calls as the
+  // tab shows.
+  const stale = { file: true, index: false }
+  function moved(what) {
+    stale[what] = true
+    if (autosave || view.getClientRects().length) refresh()
+  }
+  let watching = TEXT(path) ? [watch(path, 'file', () => moved('file'))] : [] // what stops each watch; null once closed
 
   function paint(mode, nodes) {
     view.className = `view ${mode}`
@@ -130,10 +141,10 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
   addEventListener('nook-blame', onBlame)
 
   // Change bars: the editor's lines against the copy of the file in git's index, so they show what the git
-  // panel's unstaged diff would, unsaved edits included. Read again when the index file changes.
+  // panel's unstaged diff would, unsaved edits included. A commit, a stage or a checkout, from the panel or a
+  // terminal, writes the index file, and the copy is read again.
   let base = null // that copy's lines, or null outside a repository or for a file git doesn't track
-  let index // the index file, once known, and its stamp at the last read
-  let indexStamp
+  let index // the index file, once known
   let basing = 0 // counts reads, so an old one's answer is dropped
   let barring // the timer that redraws the bars a moment after an edit
   async function rebase() {
@@ -141,10 +152,12 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     const dir = paths.parent(path)
     if (index === undefined) {
       const gitDir = await invoke('git', { dir, args: ['rev-parse', '--absolute-git-dir'] }).catch(() => '')
-      index = gitDir.trim() ? paths.join(paths.normalize(gitDir.trim()), 'index') : null
+      if (index === undefined) {
+        index = gitDir.trim() ? paths.join(paths.normalize(gitDir.trim()), 'index') : null
+        if (index && watching) watching.push(watch(index, 'file', () => moved('index')))
+      }
     }
     if (!index) return
-    indexStamp = await invoke('file_stamp', { path: index }).catch(() => null)
     const text = await invoke('git', { dir, args: ['show', `:./${name}`] }).catch(() => null)
     if (n !== basing || !editor) return
     base = text === null ? null : text.replace(/\r\n?/g, '\n').split('\n')
@@ -284,9 +297,10 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     }
   }
 
-  /** Rereads the file. A buffer with unsaved edits stays as it is unless `discard`. */
+  /** Rereads the file if it changed since the last read, or when `discard`, which also drops unsaved edits: a
+   * buffer with them otherwise stays as it is. */
   const refresh = (discard = false) => serial(async () => {
-    if (MEDIA.test(path) || PDF.test(path) || (IMAGE.test(path) && drawn !== 'svg')) {
+    if (!TEXT(path)) {
       if (shown) return
       shown = path
       const p = await previews()
@@ -295,11 +309,10 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
       if (document.activeElement === view) player.el.focus()
       return
     }
-    // A commit, a stage or a checkout, from the panel or a terminal, writes the index: the bars follow it.
-    if (index && editor) invoke('file_stamp', { path: index }).then(s => s !== indexStamp && rebase(), () => {})
-    const now = await invoke('file_stamp', { path })
-    if (now && now === stamp && !discard) return
-    stamp = now
+    if (stale.index && editor) rebase()
+    stale.index = false
+    if (!stale.file && !discard) return
+    stale.file = false
     const [text, error] = await invoke('read_text', { path }).then(t => [t, ''], e => [null, String(e)])
     if (text === shown && error === failed) return
     if (dirty && !discard) return conflict()
@@ -419,6 +432,8 @@ export function startViewer(view, path, { openFile, onDirty, onText, autosave, m
     mention,
     pick,
     close: () => {
+      for (const stop of watching) stop()
+      watching = null
       clearTimeout(picking)
       removeEventListener('nook-blame', onBlame)
       clearTimeout(reblame)

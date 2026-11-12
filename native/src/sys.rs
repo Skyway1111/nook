@@ -57,6 +57,17 @@ pub const REG_EXPAND_SZ: u32 = 2;
 pub const REG_MULTI_SZ: u32 = 7;
 pub const ERROR_MORE_DATA: u32 = 234;
 
+// Watching a folder's tree
+pub const FILE_LIST_DIRECTORY: u32 = 1;
+pub const OPEN_EXISTING: u32 = 3;
+pub const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+pub const FILE_FLAG_OVERLAPPED: u32 = 0x4000_0000;
+pub const FILE_NOTIFY_CHANGE_FILE_NAME: u32 = 0x1;
+pub const FILE_NOTIFY_CHANGE_DIR_NAME: u32 = 0x2;
+pub const FILE_NOTIFY_CHANGE_SIZE: u32 = 0x8;
+pub const FILE_NOTIFY_CHANGE_LAST_WRITE: u32 = 0x10;
+pub const FILE_ACTION_MODIFIED: u32 = 3;
+
 // Notifications
 pub const NIM_ADD: u32 = 0;
 pub const NIM_MODIFY: u32 = 1;
@@ -169,6 +180,14 @@ pub struct OBJECT_ATTRIBUTES {
 pub struct IO_STATUS_BLOCK {
     pub Status: isize,
     pub Information: usize,
+}
+
+#[repr(C)]
+pub struct OVERLAPPED {
+    pub Internal: usize,
+    pub InternalHigh: usize,
+    pub Offset: u64,
+    pub hEvent: HANDLE,
 }
 
 #[repr(C)]
@@ -383,6 +402,7 @@ pub struct WINDOWPLACEMENT {
 }
 
 // The sizes Windows checks, on x64 and arm64.
+const _: () = assert!(size_of::<OVERLAPPED>() == 32);
 const _: () = assert!(size_of::<STARTUPINFOEXW>() == 112);
 const _: () = assert!(size_of::<PROCESS_INFORMATION>() == 24);
 const _: () = assert!(size_of::<WIN32_FIND_DATAW>() == 592);
@@ -409,7 +429,7 @@ macro_rules! zeroed {
     )*};
 }
 zeroed!(
-    STARTUPINFOEXW, PROCESS_INFORMATION, WIN32_FIND_DATAW, PROCESSENTRY32W, NOTIFYICONDATAW, SHELLEXECUTEINFOW, SHFILEOPSTRUCTW,
+    OVERLAPPED, STARTUPINFOEXW, PROCESS_INFORMATION, WIN32_FIND_DATAW, PROCESSENTRY32W, NOTIFYICONDATAW, SHELLEXECUTEINFOW, SHFILEOPSTRUCTW,
     MSG, MONITORINFO, APPBARDATA, OSVERSIONINFOW, WINDOWPLACEMENT
 );
 
@@ -484,6 +504,11 @@ extern "system" {
     pub fn MultiByteToWideChar(cp: u32, flags: u32, s: *const u8, len: i32, w: PWSTR, wlen: i32) -> i32;
     pub fn WideCharToMultiByte(cp: u32, flags: u32, w: PCWSTR, wlen: i32, s: *mut u8, len: i32, default: *const u8, used: *mut BOOL) -> i32;
     pub fn LCIDToLocaleName(lcid: u32, name: PWSTR, len: i32, flags: u32) -> i32;
+    pub fn CreateFileW(name: PCWSTR, access: u32, share: u32, security: *const c_void, disposition: u32, flags: u32, template: HANDLE) -> HANDLE;
+    pub fn CreateIoCompletionPort(file: HANDLE, port: HANDLE, key: usize, threads: u32) -> HANDLE;
+    pub fn GetQueuedCompletionStatus(port: HANDLE, bytes: *mut u32, key: *mut usize, overlapped: *mut *mut OVERLAPPED, ms: u32) -> BOOL;
+    pub fn PostQueuedCompletionStatus(port: HANDLE, bytes: u32, key: usize, overlapped: *mut OVERLAPPED) -> BOOL;
+    pub fn ReadDirectoryChangesW(dir: HANDLE, buffer: *mut c_void, len: u32, subtree: BOOL, filter: u32, returned: *mut u32, overlapped: *mut OVERLAPPED, routine: *const c_void) -> BOOL;
 }
 
 #[link(name = "ntdll.dll", kind = "raw-dylib", modifiers = "+verbatim")]

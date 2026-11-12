@@ -1,6 +1,6 @@
 // What each Claude tab's session is doing, from what nook's mod reports: the dot on its tab, the count in
 // the window's title, and when to ask for the user's attention. `follow` is pure, so `sessions.test.js`
-// checks it without a window; `watchSessions` polls the tabs' reports in one IPC call at a time.
+// checks it without a window; `watchSessions` hears each report as its mod writes it.
 
 /** A session's mark on its tab: working, waiting (on the user), done (finished while the user looked
  * elsewhere), or '' while it idles with nothing new. */
@@ -125,38 +125,44 @@ export function summary(marks) {
   return parts.length ? parts.map(([c, w]) => `${c} ${w}`).join(' · ') : `${marks.length} idle`
 }
 
-/** Polls the reports of the tabs `tabs()` lists that have a session (`tab.terminal.id`): those `visible(tab)` every
- * 500 ms, so a composer's menus follow a pick, and the rest each second. `onChange(tab, view, report)` hears each tab
- * whose view or report changed. Costs one IPC call each 500 ms while a Claude tab shows, each second while they're all
- * hidden, and nothing else while their reports stay the same. */
-export function watchSessions({ invoke, tabs, visible, watched, onChange }) {
-  const seen = new WeakMap() // tab -> { view, text }
-  let ticks = 0
-  async function poll(all = true) {
-    const live = tabs().filter(t => t.terminal?.id != null && (all || visible(t)))
-    if (!live.length) return
-    const texts = await invoke('pty_states', { ids: live.map(t => t.terminal.id) })
-    live.forEach((tab, i) => {
-      const was = seen.get(tab) ?? { view: undefined, text: null }
-      let report = was.report ?? {}
-      if (texts[i] && texts[i] !== was.text) {
-        try {
-          report = JSON.parse(texts[i])
-        } catch {
-          return // caught mid-write; the next poll reads it whole
-        }
+/** Follows the session of each tab `tabs()` lists that has one (`tab.terminal.id`). The host sends each report as its
+ * mod writes it (`report`, from pty.rs), and a tab's first is asked for once, since its mod may have written it
+ * before the tab had its session. `onChange(tab, view, report)` hears each tab whose view or report changed. Costs
+ * nothing while the reports stay the same. */
+export function watchSessions({ invoke, listen, tabs, watched, onChange }) {
+  const seen = new WeakMap() // tab -> { view, text, report, answered }
+  const asked = new WeakSet() // the tabs whose first report was asked for
+  const live = () => tabs().filter(t => t.terminal?.id != null)
+  /** Follows `tab` on from `text`, its report as its mod wrote it, or without one from the report held. */
+  function take(tab, text) {
+    const was = seen.get(tab) ?? { view: undefined, text: null }
+    let report = was.report ?? {}
+    if (text && text !== was.text) {
+      try {
+        report = JSON.parse(text)
+      } catch {
+        return // caught mid-write; the write's end sends it whole
       }
-      const answered = report.status === 'waiting' ? was.answered : undefined // a new wait is a new question
-      const shown = answeredReport(report, answered)
-      const view = follow(was.view, shown, watched(tab))
-      const changed = texts[i] !== was.text || !was.view || view.mark !== was.view.mark || view.attention
-      seen.set(tab, { view, text: texts[i] ?? was.text, report, answered })
-      if (changed) onChange(tab, view, shown)
-    })
+    } else text = was.text
+    const answered = report.status === 'waiting' ? was.answered : undefined // a new wait is a new question
+    const shown = answeredReport(report, answered)
+    const view = follow(was.view, shown, watched(tab))
+    const changed = text !== was.text || !was.view || view.mark !== was.view.mark || view.attention
+    seen.set(tab, { view, text, report, answered })
+    if (changed) onChange(tab, view, shown)
   }
-  const timer = setInterval(() => poll(++ticks % 2 === 0).catch(() => {}), 500)
+  listen('report', ([id, text]) => {
+    const tab = live().find(t => t.terminal.id === id)
+    if (tab) take(tab, text)
+  })
+  async function poll() {
+    const fresh = live().filter(t => !asked.has(t))
+    for (const tab of fresh) asked.add(tab)
+    const texts = fresh.length ? await invoke('pty_states', { ids: fresh.map(t => t.terminal.id) }) : []
+    for (const tab of live()) take(tab, texts[fresh.indexOf(tab)])
+  }
   return {
-    /** Looks again now, as when the user switches tabs or focuses the window. */
+    /** Looks again now, as when the user switches tabs or focuses the window, or a tab's session starts. */
     poll: () => poll().catch(() => {}),
     view: tab => seen.get(tab)?.view,
     report: tab => { const s = seen.get(tab); return s && answeredReport(s.report, s.answered) },
@@ -167,6 +173,5 @@ export function watchSessions({ invoke, tabs, visible, watched, onChange }) {
       s.answered = s.report.since
       poll().catch(() => {})
     },
-    stop: () => clearInterval(timer),
   }
 }
